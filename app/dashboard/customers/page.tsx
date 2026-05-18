@@ -13,6 +13,7 @@ import {
 import type { LucideIcon } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { exportCSV } from '@/lib/csv'
+import { useAnalytics } from '@/hooks/use-analytics'
 
 /* ── Icon map ─────────────────────────────────────────────── */
 
@@ -766,6 +767,7 @@ export default function CustomersPage() {
   const [openCustomerId, setOpenCustomerId] = useState<string | null>(null)
   const [addTagOpen, setAddTagOpen] = useState(false)
   const [toast, setToast] = useState('')
+  const { track } = useAnalytics()
 
   /* Carrega clientes do Supabase — fallback para mock se tabela não existir */
   useEffect(() => {
@@ -882,6 +884,7 @@ export default function CustomersPage() {
         c.tags.join('; '),
       ]),
     )
+    track('csv_exported', { section: 'clientes', rows: targets.length })
     if (selected.size > 0) setToast(`${targets.length} cliente${targets.length === 1 ? '' : 's'} exportado${targets.length === 1 ? '' : 's'}.`)
   }
 

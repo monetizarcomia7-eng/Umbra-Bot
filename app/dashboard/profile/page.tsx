@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, useRef } from 'react'
 import { DashboardLayout } from '@/components/dashboard/Layout'
 import { PageHeader } from '@/components/dashboard/PageHeader'
 import { createClient } from '@/lib/supabase/client'
+import { useAnalytics } from '@/hooks/use-analytics'
 import {
   Save, Upload, Lock, Eye, EyeOff, Shield, ShieldCheck,
   AlertTriangle, AlertCircle, Check, CheckCircle2, X, Key,
@@ -234,6 +235,7 @@ function AccountCard({ data, onSave }: { data: Account; onSave: (d: Account) => 
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  const { track } = useAnalytics()
 
   useEffect(() => setDraft(data), [data])
   const dirty = JSON.stringify(draft) !== JSON.stringify(data)
@@ -258,6 +260,7 @@ function AccountCard({ data, onSave }: { data: Account; onSave: (d: Account) => 
       const url = urlData.publicUrl + `?t=${Date.now()}`
       setAvatarUrl(url)
       await supabase.from('profiles').update({ avatar_url: url }).eq('id', user.id)
+      track('avatar_updated')
     } catch (err: unknown) {
       setUploadError(err instanceof Error ? err.message : 'Erro ao enviar foto')
     } finally {

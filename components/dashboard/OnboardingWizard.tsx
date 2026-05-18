@@ -3,6 +3,7 @@
 import React, { useState } from 'react'
 import { Bot, CreditCard, CheckCircle2, ArrowRight, X, AlertCircle, Loader2, Zap } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
+import { useAnalytics } from '@/hooks/use-analytics'
 
 interface Props {
   userId: string
@@ -182,6 +183,7 @@ function BotStep({ userId, onNext, onSkip }: { userId: string; onNext: () => voi
 function GatewayStep({ userId, onNext, onSkip }: { userId: string; onNext: () => void; onSkip: () => void }) {
   const [selected, setSelected] = useState<string | null>(null)
   const [loading,  setLoading]  = useState(false)
+  const { track } = useAnalytics()
 
   async function handleSave() {
     if (!selected) { onNext(); return }
@@ -195,6 +197,7 @@ function GatewayStep({ userId, onNext, onSkip }: { userId: string; onNext: () =>
         status: 'pending',
         credentials: {},
       })
+      track('gateway_connected', { gateway: selected })
     } catch {
       // silent — gateway table may not have all columns yet
     } finally {
@@ -279,6 +282,12 @@ function DoneStep({ onClose }: { onClose: () => void }) {
 
 export function OnboardingWizard({ userId, onComplete }: Props) {
   const [step, setStep] = useState<Step>('welcome')
+  const { track } = useAnalytics()
+
+  function goTo(next: Step, fromStep?: string) {
+    if (fromStep) track('onboarding_step_completed', { step: fromStep })
+    setStep(next)
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -302,13 +311,13 @@ export function OnboardingWizard({ userId, onComplete }: Props) {
         )}
 
         {step === 'welcome' && (
-          <WelcomeStep onNext={() => setStep('bot')} />
+          <WelcomeStep onNext={() => goTo('bot', 'welcome')} />
         )}
         {step === 'bot' && (
-          <BotStep userId={userId} onNext={() => setStep('gateway')} onSkip={() => setStep('gateway')} />
+          <BotStep userId={userId} onNext={() => goTo('gateway', 'bot')} onSkip={() => goTo('gateway')} />
         )}
         {step === 'gateway' && (
-          <GatewayStep userId={userId} onNext={() => setStep('done')} onSkip={() => setStep('done')} />
+          <GatewayStep userId={userId} onNext={() => { track('onboarding_completed'); goTo('done', 'gateway') }} onSkip={() => { track('onboarding_completed'); goTo('done') }} />
         )}
         {step === 'done' && (
           <DoneStep onClose={onComplete} />

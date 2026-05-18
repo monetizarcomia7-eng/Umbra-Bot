@@ -15,6 +15,7 @@ import {
 import type { LucideIcon } from 'lucide-react'
 import { exportCSV } from '@/lib/csv'
 import { createClient } from '@/lib/supabase/client'
+import { useAnalytics } from '@/hooks/use-analytics'
 
 /* ── Icon map ─────────────────────────────────────────────── */
 
@@ -943,6 +944,7 @@ export default function FinancePage() {
   const [tab,       setTab]       = useState('tx')
   const [modalOpen, setModalOpen] = useState(false)
   const [liveData,  setLiveData]  = useState<typeof financeMock | null>(null)
+  const { track } = useAnalytics()
 
   useEffect(() => {
     const supabase = createClient()
@@ -989,27 +991,33 @@ export default function FinancePage() {
   function handleExport() {
     const today = new Date().toISOString().slice(0, 10)
     if (tab === 'tx') {
+      const rows = m.transactions
       exportCSV(`transacoes_${today}.csv`,
         ['ID', 'Data', 'Tipo', 'Descrição', 'Valor (R$)', 'Status'],
-        m.transactions.map((t) => [
+        rows.map((t) => [
           t.id, t.dt, txTypeMap[t.type]?.label ?? t.type,
           t.desc, t.value, txStatusMap[t.status]?.label ?? t.status,
         ]),
       )
+      track('csv_exported', { section: 'financeiro_transacoes', rows: rows.length })
     } else if (tab === 'withdraws') {
+      const rows = m.withdrawals
       exportCSV(`saques_${today}.csv`,
         ['ID', 'Solicitado em', 'Conta', 'Valor (R$)', 'Status', 'Concluído'],
-        m.withdrawals.map((w) => [
+        rows.map((w) => [
           w.id, w.date, w.account, w.amount, wdStatusMap[w.status]?.label ?? w.status, w.concluded ?? '',
         ]),
       )
+      track('csv_exported', { section: 'financeiro_saques', rows: rows.length })
     } else {
+      const rows = m.invoices
       exportCSV(`faturas_${today}.csv`,
         ['ID', 'Período', 'Vencimento', 'Valor (R$)', 'Status'],
-        m.invoices.map((i) => [
+        rows.map((i) => [
           i.id, i.period, i.due, i.value, invStatusMap[i.status]?.label ?? i.status,
         ]),
       )
+      track('csv_exported', { section: 'financeiro_faturas', rows: rows.length })
     }
   }
 

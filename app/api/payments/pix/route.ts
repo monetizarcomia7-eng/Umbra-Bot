@@ -1,6 +1,8 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { rateLimit } from '@/lib/rate-limit'
+import { captureEvent } from '@/lib/analytics-server'
+import * as Sentry from '@sentry/nextjs'
 
 interface PixBody {
   amount: number           // valor em reais (ex: 97.00)
@@ -70,6 +72,9 @@ export async function POST(request: NextRequest) {
 
   if (!mpRes.ok) {
     const mpErr = await mpRes.json().catch(() => ({}))
+    Sentry.captureException(new Error(`MercadoPago PIX error: ${mpErr.message ?? mpRes.status}`), {
+      extra: { status: mpRes.status, body: mpErr },
+    })
     return NextResponse.json({ error: mpErr.message ?? 'erro no gateway' }, { status: 502 })
   }
 
@@ -101,8 +106,11 @@ export async function POST(request: NextRequest) {
     .single()
 
   if (txError) {
+    Sentry.captureException(txError, { extra: { user_id: user.id, amount, product_name } })
     return NextResponse.json({ error: 'erro ao salvar transação' }, { status: 500 })
   }
+
+  await captureEvent(user.id, 'pix_payment_created', { amount, product_name })
 
   return NextResponse.json({
     transaction_id:  transaction.id,
