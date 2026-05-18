@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { rateLimit } from '@/lib/rate-limit'
+import { captureEvent } from '@/lib/analytics-server'
 
 const RATE_LIMIT_MS = 35 // ~28 messages/second (under Telegram's 30/s limit)
 
@@ -153,6 +154,13 @@ export async function POST(request: NextRequest) {
       finished_at: new Date().toISOString(),
     })
     .eq('id', broadcast_id)
+
+  await captureEvent(user.id, 'broadcast_sent', {
+    contacts_count: contacts.length,
+    delivered,
+    failed,
+    audience: broadcast.audience,
+  })
 
   return NextResponse.json({ ok: true, sent, delivered, failed })
 }

@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { rateLimit } from '@/lib/rate-limit'
+import { captureEvent } from '@/lib/analytics-server'
 
 // POST /api/telegram/register
 // Body: { bot_id: string }
@@ -65,6 +66,17 @@ export async function POST(request: NextRequest) {
     .from('bots')
     .update({ status: 'active' })
     .eq('id', bot.id)
+
+  // Count user's bots to detect first connection
+  const { count } = await supabase
+    .from('bots')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', user.id)
+    .eq('status', 'active')
+
+  await captureEvent(user.id, 'bot_connected', {
+    is_first_bot: (count ?? 0) === 1,
+  })
 
   return NextResponse.json({ ok: true, webhook_url: webhookUrl })
 }

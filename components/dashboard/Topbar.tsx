@@ -6,6 +6,7 @@ import { useTheme } from 'next-themes'
 import { useRouter } from 'next/navigation'
 import { cn } from '@/lib/utils'
 import { createClient } from '@/lib/supabase/client'
+import { useAnalytics } from '@/hooks/use-analytics'
 
 export interface TopbarProps {
   onMobileMenu: () => void
@@ -128,6 +129,8 @@ export function Topbar({ onMobileMenu }: TopbarProps) {
   const userRef = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
 
+  const { identify, reset } = useAnalytics()
+
   useEffect(() => {
     setMounted(true)
     const supabase = createClient()
@@ -137,6 +140,7 @@ export function Topbar({ onMobileMenu }: TopbarProps) {
           || data.user.email?.split('@')[0]
           || 'Usuário'
         setUser({ name, email: data.user.email ?? '', initials: getInitials(name) })
+        identify(data.user.id, { email: data.user.email, name })
       }
     })
   }, [])
@@ -144,6 +148,7 @@ export function Topbar({ onMobileMenu }: TopbarProps) {
   async function handleLogout() {
     const supabase = createClient()
     await supabase.auth.signOut()
+    reset()
     router.push('/login')
     router.refresh()
   }
