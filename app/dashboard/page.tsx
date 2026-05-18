@@ -9,6 +9,7 @@ import { TrendingUp, ShoppingBag, Target, Bot, ArrowUpRight, ArrowDownRight, Che
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts'
 import { cn } from '@/lib/utils'
 import { createClient } from '@/lib/supabase/client'
+import { OnboardingWizard } from '@/components/dashboard/OnboardingWizard'
 
 type Period = '7d' | '30d' | '90d'
 
@@ -192,23 +193,67 @@ function EmptyState() {
   )
 }
 
+interface RealKpi { revenue: number; sales: number; botsActive: number }
+
 export default function DashboardPage() {
   const [period, setPeriod] = useState<Period>('30d')
-  const [botsCount, setBotsCount] = useState<number | null>(null)
+  const [botsCount,  setBotsCount]  = useState<number | null>(null)
+  const [userId,     setUserId]     = useState('')
+  const [showWizard, setShowWizard] = useState(false)
+  const [realKpi,    setRealKpi]    = useState<RealKpi | null>(null)
 
   useEffect(() => {
     const supabase = createClient()
+
+    supabase.auth.getUser().then(({ data }) => {
+      if (data.user) setUserId(data.user.id)
+    })
+
     supabase
       .from('bots')
       .select('id', { count: 'exact', head: true })
-      .then(({ count }) => setBotsCount(count ?? 0))
+      .then(({ count }) => {
+        const n = count ?? 0
+        setBotsCount(n)
+        if (n === 0) setShowWizard(true)
+      })
   }, [])
+
+  // Fetch real KPIs from transactions table
+  useEffect(() => {
+    if (!botsCount) return
+    const days = period === '7d' ? 7 : period === '30d' ? 30 : 90
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
+    const supabase = createClient()
+
+    Promise.all([
+      supabase.from('transactions').select('amount, net').eq('status', 'approved').gte('created_at', since),
+      supabase.from('bots').select('id', { count: 'exact', head: true }).eq('status', 'active'),
+    ]).then(([txRes, botsRes]) => {
+      const txs = txRes.data ?? []
+      setRealKpi({
+        revenue: txs.reduce((s, t) => s + Number(t.net ?? t.amount ?? 0), 0),
+        sales: txs.length,
+        botsActive: botsRes.count ?? 0,
+      })
+    })
+  }, [botsCount, period])
 
   const chartData = useMemo(() => genChartData(period === '7d' ? 7 : period === '30d' ? 30 : 90), [period])
   const kpis      = KPI_BY_PERIOD[period]
   const maxSales  = Math.max(...topFlows.map((f) => f.sales))
 
-  if (botsCount === 0) {
+  const fmtBRL = (v: number) =>
+    new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 2 }).format(v)
+
+  const displayKpis: KpiItem[] = realKpi ? [
+    { id: 'revenue',    label: `Receita (${period})`,  value: fmtBRL(realKpi.revenue),          delta: '',      trend: 'up',   Icon: TrendingUp  },
+    { id: 'sales',      label: 'Novas vendas',          value: realKpi.sales.toLocaleString('pt-BR'), delta: '', trend: 'up',   Icon: ShoppingBag },
+    { id: 'conversion', label: 'Taxa de conversão',     value: '—',                              delta: '',      trend: 'up',   Icon: Target      },
+    { id: 'bots',       label: 'Bots ativos',           value: String(realKpi.botsActive),       delta: '',      trend: 'up',   Icon: Bot         },
+  ] : kpis
+
+  if (botsCount === 0 && !showWizard) {
     return (
       <DashboardLayout>
         <PageHeader title="Dashboard" subtitle="Visão geral da sua operação em tempo real." />
@@ -219,6 +264,19 @@ export default function DashboardPage() {
 
   return (
     <DashboardLayout>
+      {showWizard && userId && (
+        <OnboardingWizard
+          userId={userId}
+          onComplete={() => {
+            setShowWizard(false)
+            // Refresh bots count after wizard
+            const supabase = createClient()
+            supabase.from('bots').select('id', { count: 'exact', head: true })
+              .then(({ count }) => setBotsCount(count ?? 0))
+          }}
+        />
+      )}
+
       <PageHeader
         title="Dashboard"
         subtitle="Visão geral da sua operação em tempo real."
@@ -232,7 +290,7 @@ export default function DashboardPage() {
 
       <div className="space-y-4">
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-          {kpis.map((k) => <KpiCard key={k.id} {...k} />)}
+          {displayKpis.map((k) => <KpiCard key={k.id} {...k} />)}
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">

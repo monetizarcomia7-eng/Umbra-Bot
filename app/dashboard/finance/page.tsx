@@ -14,6 +14,7 @@ import {
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { exportCSV } from '@/lib/csv'
+import { createClient } from '@/lib/supabase/client'
 
 /* ── Icon map ─────────────────────────────────────────────── */
 
@@ -939,10 +940,50 @@ const tabsDef = [
 ]
 
 export default function FinancePage() {
-  const [tab, setTab] = useState('tx')
+  const [tab,       setTab]       = useState('tx')
   const [modalOpen, setModalOpen] = useState(false)
+  const [liveData,  setLiveData]  = useState<typeof financeMock | null>(null)
 
-  const m = financeMock
+  useEffect(() => {
+    const supabase = createClient()
+    supabase
+      .from('transactions')
+      .select('id, amount, net, fee, status, product_name, customer_name, gateway, created_at')
+      .order('created_at', { ascending: false })
+      .limit(100)
+      .then(({ data }) => {
+        if (!data || data.length === 0) return
+
+        const txRows: Transaction[] = data.map((row) => {
+          const isRefund = row.status === 'refunded' || row.status === 'cancelled'
+          return {
+            id: String(row.id),
+            dt: String(row.created_at),
+            type: isRefund ? 'refund' : 'sale',
+            desc: String(row.product_name || 'Venda'),
+            value: isRefund ? -Math.abs(Number(row.amount)) : Number(row.net ?? row.amount),
+            status: row.status === 'approved' ? 'available'
+                  : row.status === 'pending'  ? 'pending'
+                  : 'completed',
+          }
+        })
+
+        const approved = data.filter((r) => r.status === 'approved')
+        const pending  = data.filter((r) => r.status === 'pending')
+
+        const summary = {
+          saldoDisponivel:    approved.reduce((s, r) => s + Number(r.net ?? r.amount), 0),
+          aLiberar:           pending.reduce((s, r) => s + Number(r.net ?? r.amount), 0),
+          totalRecebido:      approved.reduce((s, r) => s + Number(r.amount), 0),
+          comissoesPlataforma: approved.reduce((s, r) => s + Number(r.fee ?? 0), 0),
+          deltas: { saldo: 0, liberar: 0, total: 0, comissoes: 0 },
+        }
+
+        setLiveData({ ...financeMock, summary, transactions: txRows })
+      })
+  }, [])
+
+  const m = liveData ?? financeMock
   const openInvCount = m.invoices.filter((i) => i.status !== 'paid').length
 
   function handleExport() {
