@@ -49,7 +49,7 @@ const navGroups: NavGroupDef[] = [
       { id: 'flows',       label: 'Fluxos de venda',  href: '/dashboard/flows',       icon: GitBranch },
       { id: 'redirects',   label: 'Redirecionadores', href: '/dashboard/redirects',   icon: Shuffle },
       { id: 'remarketing', label: 'Remarketing',      href: '/dashboard/remarketing', icon: Megaphone },
-      { id: 'sender',      label: 'Disparador',       href: '/dashboard/sender',      icon: Send },
+      { id: 'sender',      label: 'Disparador',       href: '/dashboard/broadcasts',  icon: Send },
       { id: 'tools',       label: 'Ferramentas',      href: '/dashboard/tools',       icon: Wrench },
     ],
   },
@@ -71,7 +71,7 @@ const navGroups: NavGroupDef[] = [
       { id: 'profile',       label: 'Perfil',              href: '/dashboard/profile',       icon: User },
       { id: 'notifications', label: 'Notificações',        href: '/dashboard/notifications', icon: Bell },
       { id: 'guide',         label: 'Guia da Plataforma',  href: '/dashboard/guide',         icon: BookOpen },
-      { id: 'education',     label: 'Sistema Educacional', href: '/dashboard/education',     icon: GraduationCap },
+      { id: 'education',     label: 'Sistema Educacional', href: '/dashboard/academy',       icon: GraduationCap },
     ],
   },
 ]
