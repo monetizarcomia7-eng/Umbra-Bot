@@ -954,17 +954,17 @@ function Footer() {
           ]} />
 
           <FooterCol title="Recursos" links={[
-            { label: 'Documentação', href: '#docs'      },
-            { label: 'Status',       href: '#status'    },
-            { label: 'Changelog',    href: '#changelog' },
-            { label: 'Roadmap',      href: '#roadmap'   },
+            { label: 'Documentação', href: '/docs'      },
+            { label: 'Status',       href: '/status'    },
+            { label: 'Changelog',    href: '/changelog' },
+            { label: 'Roadmap',      href: '/roadmap'   },
           ]} />
 
           <FooterCol title="Empresa" links={[
-            { label: 'Termos de uso',         href: '#termos'     },
-            { label: 'Privacidade',           href: '#privacidade' },
-            { label: 'Suporte',               href: '#suporte'    },
-            { label: '[CONTATO — PREENCHER]', href: '#contato', mono: true },
+            { label: 'Termos de uso', href: '/termos'      },
+            { label: 'Privacidade',   href: '/privacidade' },
+            { label: 'Suporte',       href: '/contato'     },
+            { label: 'Contato',       href: '/contato'     },
           ]} />
         </div>
 
