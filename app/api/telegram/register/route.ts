@@ -13,7 +13,7 @@ export async function POST(request: NextRequest) {
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
 
   // 10 webhook registrations per user per 10 minutes
-  const rl = rateLimit(`tg-register:${user.id}`, 10, 10 * 60 * 1000)
+  const rl = await rateLimit(`tg-register:${user.id}`, 10, 10 * 60 * 1000)
   if (!rl.ok) {
     return NextResponse.json(
       { error: 'muitas requisições, aguarde alguns minutos' },

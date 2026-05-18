@@ -4,212 +4,189 @@ Contexto automático para sessões de desenvolvimento. Atualizar sempre que o pr
 
 ---
 
-## 1. ESTRUTURA
+## 1. REGRAS ABSOLUTAS
+
+- **NUNCA** renomear para "Pulso", "Pulso.bot" ou qualquer outro nome — sempre **"Umbra Bot"** / **"umbra.bot"**
+- Todo texto visível ao usuário em **Português (Brasil)**
+- Só fazer o que foi explicitamente pedido — sem features extras, sem refactor não solicitado
+
+---
+
+## 2. ESTRUTURA ATUAL
 
 ```
 umbra-bot/
-├── app/                          # Next.js App Router
-│   ├── layout.tsx                # Root layout (ThemeProvider)
+├── app/
+│   ├── layout.tsx                # Root layout (ThemeProvider + PostHog + Analytics)
 │   ├── page.tsx                  # Redirect para /dashboard
 │   ├── globals.css               # Design tokens (light/dark), Tailwind v4
+│   ├── (auth)/
+│   │   ├── login/page.tsx        # Login com Supabase Auth
+│   │   └── register/page.tsx     # Registro com email + senha
+│   ├── auth/callback/route.ts    # Callback de confirmação de email
+│   ├── api/
+│   │   ├── telegram/
+│   │   │   ├── webhook/route.ts  # Recebe updates do Telegram
+│   │   │   └── register/route.ts # Registra webhook no Telegram
+│   │   ├── payments/
+│   │   │   ├── pix/route.ts      # Cria pagamento PIX (Mercado Pago)
+│   │   │   └── mercadopago-webhook/route.ts # Confirma pagamento
+│   │   ├── push/
+│   │   │   ├── subscribe/route.ts
+│   │   │   └── notify/route.ts
+│   │   ├── broadcasts/send/route.ts
+│   │   └── migrations/route.ts   # Protegida por ADMIN_EMAIL
 │   └── dashboard/
-│       ├── page.tsx              # Overview (stats + gráfico + pedidos recentes)
-│       ├── bots/page.tsx         # Lista de bots conectados
-│       ├── finance/page.tsx      # Transações e saldo
-│       └── activity/page.tsx     # Feed de eventos em tempo real
+│       ├── page.tsx              # Overview (KPIs + gráfico — dados mock)
+│       ├── bots/                 # Gerenciar bots (mock)
+│       ├── finance/              # Financeiro + CSV export (mock)
+│       ├── activity/             # Feed de eventos (mock)
+│       ├── customers/            # Clientes + CSV export (mock)
+│       ├── analytics/            # Análises (mock)
+│       ├── alerts/               # Alertas (mock)
+│       ├── affiliates/           # Afiliados (mock)
+│       ├── flows/                # Fluxos de venda (placeholder)
+│       ├── redirects/            # Redirecionadores (mock)
+│       ├── remarketing/          # Remarketing (mock)
+│       ├── broadcasts/           # Disparador (mock)
+│       ├── tools/                # Ferramentas (mock)
+│       ├── gateways/             # Gateways (mock)
+│       ├── tracking/             # Trackeamento (mock)
+│       ├── checkout/             # Checkout (mock)
+│       ├── biolink/              # Bio Link (mock)
+│       ├── webhooks/             # Webhooks (mock)
+│       ├── profile/              # Perfil + avatar upload (funcional)
+│       ├── notifications/        # Notificações (mock)
+│       ├── guide/                # Guia da plataforma (mock)
+│       └── academy/              # Academia (mock)
 ├── components/
-│   ├── ThemeToggle.tsx           # Botão light/dark
 │   └── dashboard/
-│       ├── Layout.tsx            # Shell do dashboard (Sidebar + Topbar + motion)
+│       ├── Layout.tsx            # Shell (Sidebar + Topbar + service worker)
 │       ├── Sidebar.tsx           # Navegação colapsável (260px / 80px)
-│       └── Topbar.tsx            # Busca global + notificações + ThemeToggle
+│       ├── Topbar.tsx            # Busca + notificações + usuário real
+│       ├── PageHeader.tsx
+│       └── Button.tsx
 ├── hooks/
-│   └── use-mobile.ts             # useIsMobile (breakpoint 768px)
+│   ├── use-analytics.ts          # PostHog events tipados
+│   ├── use-keyboard-shortcuts.ts # ⌘K, b, f, c, a, ?
+│   └── use-mobile.ts
 ├── lib/
-│   └── utils.ts                  # cn() — clsx + tailwind-merge
-├── .env.example                  # GEMINI_API_KEY, APP_URL
-├── metadata.json                 # Nome, descrição, capabilities (Google AI Studio)
-├── next.config.ts                # standalone output, transpilePackages motion
-└── tsconfig.json                 # strict, path alias @/*
+│   ├── utils.ts                  # cn()
+│   ├── rate-limit.ts             # Redis (Upstash) + fallback memória
+│   ├── analytics-server.ts       # PostHog server-side capture
+│   ├── csv.ts                    # exportCSV()
+│   └── supabase/
+│       ├── server.ts             # createClient() para Server Components / API Routes
+│       └── client.ts             # createClient() para Client Components
+├── providers/
+│   └── PostHogProvider.tsx       # PostHog init + pageview tracking
+├── public/
+│   └── sw.js                     # Service Worker para Web Push
+├── supabase/migrations/          # 23 migrações SQL (000 a 023)
+├── sentry.*.config.ts            # Sentry (client / server / edge)
+├── instrumentation.ts            # Next.js hook para Sentry server
+├── middleware.ts                 # Auth guard + security headers
+└── .env.example                  # Todas as variáveis documentadas
 ```
 
 ---
 
-## 2. STACK
+## 3. STACK
 
 | Camada | Tecnologia | Versão |
 |---|---|---|
-| Framework | Next.js (App Router) | 15.4.9 |
-| UI | React | 19.2.1 |
-| Linguagem | TypeScript (strict) | 5.9.3 |
-| Estilo | Tailwind CSS v4 | 4.1.11 |
-| Animações | Motion (Framer) | 12.23.24 |
-| Gráficos | Recharts | 3.8.1 |
-| Ícones | Lucide React | 0.553.0 |
-| Tema | next-themes | 0.4.6 |
-| AI (não usado) | @google/genai (Gemini) | 1.17.0 |
-| Forms (não usado) | @hookform/resolvers | 5.2.1 |
-| Deploy | Firebase (devDep, não configurado) | 15.0.0 |
-
-**Origem do scaffold:** Google AI Studio — o README, `metadata.json` e lógica `DISABLE_HMR` no `next.config.ts` são artefatos do AI Studio. O projeto foi gerado lá e precisa ser desacoplado dessa plataforma para funcionar como SaaS independente.
+| Framework | Next.js (App Router) | 15.x |
+| UI | React | 19.x |
+| Linguagem | TypeScript (strict) | 5.x |
+| Banco | Supabase (PostgreSQL + Auth + Storage) | — |
+| Estilo | Tailwind CSS v4 | 4.x |
+| Animações | Motion (Framer) | 12.x |
+| Gráficos | Recharts | 3.x |
+| Ícones | Lucide React | — |
+| Tema | next-themes | — |
+| Rate limit | @upstash/redis (prod) / Map in-memory (dev) | — |
+| Monitoring | Sentry + PostHog + Vercel Analytics | — |
+| Pagamentos | Mercado Pago (PIX) | — |
+| Push | web-push (VAPID) | — |
 
 ---
 
-## 3. ARQUITETURA ATUAL (estado real)
+## 4. ARQUITETURA ATUAL
 
 ```
 Browser
-  └─► Next.js (App Router, standalone)
-        ├── /dashboard           ← dados hardcoded (mock)
-        ├── /dashboard/bots      ← dados hardcoded (mock)
-        ├── /dashboard/finance   ← dados hardcoded (mock)
-        └── /dashboard/activity  ← dados hardcoded (mock)
-
-NÃO EXISTE:
-  ✗ app/api/         (nenhuma rota de API)
-  ✗ Backend          (sem servidor separado)
-  ✗ Banco de dados   (sem Prisma/Drizzle/Postgres/Mongo)
-  ✗ Autenticação     (sem sessão, sem JWT, sem OAuth)
-  ✗ Telegram Bot     (sem webhook, sem grammy/telegraf)
-  ✗ Pagamentos       (sem gateway integrado)
-  ✗ Workers/Filas    (sem BullMQ/Redis)
-  ✗ Multi-tenancy    (sem conceito de workspace/tenant)
-```
-
-**Arquitetura alvo** (a construir):
-
-```
-Browser
-  └─► Next.js (frontend + API Routes)
-        ├── app/api/             ← REST/tRPC endpoints
-        ├── app/(auth)/          ← login, register, onboarding
-        └── app/dashboard/       ← páginas do tenant
+  └─► Next.js (App Router, Vercel)
+        ├── app/(auth)/          ← login, registro (Supabase Auth)
+        ├── app/dashboard/       ← 24 páginas (maioria com dados mock)
+        ├── app/api/             ← 8 route handlers implementados
+        └── middleware.ts        ← auth guard + security headers
 
 Next.js API Routes
-  ├── Prisma ORM ─► PostgreSQL   ← dados multi-tenant
-  ├── Redis / BullMQ             ← filas e cache
-  └── Telegram Bot Server        ← webhook por bot
-
-Telegram Bot Server (separado ou Route Handler)
-  └── grammy / telegraf          ← recebe updates, processa funis
-
-Gateways de Pagamento
-  └── Mercado Pago / PagSeguro / Kirvano / Guru
+  ├── Supabase (PostgreSQL + RLS)  ← banco real, 23 tabelas
+  ├── Upstash Redis                ← rate limiting distribuído
+  ├── Mercado Pago                 ← PIX payments
+  ├── Telegram Bot API             ← webhooks
+  └── web-push (VAPID)            ← notificações push
 ```
 
 ---
 
-## 4. MODELO DE DADOS
-
-**Nenhuma entidade está modelada em banco.** Abaixo o modelo inferido a partir da UI:
-
-| Entidade | Campos observados na UI | Status |
-|---|---|---|
-| **Tenant/User** | id, name, plan (Pro), initials | mock ("João Demo") |
-| **Bot** | id, name, username, status, leads, sales, lastUpdate | mock |
-| **Lead/Contact** | telegram_id, first_name, bot_id | implícito na UI |
-| **Product** | id, name, price | implícito (atividade) |
-| **Order/Transaction** | id, date, amount, fee, net, status, customer, code | mock |
-| **Activity/Event** | id, type, title, description, amount, time | mock |
-| **Flow** | (apenas link no sidebar, sem implementação) | — |
-
----
-
-## 5. TELAS E API
-
-### Telas implementadas (com mock)
-| Rota | Componente | Conteúdo |
-|---|---|---|
-| `/` | `app/page.tsx` | Redirect para /dashboard |
-| `/dashboard` | `app/dashboard/page.tsx` | Stats, gráfico de área, pedidos recentes |
-| `/dashboard/bots` | `app/dashboard/bots/page.tsx` | Grid de bots, botões sem ação |
-| `/dashboard/finance` | `app/dashboard/finance/page.tsx` | Saldo, saque, tabela de transações |
-| `/dashboard/activity` | `app/dashboard/activity/page.tsx` | Feed de eventos com filtros |
-
-### Rotas no sidebar sem página implementada (20 rotas)
-`/dashboard/analytics`, `/dashboard/customers`, `/dashboard/affiliates`,
-`/dashboard/alerts`, `/dashboard/flows`, `/dashboard/redirects`,
-`/dashboard/remarketing`, `/dashboard/broadcasts`, `/dashboard/tools`,
-`/dashboard/gateways`, `/dashboard/tracking`, `/dashboard/checkout`,
-`/dashboard/biolink`, `/dashboard/webhooks`, `/dashboard/profile`,
-`/dashboard/notifications`, `/dashboard/guide`, `/dashboard/academy`,
-`/logout`
-
-### API Routes
-Nenhuma existe. Nenhum `app/api/` foi criado.
-
----
-
-## 6. INTEGRAÇÕES
-
-| Integração | Status |
-|---|---|
-| Telegram Bot API | Não iniciada — sem webhook, sem token |
-| Gateway de pagamento | Não iniciada — apenas mock de transações |
-| Pixel de rastreamento | Não iniciada |
-| Webhooks externos | Não iniciada |
-| Gemini AI (`@google/genai`) | Pacote instalado, não utilizado em nenhum arquivo |
-| Firebase | `firebase-tools` como devDep, nenhuma config presente |
-
----
-
-## 7. EXECUÇÃO LOCAL
-
-```bash
-npm install
-# Criar .env.local com:
-# GEMINI_API_KEY=sua_chave   (opcional enquanto não usar IA)
-# APP_URL=http://localhost:3000
-
-npm run dev   # http://localhost:3000
-```
-
-**Variáveis de ambiente necessárias hoje:**
-- `GEMINI_API_KEY` — Gemini AI (não utilizado ainda)
-- `APP_URL` — URL base da aplicação
-
-**Serviços externos exigidos hoje:** nenhum (tudo é mock).
-
-**Serviços que precisarão ser provisionados:**
-- PostgreSQL (banco principal, multi-tenant)
-- Redis (filas, cache de sessão)
-- Telegram Bot Token(s) (BotFather)
-- Gateway de pagamento (Mercado Pago, Kirvano, etc.)
-
----
-
-## 8. CONVENÇÕES
-
-- Todos os componentes são `'use client'` — nenhum Server Component implementado
-- Path alias `@/*` → raiz do projeto
-- Tailwind v4 com design tokens via CSS variables em `globals.css`
-- Tema: `data-theme` attribute, gerenciado por `next-themes`
-- Cores: paleta Zinc (shadcn/ui-like), sem biblioteca de componentes instalada
-- `cn()` em `lib/utils.ts` para class merging
-- Nenhum teste (unitário, integração ou e2e) existe
-- ESLint configurado mas erros ignorados no build (`ignoreDuringBuilds: true`)
-- TypeScript strict habilitado (`ignoreBuildErrors: false`)
-
----
-
-## 9. ESTADO DO PROJETO
+## 5. ESTADO DO PROJETO
 
 | Área | Estado |
 |---|---|
-| UI Shell (sidebar, topbar, layout, tema) | **Completo** |
-| Dashboard overview (mock) | **Completo** |
-| Tela de Bots (mock) | **Completo** |
-| Tela Financeiro (mock) | **Completo** |
-| Tela Atividade (mock) | **Completo** |
-| Autenticação (login, registro, sessão) | **Não iniciado** |
-| Multi-tenancy (workspaces, planos) | **Não iniciado** |
-| Backend / API Routes | **Não iniciado** |
-| Banco de dados (schema, migrations) | **Não iniciado** |
-| Integração Telegram | **Não iniciado** |
-| Gateways de pagamento | **Não iniciado** |
-| Fluxos de automação | **Não iniciado** |
-| Remarketing e disparos | **Não iniciado** |
-| Funis de venda | **Não iniciado** |
-| 20 páginas restantes do sidebar | **Não iniciado** |
-| Testes | **Não iniciado** |
-| Deploy / CI | **Não iniciado** |
+| UI Shell (sidebar, topbar, layout, tema) | ✅ Completo |
+| Dark mode (light/dark/system) | ✅ Completo |
+| Autenticação (login, registro, sessão, logout) | ✅ Funcional |
+| Middleware (auth guard + security headers) | ✅ Funcional |
+| Callback de email | ✅ Funcional |
+| Upload de avatar | ✅ Funcional (Supabase Storage) |
+| Seletor de período no Dashboard | ✅ Funcional |
+| CSV export (Financeiro + Clientes) | ✅ Funcional |
+| Atalhos de teclado | ✅ Funcional |
+| Webhook Telegram | ✅ Implementado (não testado em prod) |
+| PIX via Mercado Pago | ✅ Implementado |
+| Webhook MP (confirmação de pagamento) | ✅ Implementado |
+| Broadcasts (disparador em massa) | ✅ Implementado |
+| Web Push (VAPID) | ✅ Implementado |
+| Rate limiting (Upstash Redis + fallback) | ✅ Funcional |
+| Sentry (error monitoring) | ✅ Configurado (requer DSN) |
+| PostHog (product analytics) | ✅ Configurado (requer chave) |
+| Vercel Analytics + Speed Insights | ✅ Ativo |
+| Schema do banco (23 tabelas) | ✅ Migrações SQL criadas |
+| RLS em todas as tabelas | ✅ Configurado |
+| Dashboard com dados reais | ❌ Ainda mock |
+| Onboarding wizard | ❌ Não iniciado |
+| Sistema de planos/billing | ❌ Não iniciado |
+| Editor de fluxos de venda | ❌ Não iniciado |
+| Afiliados (funcional) | ❌ Não iniciado |
+| Reset de senha (/forgot-password) | ❌ Link existe, página não |
+| Testes (unit/e2e) | ❌ Não iniciado |
+| CI/CD | ❌ Não iniciado |
+
+---
+
+## 6. VARIÁVEIS DE AMBIENTE
+
+Obrigatórias para funcionamento básico:
+```
+NEXT_PUBLIC_SUPABASE_URL
+NEXT_PUBLIC_SUPABASE_ANON_KEY
+APP_URL
+```
+
+Para produção completa, ver `.env.example` — todas as variáveis estão documentadas lá.
+
+---
+
+## 7. CONVENÇÕES
+
+- Path alias `@/*` → raiz do projeto
+- Tailwind v4 com design tokens via CSS variables em `globals.css`
+- Tema: `data-theme` attribute, gerenciado por `next-themes`
+- `cn()` em `lib/utils.ts` para class merging
+- ESLint habilitado no build (`ignoreDuringBuilds: false`)
+- TypeScript strict (`ignoreBuildErrors: false`)
+- Rate limit: usar sempre `await rateLimit(key, limit, windowMs)` — função é assíncrona
+- Analytics server-side: `await captureEvent(userId, eventName, props)` de `lib/analytics-server`
+- Analytics client-side: `const { track } = useAnalytics()` de `hooks/use-analytics`

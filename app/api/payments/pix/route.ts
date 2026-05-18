@@ -22,7 +22,7 @@ export async function POST(request: NextRequest) {
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
 
   // 10 PIX payments per user per hour
-  const rl = rateLimit(`pix:${user.id}`, 10, 60 * 60 * 1000)
+  const rl = await rateLimit(`pix:${user.id}`, 10, 60 * 60 * 1000)
   if (!rl.ok) {
     return NextResponse.json(
       { error: 'muitas requisições, tente novamente mais tarde' },

@@ -46,7 +46,7 @@ export async function POST(request: NextRequest) {
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
 
   // 5 broadcast sends per user per hour
-  const rl = rateLimit(`broadcast:${user.id}`, 5, 60 * 60 * 1000)
+  const rl = await rateLimit(`broadcast:${user.id}`, 5, 60 * 60 * 1000)
   if (!rl.ok) {
     return NextResponse.json(
       { error: 'limite de disparos atingido, tente novamente mais tarde' },

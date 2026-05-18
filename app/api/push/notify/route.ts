@@ -19,7 +19,7 @@ export async function POST(request: NextRequest) {
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
 
   // 30 push notifications per user per minute
-  const rl = rateLimit(`push:${user.id}`, 30, 60 * 1000)
+  const rl = await rateLimit(`push:${user.id}`, 30, 60 * 1000)
   if (!rl.ok) {
     return NextResponse.json(
       { error: 'muitas notificações, tente novamente em breve' },
