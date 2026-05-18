@@ -2,7 +2,9 @@
 
 import React, { useState, useEffect } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { useTheme } from 'next-themes'
+import { createClient } from '@/lib/supabase/client'
 import {
   AlertCircle, AlertTriangle, CheckCircle2, Zap, ArrowUpRight,
   Bot, Megaphone, ShoppingCart, ExternalLink, Sun, Moon, Eye, EyeOff, Info,
@@ -255,6 +257,8 @@ function AuthThemeToggle() {
 const initialValues: FormValues = { name: '', email: '', password: '', confirm: '', remember: true }
 
 function AuthForm({ mode, setMode }: { mode: Mode; setMode: (m: Mode) => void }) {
+  const router = useRouter()
+  const supabase = createClient()
   const [values, setValues] = useState<FormValues>(initialValues)
   const [errors, setErrors] = useState<Record<string, string | undefined>>({})
   const [touched, setTouched] = useState<Record<string, boolean>>({})
@@ -294,7 +298,7 @@ function AuthForm({ mode, setMode }: { mode: Mode; setMode: (m: Mode) => void })
     ? ['name', 'email', 'password', 'confirm']
     : ['email', 'password']
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setSuccess('')
     const allErrors: Record<string, string> = {}
@@ -309,22 +313,33 @@ function AuthForm({ mode, setMode }: { mode: Mode; setMode: (m: Mode) => void })
     setLoading(true)
     setServerError('')
 
-    setTimeout(() => {
+    if (mode === 'signin') {
+      const { error } = await supabase.auth.signInWithPassword({
+        email: values.email.trim(),
+        password: values.password,
+      })
       setLoading(false)
-      if (values.password === 'umbra2026') {
-        setSuccess(
-          mode === 'signin'
-            ? `Bem-vindo de volta, ${values.email.split('@')[0]}. Redirecionando…`
-            : `Conta criada com sucesso. Redirecionando…`
-        )
+      if (error) {
+        setServerError('E-mail ou senha incorretos. Tente novamente.')
       } else {
-        setServerError(
-          mode === 'signin'
-            ? 'E-mail ou senha incorretos. Tente novamente.'
-            : 'Não foi possível criar a conta. Verifique os dados e tente novamente.'
-        )
+        setSuccess(`Bem-vindo de volta, ${values.email.split('@')[0]}. Redirecionando…`)
+        setTimeout(() => router.push('/dashboard'), 1000)
       }
-    }, 1200)
+    } else {
+      const { error } = await supabase.auth.signUp({
+        email: values.email.trim(),
+        password: values.password,
+        options: {
+          data: { name: values.name.trim() },
+        },
+      })
+      setLoading(false)
+      if (error) {
+        setServerError(error.message ?? 'Não foi possível criar a conta. Tente novamente.')
+      } else {
+        setSuccess('Conta criada! Verifique seu e-mail para confirmar o cadastro.')
+      }
+    }
   }
 
   const isSignup = mode === 'signup'
