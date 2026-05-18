@@ -1,12 +1,14 @@
 'use client'
 
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useEffect } from 'react'
+import Link from 'next/link'
 import { DashboardLayout } from '@/components/dashboard/Layout'
 import { PageHeader } from '@/components/dashboard/PageHeader'
 import { Button } from '@/components/dashboard/Button'
-import { TrendingUp, ShoppingBag, Target, Bot, ArrowUpRight, ArrowDownRight } from 'lucide-react'
+import { TrendingUp, ShoppingBag, Target, Bot, ArrowUpRight, ArrowDownRight, CheckCircle2, Circle, ArrowRight } from 'lucide-react'
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts'
 import { cn } from '@/lib/utils'
+import { createClient } from '@/lib/supabase/client'
 
 type Period = '7d' | '30d' | '90d'
 
@@ -136,11 +138,84 @@ function RevenueChart({ data }: { data: ChartPoint[] }) {
   )
 }
 
+const ONBOARDING_STEPS = [
+  { label: 'Criar conta',             href: null,                  done: true  },
+  { label: 'Conectar seu primeiro bot', href: '/dashboard/bots',   done: false },
+  { label: 'Configurar gateway de pagamento', href: '/dashboard/gateways', done: false },
+  { label: 'Criar seu primeiro fluxo de venda', href: '/dashboard/flows', done: false },
+]
+
+function EmptyState() {
+  return (
+    <div className="flex-1 flex items-center justify-center py-16 px-4">
+      <div className="w-full max-w-[520px] text-center">
+        <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-5"
+          style={{ background: 'var(--primary-soft, #ede9fe)' }}>
+          <Bot size={28} style={{ color: 'var(--primary, #7c3aed)' }} />
+        </div>
+        <h2 className="text-xl font-bold mb-2" style={{ color: 'var(--text, #0f172a)' }}>
+          Boas-vindas ao Umbra Bot!
+        </h2>
+        <p className="text-sm mb-8 leading-relaxed" style={{ color: 'var(--text-muted, #64748b)' }}>
+          Você está a 3 passos de começar a vender no Telegram no piloto automático.
+          Conecte seu primeiro bot para ver os dados reais aqui.
+        </p>
+
+        <div className="text-left space-y-3 mb-8">
+          {ONBOARDING_STEPS.map((step, i) => (
+            <div key={i} className="flex items-center gap-3 rounded-xl px-4 py-3"
+              style={{ background: 'var(--surface, #fff)', border: '1px solid var(--border, #e2e8f0)' }}>
+              {step.done
+                ? <CheckCircle2 size={18} className="shrink-0 text-emerald-500" />
+                : <Circle size={18} className="shrink-0" style={{ color: 'var(--border, #e2e8f0)' }} />
+              }
+              <span className="flex-1 text-sm font-medium" style={{ color: step.done ? 'var(--text-muted, #64748b)' : 'var(--text, #0f172a)' }}>
+                {step.label}
+              </span>
+              {step.done && (
+                <span className="text-[10.5px] font-semibold px-1.5 py-0.5 rounded-md text-emerald-700 bg-emerald-50">
+                  Feito
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+
+        <Link href="/dashboard/bots"
+          className="inline-flex items-center gap-2 h-11 px-6 rounded-xl text-sm font-semibold text-white transition-all hover:opacity-90 active:scale-[0.98]"
+          style={{ background: 'var(--primary, #7c3aed)' }}>
+          Conectar meu bot agora
+          <ArrowRight size={16} />
+        </Link>
+      </div>
+    </div>
+  )
+}
+
 export default function DashboardPage() {
   const [period, setPeriod] = useState<Period>('30d')
+  const [botsCount, setBotsCount] = useState<number | null>(null)
+
+  useEffect(() => {
+    const supabase = createClient()
+    supabase
+      .from('bots')
+      .select('id', { count: 'exact', head: true })
+      .then(({ count }) => setBotsCount(count ?? 0))
+  }, [])
+
   const chartData = useMemo(() => genChartData(period === '7d' ? 7 : period === '30d' ? 30 : 90), [period])
   const kpis      = KPI_BY_PERIOD[period]
   const maxSales  = Math.max(...topFlows.map((f) => f.sales))
+
+  if (botsCount === 0) {
+    return (
+      <DashboardLayout>
+        <PageHeader title="Dashboard" subtitle="Visão geral da sua operação em tempo real." />
+        <EmptyState />
+      </DashboardLayout>
+    )
+  }
 
   return (
     <DashboardLayout>

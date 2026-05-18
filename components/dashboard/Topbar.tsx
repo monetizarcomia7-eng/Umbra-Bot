@@ -12,22 +12,41 @@ export interface TopbarProps {
   onMobileMenu: () => void
 }
 
-const mockNotifications = [
-  { id: 1, title: 'Nova venda confirmada',   desc: 'Plano Pro Anual · R$ 1.297,00',           time: 'há 2 min',  unread: true,  kind: 'success' },
-  { id: 2, title: 'Falha na integração',     desc: 'Gateway Pushinpay retornou erro 502',     time: 'há 18 min', unread: true,  kind: 'danger'  },
-  { id: 3, title: 'Pico de tráfego no bot', desc: '124 novos usuários em 5 min',             time: 'há 1 h',    unread: true,  kind: 'warning' },
-  { id: 4, title: 'Remarketing concluído',   desc: 'Campanha "Carrinho abandonado" entregue', time: 'há 3 h',    unread: false, kind: 'info'    },
-  { id: 5, title: 'Saque processado',        desc: 'R$ 12.480,00 transferido para conta',     time: 'ontem',     unread: false, kind: 'info'    },
-]
+interface AlertRow {
+  id: string
+  title: string
+  description: string
+  severity: 'critical' | 'warning' | 'info'
+  created_at: string
+}
 
 interface UserInfo {
+  id: string
   name: string
   email: string
   initials: string
+  plan: 'free' | 'pro' | 'enterprise'
 }
 
 function getInitials(name: string) {
   return name.split(' ').filter(Boolean).slice(0, 2).map((p) => p[0]).join('').toUpperCase() || '?'
+}
+
+function relativeTime(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime()
+  const mins = Math.floor(diff / 60_000)
+  if (mins < 1) return 'agora'
+  if (mins < 60) return `há ${mins} min`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `há ${hrs} h`
+  if (hrs < 48) return 'ontem'
+  return new Date(iso).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
+}
+
+const PLAN_LABEL: Record<string, string> = {
+  free: 'Plano Free',
+  pro: 'Plano Pro',
+  enterprise: 'Enterprise',
 }
 
 function MenuItem({
@@ -52,7 +71,13 @@ function MenuItem({
   )
 }
 
-function NotificationsDropdown() {
+function NotificationsDropdown({
+  alerts,
+  onMarkAllRead,
+}: {
+  alerts: AlertRow[]
+  onMarkAllRead: () => void
+}) {
   return (
     <div
       className="absolute right-0 top-full mt-2 w-[340px] bg-surface border border-border rounded-xl overflow-hidden z-50"
@@ -60,28 +85,32 @@ function NotificationsDropdown() {
     >
       <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-border">
         <div className="text-[13px] font-semibold text-text">Notificações</div>
-        <button className="text-[11.5px] text-primary hover:underline font-medium">
-          Marcar todas como lidas
-        </button>
+        {alerts.length > 0 && (
+          <button onClick={onMarkAllRead} className="text-[11.5px] text-primary hover:underline font-medium">
+            Marcar todas como lidas
+          </button>
+        )}
       </div>
       <div className="max-h-[380px] overflow-y-auto">
-        {mockNotifications.map((n) => (
+        {alerts.length === 0 ? (
+          <div className="px-4 py-8 text-center text-[12.5px] text-text-muted">
+            Nenhuma notificação pendente.
+          </div>
+        ) : alerts.map((a) => (
           <button
-            key={n.id}
+            key={a.id}
             className="w-full flex items-start gap-3 px-3.5 py-2.5 text-left hover:bg-surface-2 border-b border-border last:border-b-0"
           >
             <span className={cn(
               'mt-1.5 w-2 h-2 rounded-full shrink-0',
-              n.kind === 'success' ? 'bg-success'
-                : n.kind === 'danger' ? 'bg-danger'
-                : n.kind === 'warning' ? 'bg-warning'
+              a.severity === 'critical' ? 'bg-danger'
+                : a.severity === 'warning' ? 'bg-warning'
                 : 'bg-text-muted',
-              !n.unread && 'opacity-30',
             )} />
             <div className="flex-1 min-w-0">
-              <div className="text-[12.5px] font-medium text-text truncate">{n.title}</div>
-              <div className="text-[11.5px] text-text-muted truncate">{n.desc}</div>
-              <div className="text-[10.5px] text-text-subtle mt-0.5">{n.time}</div>
+              <div className="text-[12.5px] font-medium text-text truncate">{a.title}</div>
+              <div className="text-[11.5px] text-text-muted truncate">{a.description}</div>
+              <div className="text-[10.5px] text-text-subtle mt-0.5">{relativeTime(a.created_at)}</div>
             </div>
           </button>
         ))}
@@ -106,7 +135,7 @@ function UserDropdown({ user, onLogout }: { user: UserInfo; onLogout: () => void
         <div className="text-[11.5px] text-text-muted leading-tight mt-0.5">{user.email}</div>
         <div className="mt-2 inline-flex items-center gap-1.5 text-[10.5px] font-medium text-text-muted bg-surface-2 border border-border rounded-md px-1.5 py-0.5">
           <span className="w-1.5 h-1.5 rounded-full bg-success" />
-          Plano Free
+          {PLAN_LABEL[user.plan] ?? 'Plano Free'}
         </div>
       </div>
       <MenuItem icon={User}       label="Perfil" />
@@ -124,7 +153,8 @@ export function Topbar({ onMobileMenu }: TopbarProps) {
   const [mounted, setMounted] = useState(false)
   const [notifOpen, setNotifOpen] = useState(false)
   const [userOpen, setUserOpen] = useState(false)
-  const [user, setUser] = useState<UserInfo>({ name: '', email: '', initials: '' })
+  const [user, setUser] = useState<UserInfo>({ id: '', name: '', email: '', initials: '', plan: 'free' })
+  const [alerts, setAlerts] = useState<AlertRow[]>([])
   const notifRef = useRef<HTMLDivElement>(null)
   const userRef = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
@@ -134,16 +164,54 @@ export function Topbar({ onMobileMenu }: TopbarProps) {
   useEffect(() => {
     setMounted(true)
     const supabase = createClient()
-    supabase.auth.getUser().then(({ data }) => {
-      if (data.user) {
-        const name = (data.user.user_metadata?.full_name as string | undefined)
-          || data.user.email?.split('@')[0]
-          || 'Usuário'
-        setUser({ name, email: data.user.email ?? '', initials: getInitials(name) })
-        identify(data.user.id, { email: data.user.email, name })
-      }
+
+    supabase.auth.getUser().then(async ({ data }) => {
+      if (!data.user) return
+
+      const name = (data.user.user_metadata?.full_name as string | undefined)
+        || data.user.email?.split('@')[0]
+        || 'Usuário'
+
+      const uid = data.user.id
+
+      // Fetch profile (plan)
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('plan')
+        .eq('id', uid)
+        .single()
+
+      setUser({
+        id: uid,
+        name,
+        email: data.user.email ?? '',
+        initials: getInitials(name),
+        plan: (profile?.plan as UserInfo['plan']) ?? 'free',
+      })
+
+      identify(uid, { email: data.user.email, name })
+
+      // Fetch unresolved alerts
+      const { data: alertData } = await supabase
+        .from('alerts')
+        .select('id, title, description, severity, created_at')
+        .eq('resolved', false)
+        .order('created_at', { ascending: false })
+        .limit(10)
+
+      setAlerts((alertData as AlertRow[]) ?? [])
     })
   }, [])
+
+  async function handleMarkAllRead() {
+    if (alerts.length === 0) return
+    const supabase = createClient()
+    await supabase
+      .from('alerts')
+      .update({ resolved: true, resolved_at: new Date().toISOString() })
+      .in('id', alerts.map((a) => a.id))
+    setAlerts([])
+  }
 
   async function handleLogout() {
     const supabase = createClient()
@@ -172,8 +240,6 @@ export function Topbar({ onMobileMenu }: TopbarProps) {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [])
-
-  const unread = mockNotifications.filter((n) => n.unread).length
 
   return (
     <header className="h-16 bg-surface border-b border-border flex items-center px-3 md:px-5 gap-2 shrink-0 z-30">
@@ -220,13 +286,15 @@ export function Topbar({ onMobileMenu }: TopbarProps) {
             title="Notificações"
           >
             <Bell size={17} />
-            {unread > 0 && (
+            {alerts.length > 0 && (
               <span className="absolute top-1 right-1 min-w-[16px] h-[16px] text-[10px] font-semibold leading-none flex items-center justify-center bg-danger text-white rounded-full px-1 tnum ring-2 ring-surface">
-                {unread}
+                {alerts.length}
               </span>
             )}
           </button>
-          {notifOpen && <NotificationsDropdown />}
+          {notifOpen && (
+            <NotificationsDropdown alerts={alerts} onMarkAllRead={handleMarkAllRead} />
+          )}
         </div>
 
         <div className="relative ml-1" ref={userRef}>

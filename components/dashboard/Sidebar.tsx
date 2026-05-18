@@ -1,8 +1,9 @@
 'use client'
 
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { createClient } from '@/lib/supabase/client'
 import {
   LayoutDashboard, BarChart3, Wallet, Activity, Users, UserPlus,
   AlertTriangle, Bot, GitBranch, Shuffle, Megaphone, Send, Wrench,
@@ -30,14 +31,14 @@ interface NavGroupDef {
   items: NavItemDef[]
 }
 
-const topNav: NavItemDef[] = [
-  { id: 'dashboard',  label: 'Dashboard',           href: '/dashboard',           icon: LayoutDashboard },
-  { id: 'analytics',  label: 'Análises',            href: '/dashboard/analytics', icon: BarChart3 },
-  { id: 'finance',    label: 'Financeiro',          href: '/dashboard/finance',   icon: Wallet },
-  { id: 'activity',   label: 'Atividade',           href: '/dashboard/activity',  icon: Activity },
-  { id: 'customers',  label: 'Clientes',            href: '/dashboard/customers', icon: Users },
+const BASE_TOP_NAV: NavItemDef[] = [
+  { id: 'dashboard',  label: 'Dashboard',           href: '/dashboard',            icon: LayoutDashboard },
+  { id: 'analytics',  label: 'Análises',            href: '/dashboard/analytics',  icon: BarChart3 },
+  { id: 'finance',    label: 'Financeiro',          href: '/dashboard/finance',    icon: Wallet },
+  { id: 'activity',   label: 'Atividade',           href: '/dashboard/activity',   icon: Activity },
+  { id: 'customers',  label: 'Clientes',            href: '/dashboard/customers',  icon: Users },
   { id: 'affiliates', label: 'Afiliados',           href: '/dashboard/affiliates', icon: UserPlus },
-  { id: 'alerts',     label: 'Alertas Importantes', href: '/dashboard/alerts',    icon: AlertTriangle, badge: 3 },
+  { id: 'alerts',     label: 'Alertas Importantes', href: '/dashboard/alerts',     icon: AlertTriangle },
 ]
 
 const navGroups: NavGroupDef[] = [
@@ -178,6 +179,23 @@ function NavGroup({
 export function Sidebar({ mobileOpen, setMobileOpen }: SidebarProps) {
   const pathname = usePathname()
   const [collapsed, setCollapsed] = useState(false)
+  const [alertCount, setAlertCount] = useState(0)
+
+  useEffect(() => {
+    const supabase = createClient()
+    supabase
+      .from('alerts')
+      .select('id', { count: 'exact', head: true })
+      .eq('resolved', false)
+      .then(({ count }) => setAlertCount(count ?? 0))
+  }, [])
+
+  const topNav: NavItemDef[] = BASE_TOP_NAV.map((item) =>
+    item.id === 'alerts' && alertCount > 0
+      ? { ...item, badge: alertCount }
+      : item
+  )
+
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({
     automacoes: true,
     integracoes: true,
