@@ -1,0 +1,8 @@
+{
+  "name": "Umbra Bot",
+  "description": "Plataforma multi-tenant de automação e vendas no Telegram.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
