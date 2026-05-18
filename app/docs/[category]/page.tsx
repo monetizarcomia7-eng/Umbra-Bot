@@ -9,8 +9,9 @@ import { DOCS_CATEGORIES, toMeta } from '@/lib/docs/content'
 
 const META = toMeta(DOCS_CATEGORIES)
 
-export default function CategoryPage({ params }: { params: { category: string } }) {
-  const cat = DOCS_CATEGORIES.find((c) => c.slug === params.category)
+export default function CategoryPage({ params }: { params: Promise<{ category: string }> }) {
+  const { category } = React.use(params)
+  const cat = DOCS_CATEGORIES.find((c) => c.slug === category)
   if (!cat) notFound()
 
   return (

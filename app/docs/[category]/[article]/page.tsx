@@ -12,9 +12,10 @@ const META = toMeta(DOCS_CATEGORIES)
 export default function ArticlePage({
   params,
 }: {
-  params: { category: string; article: string }
+  params: Promise<{ category: string; article: string }>
 }) {
-  const found = findArticle(params.category, params.article)
+  const { category, article } = React.use(params)
+  const found = findArticle(category, article)
   if (!found) notFound()
   const { cat, art } = found
 
