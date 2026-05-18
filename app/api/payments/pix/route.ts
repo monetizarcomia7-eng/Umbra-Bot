@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { rateLimit } from '@/lib/rate-limit'
 
 interface PixBody {
   amount: number           // valor em reais (ex: 97.00)
@@ -19,6 +20,15 @@ export async function POST(request: NextRequest) {
 
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+
+  // 10 PIX payments per user per hour
+  const rl = rateLimit(`pix:${user.id}`, 10, 60 * 60 * 1000)
+  if (!rl.ok) {
+    return NextResponse.json(
+      { error: 'muitas requisições, tente novamente mais tarde' },
+      { status: 429, headers: { 'Retry-After': String(Math.ceil(rl.retryAfterMs / 1000)) } },
+    )
+  }
 
   const accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN
   if (!accessToken) {

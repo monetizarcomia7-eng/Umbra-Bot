@@ -1,6 +1,20 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
+const SECURITY_HEADERS: Record<string, string> = {
+  'X-Frame-Options':           'DENY',
+  'X-Content-Type-Options':    'nosniff',
+  'Referrer-Policy':           'strict-origin-when-cross-origin',
+  'Permissions-Policy':        'camera=(), microphone=(), geolocation=()',
+  'X-DNS-Prefetch-Control':    'on',
+  'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
+}
+
+function applySecurityHeaders(res: NextResponse): NextResponse {
+  Object.entries(SECURITY_HEADERS).forEach(([k, v]) => res.headers.set(k, v))
+  return res
+}
+
 export async function middleware(request: NextRequest) {
   let response = NextResponse.next({ request })
 
@@ -45,7 +59,7 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL('/dashboard', request.url))
   }
 
-  return response
+  return applySecurityHeaders(response)
 }
 
 export const config = {
@@ -53,5 +67,6 @@ export const config = {
     '/dashboard/:path*',
     '/login',
     '/register',
+    '/api/:path*',
   ],
 }

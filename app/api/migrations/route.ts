@@ -1,10 +1,32 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, type NextRequest } from 'next/server'
 import { readdir, readFile } from 'fs/promises'
 import path from 'path'
+import { createClient } from '@/lib/supabase/server'
 
 const MIGRATIONS_DIR = path.join(process.cwd(), 'supabase', 'migrations')
 
-export async function GET() {
+// Only the user whose email matches ADMIN_EMAIL can access this route.
+// This prevents any authenticated user from running arbitrary SQL.
+async function requireAdmin(): Promise<{ userId: string } | NextResponse> {
+  const adminEmail = process.env.ADMIN_EMAIL
+  if (!adminEmail) {
+    return NextResponse.json({ error: 'rota não habilitada (ADMIN_EMAIL ausente)' }, { status: 403 })
+  }
+
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+
+  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (user.email !== adminEmail) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
+
+  return { userId: user.id }
+}
+
+export async function GET(request: NextRequest) {
+  void request
+  const auth = await requireAdmin()
+  if (auth instanceof NextResponse) return auth
+
   const configured = !!(
     process.env.SUPABASE_ACCESS_TOKEN && process.env.SUPABASE_PROJECT_REF
   )
@@ -35,6 +57,9 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
+  const auth = await requireAdmin()
+  if (auth instanceof NextResponse) return auth
+
   const { sql } = (await req.json()) as { sql: string }
 
   const accessToken = process.env.SUPABASE_ACCESS_TOKEN

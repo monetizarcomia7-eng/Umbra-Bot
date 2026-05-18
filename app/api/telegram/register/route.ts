@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { rateLimit } from '@/lib/rate-limit'
 
 // POST /api/telegram/register
 // Body: { bot_id: string }
@@ -9,6 +10,15 @@ export async function POST(request: NextRequest) {
 
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+
+  // 10 webhook registrations per user per 10 minutes
+  const rl = rateLimit(`tg-register:${user.id}`, 10, 10 * 60 * 1000)
+  if (!rl.ok) {
+    return NextResponse.json(
+      { error: 'muitas requisições, aguarde alguns minutos' },
+      { status: 429, headers: { 'Retry-After': String(Math.ceil(rl.retryAfterMs / 1000)) } },
+    )
+  }
 
   let body: { bot_id?: string }
   try { body = await request.json() } catch { body = {} }

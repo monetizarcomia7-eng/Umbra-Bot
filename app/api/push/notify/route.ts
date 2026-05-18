@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import webpush from 'web-push'
+import { rateLimit } from '@/lib/rate-limit'
 
 // Configure VAPID — set these env vars via `npx web-push generate-vapid-keys`
 webpush.setVapidDetails(
@@ -16,6 +17,15 @@ export async function POST(request: NextRequest) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+
+  // 30 push notifications per user per minute
+  const rl = rateLimit(`push:${user.id}`, 30, 60 * 1000)
+  if (!rl.ok) {
+    return NextResponse.json(
+      { error: 'muitas notificações, tente novamente em breve' },
+      { status: 429, headers: { 'Retry-After': String(Math.ceil(rl.retryAfterMs / 1000)) } },
+    )
+  }
 
   let body: { user_id?: string; title?: string; body?: string; url?: string }
   try { body = await request.json() } catch { body = {} }

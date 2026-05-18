@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { rateLimit } from '@/lib/rate-limit'
 
 const RATE_LIMIT_MS = 35 // ~28 messages/second (under Telegram's 30/s limit)
 
@@ -42,6 +43,15 @@ export async function POST(request: NextRequest) {
 
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+
+  // 5 broadcast sends per user per hour
+  const rl = rateLimit(`broadcast:${user.id}`, 5, 60 * 60 * 1000)
+  if (!rl.ok) {
+    return NextResponse.json(
+      { error: 'limite de disparos atingido, tente novamente mais tarde' },
+      { status: 429, headers: { 'Retry-After': String(Math.ceil(rl.retryAfterMs / 1000)) } },
+    )
+  }
 
   let body: { broadcast_id?: string }
   try { body = await request.json() } catch { body = {} }
