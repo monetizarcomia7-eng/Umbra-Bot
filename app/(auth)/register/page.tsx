@@ -6,16 +6,80 @@ import { useRouter } from 'next/navigation'
 import { Eye, EyeOff, AlertCircle, CheckCircle2 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 
-// ─── Right panel features list ────────────────────────────────────────────────
+// ─── Dashboard preview (right panel mockup) ───────────────────────────────────
 
-const FEATURES = [
-  'Bots ilimitados conectados',
-  'Leads e contatos ilimitados',
-  'Fluxos de venda visuais',
-  'Remarketing automático',
-  'PIX integrado com split',
-  'Dashboard com métricas reais',
-]
+function DashboardCard() {
+  return (
+    <div className="w-full max-w-[360px] rounded-2xl overflow-hidden shadow-2xl"
+      style={{ background: 'var(--surface, #fff)', border: '1px solid var(--border, #e2e8f0)' }}>
+
+      {/* Card header */}
+      <div className="px-5 pt-5 pb-4" style={{ borderBottom: '1px solid var(--border, #e2e8f0)' }}>
+        <div className="flex items-center gap-2 mb-4">
+          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse inline-block" />
+          <span className="text-xs font-medium" style={{ color: 'var(--text-muted, #64748b)' }}>
+            Nova venda · R$&nbsp;297,00 · há 12s
+          </span>
+        </div>
+        <div className="flex items-end justify-between">
+          <div>
+            <p className="text-xs mb-1" style={{ color: 'var(--text-muted, #64748b)' }}>Receita hoje</p>
+            <p className="text-[26px] font-bold leading-none" style={{ color: 'var(--text, #0f172a)' }}>
+              R$&nbsp;12.480
+            </p>
+          </div>
+          <span className="text-xs font-semibold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-full mb-1">
+            ↑ 24,1%
+          </span>
+        </div>
+        <p className="text-xs mt-1" style={{ color: 'var(--text-subtle, #94a3b8)' }}>vs. R$&nbsp;10.054 ontem</p>
+      </div>
+
+      {/* Mini chart */}
+      <div className="px-5 py-3" style={{ borderBottom: '1px solid var(--border, #e2e8f0)' }}>
+        <svg viewBox="0 0 320 56" className="w-full h-12" preserveAspectRatio="none">
+          <defs>
+            <linearGradient id="lg2" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#7c3aed" stopOpacity="0.25" />
+              <stop offset="100%" stopColor="#7c3aed" stopOpacity="0" />
+            </linearGradient>
+          </defs>
+          <path
+            d="M0,48 C40,44 80,38 120,30 C160,22 200,14 240,10 C270,7 295,5 320,4"
+            fill="none" stroke="#7c3aed" strokeWidth="2.5" strokeLinecap="round"
+          />
+          <path
+            d="M0,48 C40,44 80,38 120,30 C160,22 200,14 240,10 C270,7 295,5 320,4 L320,56 L0,56 Z"
+            fill="url(#lg2)"
+          />
+        </svg>
+      </div>
+
+      {/* Flow rows */}
+      <div className="px-5 py-4 space-y-3">
+        {[
+          { name: 'Funil VIP — Mentoria',  value: 'R$ 6.842' },
+          { name: 'Remarketing 24h',        value: 'R$ 3.196' },
+          { name: 'Checkout direto',        value: 'R$ 2.442' },
+        ].map((f) => (
+          <div key={f.name} className="flex items-center justify-between">
+            <span className="text-xs" style={{ color: 'var(--text-muted, #64748b)' }}>{f.name}</span>
+            <span className="text-xs font-semibold" style={{ color: 'var(--text, #0f172a)' }}>{f.value}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* Footer */}
+      <div className="px-5 py-3 flex items-center gap-1.5"
+        style={{ borderTop: '1px solid var(--border, #e2e8f0)', background: 'var(--surface-2, #f8fafc)' }}>
+        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
+        <span className="text-xs" style={{ color: 'var(--text-subtle, #94a3b8)' }}>
+          14 bots ativos · 1.284 leads online
+        </span>
+      </div>
+    </div>
+  )
+}
 
 export default function RegisterPage() {
   const router = useRouter()
@@ -278,58 +342,59 @@ export default function RegisterPage() {
         </footer>
       </div>
 
-      {/* ── Right: branding (lg+) ── */}
-      <div className="hidden lg:flex lg:w-[42%] xl:w-[46%] flex-col relative overflow-hidden"
-        style={{ background: 'var(--primary, #7c3aed)' }}>
+      {/* ── Right: branding + preview (lg+) ── */}
+      <div className="hidden lg:flex lg:w-[54%] xl:w-[58%] flex-col relative overflow-hidden"
+        style={{ background: 'var(--bg, #f8f9fb)' }}>
 
         {/* Dot grid */}
-        <div className="absolute inset-0 pointer-events-none opacity-10"
+        <div className="absolute inset-0 pointer-events-none"
           style={{
-            backgroundImage: 'radial-gradient(circle, #fff 1.5px, transparent 1.5px)',
+            backgroundImage: 'radial-gradient(circle, var(--border, #e2e8f0) 1.5px, transparent 1.5px)',
             backgroundSize: '22px 22px',
           }}
         />
 
-        {/* Glow */}
-        <div className="absolute -bottom-32 -left-32 w-[500px] h-[500px] rounded-full pointer-events-none opacity-20"
-          style={{ background: 'radial-gradient(circle, #fff 0%, transparent 70%)' }}
+        {/* Purple glow */}
+        <div className="absolute -top-40 right-0 w-[700px] h-[700px] rounded-full pointer-events-none"
+          style={{ background: 'radial-gradient(circle, rgba(124,58,237,0.12) 0%, transparent 65%)' }}
         />
 
-        {/* Content */}
-        <div className="relative z-10 flex-1 flex flex-col justify-center px-10 xl:px-14 py-16">
-          <h2 className="text-[32px] xl:text-[38px] font-bold text-white leading-tight mb-3">
-            Comece grátis hoje.
-          </h2>
-          <p className="text-white/70 text-[15px] leading-relaxed mb-10">
-            Sem mensalidade. Você só paga uma pequena taxa quando uma venda for processada.
-          </p>
+        {/* Status bar */}
+        <div className="relative z-10 flex items-center justify-end px-8 py-5">
+          <div className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-full"
+            style={{ background: 'var(--surface, #fff)', border: '1px solid var(--border, #e2e8f0)', color: 'var(--text-muted, #64748b)' }}>
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
+            Todos os sistemas operacionais
+          </div>
+        </div>
 
-          <div className="space-y-3">
-            {FEATURES.map((item) => (
-              <div key={item} className="flex items-center gap-3">
-                <div className="w-5 h-5 rounded-full flex items-center justify-center shrink-0"
-                  style={{ background: 'rgba(255,255,255,0.2)' }}>
-                  <svg viewBox="0 0 12 12" width="10" height="10">
-                    <polyline points="2,6 5,9 10,3" fill="none" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                </div>
-                <span className="text-white/85 text-sm">{item}</span>
-              </div>
-            ))}
+        {/* Main content */}
+        <div className="relative z-10 flex-1 flex flex-col items-center justify-center px-10 xl:px-16 pb-8">
+          <div className="w-full max-w-[460px]">
+            <h1 className="text-[36px] xl:text-[44px] font-bold leading-[1.1] mb-4"
+              style={{ color: 'var(--text, #0f172a)' }}>
+              Venda no Telegram{' '}
+              <span style={{ color: 'var(--primary, #7c3aed)' }}>no piloto automático.</span>
+            </h1>
+            <p className="text-[15px] leading-relaxed mb-10" style={{ color: 'var(--text-muted, #64748b)' }}>
+              Bots, fluxos de venda, redirecionadores e gateways — tudo em um único painel, com métricas em tempo real.
+            </p>
+
+            <DashboardCard />
           </div>
         </div>
 
         {/* Social proof */}
-        <div className="relative z-10 flex items-center gap-8 px-10 xl:px-14 py-5"
-          style={{ borderTop: '1px solid rgba(255,255,255,0.15)', background: 'rgba(0,0,0,0.1)' }}>
+        <div className="relative z-10 flex items-center gap-10 px-10 xl:px-16 py-5"
+          style={{ borderTop: '1px solid var(--border, #e2e8f0)', background: 'var(--surface, rgba(255,255,255,0.6))' }}>
           {[
-            { value: '1,4M+',  label: 'mensagens' },
-            { value: 'R$ 84M', label: 'em vendas' },
-            { value: '99,98%', label: 'uptime' },
+            { value: '1,4M+',   label: 'mensagens entregues' },
+            { value: 'R$ 84M',  label: 'em vendas processadas' },
+            { value: '99,98%',  label: 'uptime do painel' },
           ].map((s) => (
             <div key={s.label}>
-              <p className="text-base font-bold text-white">{s.value}</p>
-              <p className="text-xs text-white/60">{s.label}</p>
+              <p className="text-lg font-bold" style={{ color: 'var(--text, #0f172a)' }}>{s.value}</p>
+              <p className="text-xs" style={{ color: 'var(--text-subtle, #94a3b8)' }}>{s.label}</p>
             </div>
           ))}
         </div>
