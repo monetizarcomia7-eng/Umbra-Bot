@@ -3,7 +3,9 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { Search, Bell, Sun, Moon, ChevronDown, Settings, HelpCircle, LogOut, User, Menu } from 'lucide-react'
 import { useTheme } from 'next-themes'
+import { useRouter } from 'next/navigation'
 import { cn } from '@/lib/utils'
+import { createClient } from '@/lib/supabase/client'
 
 export interface TopbarProps {
   onMobileMenu: () => void
@@ -17,12 +19,14 @@ const mockNotifications = [
   { id: 5, title: 'Saque processado',        desc: 'R$ 12.480,00 transferido para conta',     time: 'ontem',     unread: false, kind: 'info'    },
 ]
 
-const mockUser = {
-  name: 'Ana Souza',
-  email: 'ana@umbra.bot',
-  initials: 'AS',
-  role: 'Administradora',
-  workspace: 'Tribo Black',
+interface UserInfo {
+  name: string
+  email: string
+  initials: string
+}
+
+function getInitials(name: string) {
+  return name.split(' ').filter(Boolean).slice(0, 2).map((p) => p[0]).join('').toUpperCase() || '?'
 }
 
 function MenuItem({
@@ -90,39 +94,59 @@ function NotificationsDropdown() {
   )
 }
 
-function UserDropdown() {
+function UserDropdown({ user, onLogout }: { user: UserInfo; onLogout: () => void }) {
   return (
     <div
       className="absolute right-0 top-full mt-2 w-[240px] bg-surface border border-border rounded-xl overflow-hidden z-50 p-1"
       style={{ boxShadow: 'var(--shadow-lg)' }}
     >
       <div className="px-3 py-2.5 border-b border-border mb-1">
-        <div className="text-[13px] font-semibold text-text leading-tight">{mockUser.name}</div>
-        <div className="text-[11.5px] text-text-muted leading-tight mt-0.5">{mockUser.email}</div>
+        <div className="text-[13px] font-semibold text-text leading-tight">{user.name}</div>
+        <div className="text-[11.5px] text-text-muted leading-tight mt-0.5">{user.email}</div>
         <div className="mt-2 inline-flex items-center gap-1.5 text-[10.5px] font-medium text-text-muted bg-surface-2 border border-border rounded-md px-1.5 py-0.5">
           <span className="w-1.5 h-1.5 rounded-full bg-success" />
-          {mockUser.workspace}
+          Plano Free
         </div>
       </div>
-      <MenuItem icon={User}        label="Perfil" />
-      <MenuItem icon={Settings}    label="Configurações" />
-      <MenuItem icon={HelpCircle}  label="Suporte" />
+      <MenuItem icon={User}       label="Perfil" />
+      <MenuItem icon={Settings}   label="Configurações" />
+      <MenuItem icon={HelpCircle} label="Suporte" />
       <div className="h-px bg-border my-1" />
-      <MenuItem icon={LogOut}      label="Sair" danger />
+      <MenuItem icon={LogOut} label="Sair" danger onClick={onLogout} />
     </div>
   )
 }
 
 export function Topbar({ onMobileMenu }: TopbarProps) {
   const { theme, setTheme } = useTheme()
+  const router = useRouter()
   const [mounted, setMounted] = useState(false)
   const [notifOpen, setNotifOpen] = useState(false)
   const [userOpen, setUserOpen] = useState(false)
+  const [user, setUser] = useState<UserInfo>({ name: '', email: '', initials: '' })
   const notifRef = useRef<HTMLDivElement>(null)
   const userRef = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
 
-  useEffect(() => { setMounted(true) }, [])
+  useEffect(() => {
+    setMounted(true)
+    const supabase = createClient()
+    supabase.auth.getUser().then(({ data }) => {
+      if (data.user) {
+        const name = (data.user.user_metadata?.full_name as string | undefined)
+          || data.user.email?.split('@')[0]
+          || 'Usuário'
+        setUser({ name, email: data.user.email ?? '', initials: getInitials(name) })
+      }
+    })
+  }, [])
+
+  async function handleLogout() {
+    const supabase = createClient()
+    await supabase.auth.signOut()
+    router.push('/login')
+    router.refresh()
+  }
 
   useEffect(() => {
     function handler(e: MouseEvent) {
@@ -206,15 +230,15 @@ export function Topbar({ onMobileMenu }: TopbarProps) {
             className="flex items-center gap-2 pl-1 pr-1.5 md:pr-2 h-9 rounded-lg hover:bg-surface-2 focus:outline-none"
           >
             <div className="w-7 h-7 rounded-md bg-primary text-primary-fg text-[11px] font-semibold flex items-center justify-center">
-              {mockUser.initials}
+              {user.initials || '…'}
             </div>
             <div className="hidden lg:flex flex-col items-start leading-tight">
-              <span className="text-[12px] font-medium text-text">{mockUser.name}</span>
-              <span className="text-[10.5px] text-text-muted">{mockUser.role}</span>
+              <span className="text-[12px] font-medium text-text">{user.name || '…'}</span>
+              <span className="text-[10.5px] text-text-muted">Administrador</span>
             </div>
             <ChevronDown size={13} className="hidden lg:inline text-text-muted" />
           </button>
-          {userOpen && <UserDropdown />}
+          {userOpen && <UserDropdown user={user} onLogout={handleLogout} />}
         </div>
       </div>
     </header>
