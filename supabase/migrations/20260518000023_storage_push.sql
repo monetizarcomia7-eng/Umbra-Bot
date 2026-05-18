@@ -43,31 +43,31 @@ alter table public.push_subscriptions enable row level security;
 create policy "push_self" on public.push_subscriptions
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
--- Broadcasts table (if not already created)
-create table if not exists public.broadcasts (
-  id             uuid        primary key default gen_random_uuid(),
-  user_id        uuid        not null references auth.users(id) on delete cascade,
-  bot_id         uuid        references public.bots(id) on delete set null,
-  title          text        not null default '',
-  message        text        not null default '',
-  audience       text        not null default 'all',
-  audience_count int         not null default 0,
-  buttons        jsonb       not null default '[]',
-  status         text        not null default 'draft'
-    check (status in ('draft','scheduled','sending','done','failed','canceled')),
-  sent           int         not null default 0,
-  delivered      int         not null default 0,
-  failed         int         not null default 0,
-  scheduled_for  timestamptz,
-  started_at     timestamptz,
-  finished_at    timestamptz,
-  created_at     timestamptz not null default now(),
-  updated_at     timestamptz not null default now()
-);
+-- Broadcasts: add missing columns if table already exists from migration 021
+alter table public.broadcasts
+  add column if not exists bot_id         uuid        references public.bots(id) on delete set null,
+  add column if not exists title          text        not null default '',
+  add column if not exists message        text        not null default '',
+  add column if not exists audience       text        not null default 'all',
+  add column if not exists audience_count int         not null default 0,
+  add column if not exists buttons        jsonb       not null default '[]',
+  add column if not exists sent           int         not null default 0,
+  add column if not exists delivered      int         not null default 0,
+  add column if not exists failed         int         not null default 0,
+  add column if not exists scheduled_for  timestamptz,
+  add column if not exists started_at     timestamptz,
+  add column if not exists finished_at    timestamptz;
 
-alter table public.broadcasts enable row level security;
-
-create policy "broadcasts_owner" on public.broadcasts
-  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
-
-create index if not exists broadcasts_user_id_idx on public.broadcasts (user_id);
+-- Add status column with check constraint only if it doesn't exist yet
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'broadcasts' and column_name = 'status'
+  ) then
+    alter table public.broadcasts
+      add column status text not null default 'draft'
+        check (status in ('draft','scheduled','sending','done','failed','canceled'));
+  end if;
+end;
+$$;
