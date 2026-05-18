@@ -12,6 +12,7 @@ import {
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
+import { exportCSV } from '@/lib/csv'
 
 /* ── Icon map ─────────────────────────────────────────────── */
 
@@ -868,7 +869,20 @@ export default function CustomersPage() {
   }
 
   function bulkExport() {
-    setToast(`Exportando ${selected.size} cliente${selected.size === 1 ? '' : 's'}…`)
+    const targets = selected.size > 0
+      ? customers.filter((c) => selected.has(c.id))
+      : filtered
+    const today = new Date().toISOString().slice(0, 10)
+    exportCSV(`clientes_${today}.csv`,
+      ['ID', 'Nome', 'Username', 'E-mail', 'Telefone', 'Status', 'Origem', 'Bot', 'Compras', 'Total gasto (R$)', 'Tags'],
+      targets.map((c) => [
+        c.id, c.name, c.username, c.email, c.phone,
+        c.status === 'buyer' ? 'Comprador' : 'Lead',
+        c.origin, c.bot, c.purchases, c.totalSpent,
+        c.tags.join('; '),
+      ]),
+    )
+    if (selected.size > 0) setToast(`${targets.length} cliente${targets.length === 1 ? '' : 's'} exportado${targets.length === 1 ? '' : 's'}.`)
   }
 
   const buyers = customers.filter((c) => c.status === 'buyer').length
@@ -881,6 +895,7 @@ export default function CustomersPage() {
         subtitle={`${fmtNum(customers.length)} contatos · ${fmtNum(buyers)} compradores · ${fmtNum(leads)} leads`}
         actions={
           <>
+            <Btn iconName="download" onClick={() => bulkExport()}>Exportar CSV</Btn>
             <Btn iconName="upload">Importar CSV</Btn>
             <Btn variant="primary" iconName="user-plus">Adicionar cliente</Btn>
           </>

@@ -13,6 +13,7 @@ import {
   ArrowRight, ArrowLeft, CreditCard, FileText, ArrowLeftRight,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
+import { exportCSV } from '@/lib/csv'
 
 /* ── Icon map ─────────────────────────────────────────────── */
 
@@ -944,6 +945,33 @@ export default function FinancePage() {
   const m = financeMock
   const openInvCount = m.invoices.filter((i) => i.status !== 'paid').length
 
+  function handleExport() {
+    const today = new Date().toISOString().slice(0, 10)
+    if (tab === 'tx') {
+      exportCSV(`transacoes_${today}.csv`,
+        ['ID', 'Data', 'Tipo', 'Descrição', 'Valor (R$)', 'Status'],
+        m.transactions.map((t) => [
+          t.id, t.dt, txTypeMap[t.type]?.label ?? t.type,
+          t.desc, t.value, txStatusMap[t.status]?.label ?? t.status,
+        ]),
+      )
+    } else if (tab === 'withdraws') {
+      exportCSV(`saques_${today}.csv`,
+        ['ID', 'Solicitado em', 'Conta', 'Valor (R$)', 'Status', 'Concluído'],
+        m.withdrawals.map((w) => [
+          w.id, w.date, w.account, w.amount, wdStatusMap[w.status]?.label ?? w.status, w.concluded ?? '',
+        ]),
+      )
+    } else {
+      exportCSV(`faturas_${today}.csv`,
+        ['ID', 'Período', 'Vencimento', 'Valor (R$)', 'Status'],
+        m.invoices.map((i) => [
+          i.id, i.period, i.due, i.value, invStatusMap[i.status]?.label ?? i.status,
+        ]),
+      )
+    }
+  }
+
   return (
     <DashboardLayout>
       <PageHeader
@@ -951,7 +979,7 @@ export default function FinancePage() {
         subtitle="Receitas, saques e conciliações da sua operação."
         actions={
           <>
-            <Btn variant="secondary" iconName="download">Exportar</Btn>
+            <Btn variant="secondary" iconName="download" onClick={handleExport}>Exportar CSV</Btn>
             <Btn variant="primary" iconName="arrow-up-from-line" onClick={() => setModalOpen(true)}>Solicitar saque</Btn>
           </>
         }

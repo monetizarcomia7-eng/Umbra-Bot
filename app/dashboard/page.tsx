@@ -1,6 +1,6 @@
 'use client'
 
-import React from 'react'
+import React, { useState, useMemo } from 'react'
 import { DashboardLayout } from '@/components/dashboard/Layout'
 import { PageHeader } from '@/components/dashboard/PageHeader'
 import { Button } from '@/components/dashboard/Button'
@@ -8,18 +8,47 @@ import { TrendingUp, ShoppingBag, Target, Bot, ArrowUpRight, ArrowDownRight } fr
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts'
 import { cn } from '@/lib/utils'
 
-const revenue30d = Array.from({ length: 30 }, (_, i) => {
-  const base = 4200 + i * 95
-  const noise = Math.sin(i * 0.9) * 700 + (i % 6 === 0 ? 1200 : 0)
-  return { day: String(i + 1).padStart(2, '0'), value: Math.round(base + noise) }
-})
+type Period = '7d' | '30d' | '90d'
 
-const kpis = [
-  { id: 'revenue',    label: 'Receita (30 d)',    value: 'R$ 184.320,00', delta: '+12,4%', trend: 'up'   as const, Icon: TrendingUp  },
-  { id: 'sales',      label: 'Novas vendas',      value: '1.284',         delta: '+8,1%',  trend: 'up'   as const, Icon: ShoppingBag },
-  { id: 'conversion', label: 'Taxa de conversão', value: '6,82%',         delta: '–0,4%',  trend: 'down' as const, Icon: Target      },
-  { id: 'bots',       label: 'Bots ativos',       value: '14',            delta: '+2',     trend: 'up'   as const, Icon: Bot         },
-]
+interface KpiItem {
+  id: string
+  label: string
+  value: string
+  delta: string
+  trend: 'up' | 'down'
+  Icon: React.ElementType
+}
+
+interface ChartPoint { day: string; value: number }
+
+function genChartData(days: number): ChartPoint[] {
+  return Array.from({ length: days }, (_, i) => {
+    const base  = 4200 + i * (95 * 30 / days)
+    const noise = Math.sin(i * 0.9) * 700 + (i % 6 === 0 ? 1200 : 0)
+    return { day: String(i + 1).padStart(2, '0'), value: Math.round(base + noise) }
+  })
+}
+
+const KPI_BY_PERIOD: Record<Period, KpiItem[]> = {
+  '7d': [
+    { id: 'revenue',    label: 'Receita (7 d)',     value: 'R$ 42.180,00',   delta: '+9,2%',  trend: 'up',   Icon: TrendingUp  },
+    { id: 'sales',      label: 'Novas vendas',       value: '294',            delta: '+6,4%',  trend: 'up',   Icon: ShoppingBag },
+    { id: 'conversion', label: 'Taxa de conversão',  value: '7,14%',          delta: '+0,3%',  trend: 'up',   Icon: Target      },
+    { id: 'bots',       label: 'Bots ativos',        value: '14',             delta: '+2',     trend: 'up',   Icon: Bot         },
+  ],
+  '30d': [
+    { id: 'revenue',    label: 'Receita (30 d)',    value: 'R$ 184.320,00',  delta: '+12,4%', trend: 'up',   Icon: TrendingUp  },
+    { id: 'sales',      label: 'Novas vendas',      value: '1.284',          delta: '+8,1%',  trend: 'up',   Icon: ShoppingBag },
+    { id: 'conversion', label: 'Taxa de conversão', value: '6,82%',          delta: '–0,4%',  trend: 'down', Icon: Target      },
+    { id: 'bots',       label: 'Bots ativos',       value: '14',             delta: '+2',     trend: 'up',   Icon: Bot         },
+  ],
+  '90d': [
+    { id: 'revenue',    label: 'Receita (90 d)',    value: 'R$ 527.840,00',  delta: '+18,7%', trend: 'up',   Icon: TrendingUp  },
+    { id: 'sales',      label: 'Novas vendas',      value: '3.812',          delta: '+14,3%', trend: 'up',   Icon: ShoppingBag },
+    { id: 'conversion', label: 'Taxa de conversão', value: '6,61%',          delta: '–0,8%',  trend: 'down', Icon: Target      },
+    { id: 'bots',       label: 'Bots ativos',       value: '14',             delta: '+2',     trend: 'up',   Icon: Bot         },
+  ],
+}
 
 const topFlows = [
   { id: 1, name: 'Funil VIP → Mentoria',    sales: 287, conv: 9.4, color: 'var(--primary)' },
@@ -28,13 +57,7 @@ const topFlows = [
   { id: 4, name: 'Lançamento Black',        sales: 96,  conv: 4.2, color: 'var(--danger)'  },
 ]
 
-function KpiCard({ label, value, delta, trend, Icon }: {
-  label: string
-  value: string
-  delta: string
-  trend: 'up' | 'down'
-  Icon: React.ElementType
-}) {
+function KpiCard({ label, value, delta, trend, Icon }: KpiItem) {
   const positive = trend === 'up'
   return (
     <div className="bg-surface border border-border rounded-xl p-4 hover:border-border-strong transition-colors">
@@ -59,13 +82,16 @@ function KpiCard({ label, value, delta, trend, Icon }: {
   )
 }
 
-function RevenueChart() {
+function RevenueChart({ data }: { data: ChartPoint[] }) {
   const [mounted, setMounted] = React.useState(false)
   React.useEffect(() => setMounted(true), [])
   if (!mounted) return <div style={{ height: 240 }} />
+
+  const interval = data.length <= 7 ? 0 : data.length <= 30 ? 4 : 13
+
   return (
     <ResponsiveContainer width="100%" height={240}>
-      <AreaChart data={revenue30d} margin={{ top: 4, right: 4, bottom: 0, left: -10 }}>
+      <AreaChart data={data} margin={{ top: 4, right: 4, bottom: 0, left: -10 }}>
         <defs>
           <linearGradient id="revGrad" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor="var(--primary)" stopOpacity={0.28} />
@@ -78,7 +104,7 @@ function RevenueChart() {
           tickLine={false}
           axisLine={false}
           fontSize={11}
-          interval={4}
+          interval={interval}
           tick={{ fill: 'var(--text-muted)' }}
         />
         <YAxis
@@ -111,7 +137,10 @@ function RevenueChart() {
 }
 
 export default function DashboardPage() {
-  const maxSales = Math.max(...topFlows.map((f) => f.sales))
+  const [period, setPeriod] = useState<Period>('30d')
+  const chartData = useMemo(() => genChartData(period === '7d' ? 7 : period === '30d' ? 30 : 90), [period])
+  const kpis      = KPI_BY_PERIOD[period]
+  const maxSales  = Math.max(...topFlows.map((f) => f.sales))
 
   return (
     <DashboardLayout>
@@ -136,15 +165,18 @@ export default function DashboardPage() {
             <div className="flex items-center justify-between mb-4">
               <div>
                 <div className="text-[14px] font-semibold text-text">Receita ao longo do tempo</div>
-                <div className="text-[12px] text-text-muted">Últimos 30 dias</div>
+                <div className="text-[12px] text-text-muted">
+                  Últimos {period === '7d' ? 7 : period === '30d' ? 30 : 90} dias
+                </div>
               </div>
               <div className="flex gap-0.5 bg-surface-2 p-0.5 rounded-lg">
-                {(['7d', '30d', '90d'] as const).map((p, i) => (
+                {(['7d', '30d', '90d'] as const).map((p) => (
                   <button
                     key={p}
+                    onClick={() => setPeriod(p)}
                     className={cn(
-                      'px-2.5 h-7 text-[11px] font-medium rounded-md tnum',
-                      i === 1
+                      'px-2.5 h-7 text-[11px] font-medium rounded-md tnum transition-colors',
+                      period === p
                         ? 'bg-surface text-text border border-border'
                         : 'text-text-muted hover:text-text',
                     )}
@@ -154,7 +186,7 @@ export default function DashboardPage() {
                 ))}
               </div>
             </div>
-            <RevenueChart />
+            <RevenueChart data={chartData} />
           </div>
 
           <div className="bg-surface border border-border rounded-xl p-5">

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { DashboardLayout } from '@/components/dashboard/Layout'
 import { PageHeader } from '@/components/dashboard/PageHeader'
 import { createClient } from '@/lib/supabase/client'
@@ -8,6 +8,7 @@ import {
   Save, Upload, Lock, Eye, EyeOff, Shield, ShieldCheck,
   AlertTriangle, AlertCircle, Check, CheckCircle2, X, Key,
   ArrowRight, ArrowLeft, Search, UserPlus, Trash2, Send, Download,
+  Loader2,
 } from 'lucide-react'
 
 /* ============================================================
@@ -229,10 +230,41 @@ function FakeQR({ size = 180 }: { size?: number }) {
 function AccountCard({ data, onSave }: { data: Account; onSave: (d: Account) => void }) {
   const [draft, setDraft] = useState(data)
   const [saved, setSaved] = useState(false)
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null)
+  const [uploading, setUploading] = useState(false)
+  const [uploadError, setUploadError] = useState<string | null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
+
   useEffect(() => setDraft(data), [data])
   const dirty = JSON.stringify(draft) !== JSON.stringify(data)
   function set(patch: Partial<Account>) { setDraft(d => ({ ...d, ...patch })); setSaved(false) }
   function save() { onSave(draft); setSaved(true); setTimeout(() => setSaved(false), 2200) }
+
+  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (file.size > 2 * 1024 * 1024) { setUploadError('Arquivo muito grande. Máximo: 2 MB.'); return }
+    setUploading(true)
+    setUploadError(null)
+    try {
+      const supabase = createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) throw new Error('não autenticado')
+      const ext  = file.name.split('.').pop() ?? 'jpg'
+      const path = `${user.id}/avatar.${ext}`
+      const { error: upErr } = await supabase.storage.from('avatars').upload(path, file, { upsert: true })
+      if (upErr) throw upErr
+      const { data: urlData } = supabase.storage.from('avatars').getPublicUrl(path)
+      const url = urlData.publicUrl + `?t=${Date.now()}`
+      setAvatarUrl(url)
+      await supabase.from('profiles').update({ avatar_url: url }).eq('id', user.id)
+    } catch (err: unknown) {
+      setUploadError(err instanceof Error ? err.message : 'Erro ao enviar foto')
+    } finally {
+      setUploading(false)
+      if (fileRef.current) fileRef.current.value = ''
+    }
+  }
 
   return (
     <CardSection
@@ -248,8 +280,20 @@ function AccountCard({ data, onSave }: { data: Account; onSave: (d: Account) => 
     >
       <div className="space-y-4">
         <div className="flex items-center gap-4 flex-wrap">
-          <div className="w-16 h-16 rounded-full flex items-center justify-center text-white font-bold text-[22px] shrink-0"
-            style={{ background: draft.avatarColor }}>{draft.avatar}</div>
+          {/* Avatar — shows uploaded photo or colored initials */}
+          <div className="relative w-16 h-16 shrink-0">
+            {avatarUrl ? (
+              <img src={avatarUrl} alt="Avatar" className="w-16 h-16 rounded-full object-cover" />
+            ) : (
+              <div className="w-16 h-16 rounded-full flex items-center justify-center text-white font-bold text-[22px]"
+                style={{ background: draft.avatarColor }}>{draft.avatar}</div>
+            )}
+            {uploading && (
+              <div className="absolute inset-0 rounded-full bg-black/40 flex items-center justify-center">
+                <Loader2 size={20} className="text-white animate-spin" />
+              </div>
+            )}
+          </div>
           <div className="flex-1 grid grid-cols-2 gap-2 max-w-md">
             <Field label="Iniciais">
               <input type="text" value={draft.avatar} maxLength={3}
@@ -265,7 +309,13 @@ function AccountCard({ data, onSave }: { data: Account; onSave: (d: Account) => 
               </div>
             </Field>
           </div>
-          <Btn variant="secondary" size="sm" icon={<Upload size={13} />}>Enviar foto</Btn>
+          <div className="flex flex-col gap-1">
+            <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleFileChange} />
+            <Btn variant="secondary" size="sm" icon={<Upload size={13} />} onClick={() => fileRef.current?.click()} disabled={uploading}>
+              {uploading ? 'Enviando…' : 'Enviar foto'}
+            </Btn>
+            {uploadError && <p className="text-[11px] text-danger">{uploadError}</p>}
+          </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-4 border-t border-border">

@@ -1,11 +1,22 @@
 'use client'
 
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { Sidebar } from './Sidebar'
 import { Topbar } from './Topbar'
+import { useKeyboardShortcuts } from '@/hooks/use-keyboard-shortcuts'
 
 export function DashboardLayout({ children }: { children: React.ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false)
+
+  // Global keyboard shortcuts (⌘K=search, b=bots, f=finance, c=customers, a=activity)
+  useKeyboardShortcuts()
+
+  // Register service worker for Web Push
+  useEffect(() => {
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch(() => {/* silent in dev */})
+    }
+  }, [])
 
   return (
     <div className="flex h-screen overflow-hidden bg-bg text-text">
