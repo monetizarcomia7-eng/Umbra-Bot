@@ -206,17 +206,20 @@ export default function DashboardPage() {
     const supabase = createClient()
 
     supabase.auth.getUser().then(({ data }) => {
-      if (data.user) setUserId(data.user.id)
-    })
+      const uid = data.user?.id
+      if (!uid) return
+      setUserId(uid)
 
-    supabase
-      .from('bots')
-      .select('id', { count: 'exact', head: true })
-      .then(({ count }) => {
-        const n = count ?? 0
-        setBotsCount(n)
-        if (n === 0) setShowWizard(true)
-      })
+      supabase
+        .from('bots')
+        .select('id', { count: 'exact', head: true })
+        .then(({ count }) => {
+          const n = count ?? 0
+          setBotsCount(n)
+          const seen = localStorage.getItem(`umbra_onboarding_seen_${uid}`)
+          if (n === 0 && !seen) setShowWizard(true)
+        })
+    })
   }, [])
 
   // Fetch real KPIs from transactions table
@@ -268,8 +271,8 @@ export default function DashboardPage() {
         <OnboardingWizard
           userId={userId}
           onComplete={() => {
+            if (userId) localStorage.setItem(`umbra_onboarding_seen_${userId}`, 'true')
             setShowWizard(false)
-            // Refresh bots count after wizard
             const supabase = createClient()
             supabase.from('bots').select('id', { count: 'exact', head: true })
               .then(({ count }) => setBotsCount(count ?? 0))
