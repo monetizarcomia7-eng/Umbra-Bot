@@ -274,7 +274,7 @@ export function Topbar({ onMobileMenu }: TopbarProps) {
 
       <div className="flex-1 sm:hidden" />
 
-      <div className="flex items-center gap-0.5">
+      <div className="flex items-center gap-0.5 ml-auto">
         <button className="sm:hidden w-9 h-9 flex items-center justify-center rounded-lg text-text-muted hover:bg-surface-2">
           <Search size={18} />
         </button>
