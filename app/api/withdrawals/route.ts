@@ -5,7 +5,7 @@ import { createClient } from '@/lib/supabase/server'
 import { rateLimit } from '@/lib/rate-limit'
 
 const withdrawalSchema = z.object({
-  amount:        z.number({ invalid_type_error: 'Valor deve ser um número.' }).positive('Valor deve ser maior que zero.'),
+  amount:        z.number({ error: 'Valor deve ser um número.' }).positive('Valor deve ser maior que zero.'),
   account_id:    z.string().min(1, 'Conta de destino obrigatória.').max(100),
   account_label: z.string().min(1, 'Rótulo da conta obrigatório.').max(200),
 })
@@ -33,7 +33,7 @@ export async function POST(request: NextRequest) {
 
   const parsed = withdrawalSchema.safeParse(rawBody)
   if (!parsed.success) {
-    const message = parsed.error.errors[0]?.message ?? 'Dados inválidos.'
+    const message = parsed.error.issues[0]?.message ?? 'Dados inválidos.'
     return NextResponse.json({ error: message }, { status: 400 })
   }
 
