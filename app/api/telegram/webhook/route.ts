@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { decryptToken } from '@/lib/crypto'
+import { sendTelegramMessage } from '@/lib/telegram'
 
 interface TelegramMessage {
   message_id: number
@@ -19,14 +20,6 @@ interface TelegramUpdate {
     message?: TelegramMessage
     data?: string
   }
-}
-
-async function sendMessage(botToken: string, chatId: number, text: string) {
-  await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML' }),
-  })
 }
 
 // POST /api/telegram/webhook?bot_id=<uuid>
@@ -100,11 +93,11 @@ export async function POST(request: NextRequest) {
 
   // Handle /start command
   if (msg.text?.startsWith('/start')) {
-    await sendMessage(
+    await sendTelegramMessage(
       decryptToken(bot.token),
       chatId,
       `Olá, <b>${firstName}</b>! 👋\n\nSeja bem-vindo ao <b>${bot.name}</b>. Em breve você receberá mais informações.`,
-    )
+    ).catch(() => {}) // não bloquear o 200 se falhar
   }
 
   return new NextResponse(null, { status: 200 })

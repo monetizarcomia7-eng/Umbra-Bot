@@ -1,7 +1,9 @@
 import { NextResponse, type NextRequest } from 'next/server'
+import * as Sentry from '@sentry/nextjs'
 import { createClient } from '@/lib/supabase/server'
 import crypto from 'crypto'
 import { decryptToken } from '@/lib/crypto'
+import { sendTelegramMessage } from '@/lib/telegram'
 
 // Verifies Mercado Pago webhook signature.
 // MP sends: x-signature: ts=<ts>,v1=<hmac>
@@ -20,14 +22,6 @@ function verifyMpSignature(request: NextRequest, rawBody: string, paymentId: str
   const message = `id:${paymentId};request-id:${requestId};ts:${ts}`
   const expected = crypto.createHmac('sha256', secret).update(message).digest('hex')
   return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(v1))
-}
-
-async function sendTelegramMessage(botToken: string, chatId: string, text: string) {
-  await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML' }),
-  })
 }
 
 // POST /api/payments/mercadopago-webhook
@@ -83,16 +77,21 @@ export async function POST(request: NextRequest) {
   if (tx.status === newStatus) return new NextResponse(null, { status: 200 })
 
   // Update transaction status
-  await supabase
+  const { error: updateError } = await supabase
     .from('transactions')
     .update({ status: newStatus, updated_at: new Date().toISOString() })
     .eq('id', tx.id)
+
+  if (updateError) {
+    Sentry.captureException(updateError, { extra: { paymentId, txId: tx.id, context: 'mp_webhook_update' } })
+    return new NextResponse(null, { status: 200 }) // responde 200 para MP não retentar
+  }
 
   // On approval: log event and notify buyer via Telegram
   if (newStatus === 'approved') {
     const amount = Number(tx.amount).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 
-    await supabase.from('activity_events').insert({
+    const { error: activityError } = await supabase.from('activity_events').insert({
       user_id:     tx.user_id,
       bot_id:      tx.bot_id,
       type:        'sale',
@@ -100,6 +99,9 @@ export async function POST(request: NextRequest) {
       description: `${tx.customer_name} · ${amount}`,
       amount:      tx.amount,
     })
+    if (activityError) {
+      Sentry.captureException(activityError, { extra: { txId: tx.id, context: 'mp_webhook_activity' } })
+    }
 
     // Send confirmation to buyer if we know their Telegram ID
     if (tx.customer_telegram_id && tx.bot_id) {
@@ -114,7 +116,9 @@ export async function POST(request: NextRequest) {
           decryptToken(bot.token),
           tx.customer_telegram_id,
           `✅ <b>Pagamento confirmado!</b>\n\nProduto: <b>${tx.product_name}</b>\nValor: <b>${amount}</b>\n\nObrigado pela sua compra! 🎉`,
-        )
+        ).catch((err) => {
+          Sentry.captureException(err, { extra: { txId: tx.id, context: 'mp_webhook_telegram_notify' } })
+        })
       }
     }
   }

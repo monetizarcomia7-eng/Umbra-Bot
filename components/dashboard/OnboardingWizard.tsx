@@ -91,7 +91,7 @@ function BotStep({ userId, onNext, onSkip }: { userId: string; onNext: () => voi
     setError(null)
     setLoading(true)
     try {
-      await saveBotAction(userId, name.trim(), token.trim())
+      await saveBotAction(name.trim(), token.trim())
       onNext()
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Erro ao salvar bot.')

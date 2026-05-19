@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
 import { DashboardLayout } from '@/components/dashboard/Layout'
 import { PageHeader } from '@/components/dashboard/PageHeader'
@@ -235,6 +235,9 @@ function DashboardPageInner() {
   const [realChartData, setRealChartData] = useState<ChartPoint[]>([])
   const [realFlows,     setRealFlows]     = useState<RealFlow[]>([])
 
+  type KpiCache = { kpi: RealKpi; chart: ChartPoint[]; flows: RealFlow[] }
+  const kpiCacheRef = useRef<Partial<Record<Period, KpiCache>>>({})
+
   useEffect(() => {
     if (!userLoaded || botsCount === null || !user.id) return
     const seen = localStorage.getItem(`umbra_onboarding_seen_${user.id}`)
@@ -243,6 +246,16 @@ function DashboardPageInner() {
 
   useEffect(() => {
     if (botsCount === null || botsCount === 0) {
+      setKpiLoading(false)
+      setChartLoading(false)
+      return
+    }
+
+    const cached = kpiCacheRef.current[period]
+    if (cached) {
+      setRealKpi(cached.kpi)
+      setRealChartData(cached.chart)
+      setRealFlows(cached.flows)
       setKpiLoading(false)
       setChartLoading(false)
       return
@@ -265,11 +278,12 @@ function DashboardPageInner() {
     ]).then(([txRes, botsRes]) => {
       const txs = txRes.data ?? []
 
-      setRealKpi({
+      const kpi: RealKpi = {
         revenue:    txs.reduce((s, t) => s + Number(t.net ?? t.amount ?? 0), 0),
         sales:      txs.length,
         botsActive: botsRes.count ?? 0,
-      })
+      }
+      setRealKpi(kpi)
       setKpiLoading(false)
 
       const byDay: Record<string, number> = {}
@@ -277,12 +291,12 @@ function DashboardPageInner() {
         const key = String(tx.created_at).slice(0, 10)
         byDay[key] = (byDay[key] ?? 0) + Number(tx.net ?? tx.amount ?? 0)
       }
-      const points: ChartPoint[] = Array.from({ length: days }, (_, i) => {
+      const chart: ChartPoint[] = Array.from({ length: days }, (_, i) => {
         const d   = new Date(Date.now() - (days - 1 - i) * 86_400_000)
         const key = d.toISOString().slice(0, 10)
         return { day: String(i + 1).padStart(2, '0'), value: byDay[key] ?? 0 }
       })
-      setRealChartData(points)
+      setRealChartData(chart)
       setChartLoading(false)
 
       const flowMap: Record<string, number> = {}
@@ -296,6 +310,8 @@ function DashboardPageInner() {
         .slice(0, 4)
         .map(([name, sales], i) => ({ id: i + 1, name, sales, conv: 0, color: COLORS[i] }))
       setRealFlows(flows)
+
+      kpiCacheRef.current[period] = { kpi, chart, flows }
     })
   }, [botsCount, period])
 

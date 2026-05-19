@@ -41,3 +41,9 @@ export interface RawTransaction {
   status: string; product_name: string | null; customer_name: string | null
   gateway: string | null; created_at: string
 }
+
+export interface RawWithdrawal {
+  id: string; amount: number; account_id: string; account_label: string
+  status: 'pending' | 'completed' | 'failed'
+  created_at: string; concluded_at: string | null
+}

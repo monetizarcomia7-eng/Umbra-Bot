@@ -5,7 +5,7 @@ import { DashboardLayout } from '@/components/dashboard/Layout'
 import { PageHeader } from '@/components/dashboard/PageHeader'
 import { exportCSV } from '@/lib/csv'
 import { useAnalytics } from '@/hooks/use-analytics'
-import type { FinanceData, RawTransaction, Transaction } from './types'
+import type { FinanceData, RawTransaction, RawWithdrawal, Transaction, Withdrawal } from './types'
 import { financeMock } from './mock-data'
 import { txTypeMap, txStatusMap, wdStatusMap, invStatusMap } from './constants'
 import { SummaryCard, Tabs, Btn } from './atoms'
@@ -20,7 +20,7 @@ const tabsDef = [
   { id: 'invoices',  label: 'Faturas',    icon: 'file-text'          },
 ]
 
-function buildLiveData(rows: RawTransaction[]): FinanceData {
+function buildLiveData(rows: RawTransaction[], rawWithdrawals: RawWithdrawal[]): FinanceData {
   const txRows: Transaction[] = rows.map((row) => {
     const isRefund = row.status === 'refunded' || row.status === 'cancelled'
     return {
@@ -35,6 +35,15 @@ function buildLiveData(rows: RawTransaction[]): FinanceData {
     }
   })
 
+  const wdRows: Withdrawal[] = rawWithdrawals.map((w) => ({
+    id:        w.id,
+    date:      w.created_at,
+    amount:    Number(w.amount),
+    account:   w.account_label,
+    status:    w.status,
+    concluded: w.concluded_at ?? '',
+  }))
+
   const approved = rows.filter((r) => r.status === 'approved')
   const pending  = rows.filter((r) => r.status === 'pending')
 
@@ -48,16 +57,23 @@ function buildLiveData(rows: RawTransaction[]): FinanceData {
       deltas: { saldo: 0, liberar: 0, total: 0, comissoes: 0 },
     },
     transactions: txRows,
+    withdrawals:  wdRows.length > 0 ? wdRows : financeMock.withdrawals,
   }
 }
 
-export function FinanceDashboard({ initialTransactions }: { initialTransactions: RawTransaction[] }) {
+export function FinanceDashboard({
+  initialTransactions,
+  initialWithdrawals,
+}: {
+  initialTransactions: RawTransaction[]
+  initialWithdrawals:  RawWithdrawal[]
+}) {
   const [tab,       setTab]       = useState('tx')
   const [modalOpen, setModalOpen] = useState(false)
   const { track } = useAnalytics()
 
   const m = initialTransactions.length > 0
-    ? buildLiveData(initialTransactions)
+    ? buildLiveData(initialTransactions, initialWithdrawals)
     : financeMock
 
   const openInvCount = m.invoices.filter((i) => i.status !== 'paid').length

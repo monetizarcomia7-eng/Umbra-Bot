@@ -1,6 +1,14 @@
 import { NextResponse, type NextRequest } from 'next/server'
+import { z } from 'zod'
+import * as Sentry from '@sentry/nextjs'
 import { createClient } from '@/lib/supabase/server'
 import { rateLimit } from '@/lib/rate-limit'
+
+const withdrawalSchema = z.object({
+  amount:        z.number({ invalid_type_error: 'Valor deve ser um número.' }).positive('Valor deve ser maior que zero.'),
+  account_id:    z.string().min(1, 'Conta de destino obrigatória.').max(100),
+  account_label: z.string().min(1, 'Rótulo da conta obrigatório.').max(200),
+})
 
 export async function POST(request: NextRequest) {
   const supabase = await createClient()
@@ -10,31 +18,28 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Não autorizado.' }, { status: 401 })
   }
 
-  // 5 withdrawal requests per hour per user
+  // 5 saques por hora por usuário
   const limited = await rateLimit(`withdrawals:${user.id}`, 5, 60 * 60 * 1000)
   if (!limited.ok) {
     return NextResponse.json({ error: 'Limite de saques atingido. Tente novamente em 1 hora.' }, { status: 429 })
   }
 
-  let body: { amount?: unknown; account_id?: unknown; account_label?: unknown }
+  let rawBody: unknown
   try {
-    body = await request.json()
+    rawBody = await request.json()
   } catch {
     return NextResponse.json({ error: 'Corpo da requisição inválido.' }, { status: 400 })
   }
 
-  const amount = Number(body.amount)
-  const accountId    = String(body.account_id ?? '').trim()
-  const accountLabel = String(body.account_label ?? '').trim()
-
-  if (!amount || amount <= 0) {
-    return NextResponse.json({ error: 'Valor inválido.' }, { status: 400 })
-  }
-  if (!accountId || !accountLabel) {
-    return NextResponse.json({ error: 'Conta de destino inválida.' }, { status: 400 })
+  const parsed = withdrawalSchema.safeParse(rawBody)
+  if (!parsed.success) {
+    const message = parsed.error.errors[0]?.message ?? 'Dados inválidos.'
+    return NextResponse.json({ error: message }, { status: 400 })
   }
 
-  // Compute available balance: sum of net for approved transactions
+  const { amount, account_id, account_label } = parsed.data
+
+  // Calcula saldo disponível: soma do net de transações aprovadas
   const { data: balanceRows, error: balanceError } = await supabase
     .from('transactions')
     .select('net, amount')
@@ -42,6 +47,7 @@ export async function POST(request: NextRequest) {
     .eq('status', 'approved')
 
   if (balanceError) {
+    Sentry.captureException(balanceError, { extra: { userId: user.id, context: 'withdrawals_balance_check' } })
     return NextResponse.json({ error: 'Erro ao verificar saldo.' }, { status: 500 })
   }
 
@@ -54,12 +60,13 @@ export async function POST(request: NextRequest) {
   const { error: insertError } = await supabase.from('withdrawals').insert({
     user_id:       user.id,
     amount,
-    account_id:    accountId,
-    account_label: accountLabel,
+    account_id,
+    account_label,
     status:        'pending',
   })
 
   if (insertError) {
+    Sentry.captureException(insertError, { extra: { userId: user.id, context: 'withdrawals_insert' } })
     return NextResponse.json({ error: 'Erro ao registrar saque.' }, { status: 500 })
   }
 

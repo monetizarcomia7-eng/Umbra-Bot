@@ -1,16 +1,27 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
-const SECURITY_HEADERS: Record<string, string> = {
+const isDev = process.env.NODE_ENV === 'development'
+
+// unsafe-eval necessário apenas em dev (Next.js HMR + webpack devtools).
+// Em produção os bundles são pré-compilados — remover reduz a superfície de XSS.
+const scriptSrc = isDev
+  ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
+  : "script-src 'self' 'unsafe-inline'"
+
+const BASE_SECURITY_HEADERS: Record<string, string> = {
   'X-Frame-Options':           'DENY',
   'X-Content-Type-Options':    'nosniff',
   'Referrer-Policy':           'strict-origin-when-cross-origin',
   'Permissions-Policy':        'camera=(), microphone=(), geolocation=()',
   'X-DNS-Prefetch-Control':    'on',
   'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
-  'Content-Security-Policy': [
+}
+
+function buildCsp(): string {
+  return [
     "default-src 'self'",
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+    scriptSrc,
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: https: blob:",
     "font-src 'self' data:",
@@ -20,11 +31,12 @@ const SECURITY_HEADERS: Record<string, string> = {
     "frame-ancestors 'none'",
     "base-uri 'self'",
     "form-action 'self'",
-  ].join('; '),
+  ].join('; ')
 }
 
 function applySecurityHeaders(res: NextResponse): NextResponse {
-  Object.entries(SECURITY_HEADERS).forEach(([k, v]) => res.headers.set(k, v))
+  Object.entries(BASE_SECURITY_HEADERS).forEach(([k, v]) => res.headers.set(k, v))
+  res.headers.set('Content-Security-Policy', buildCsp())
   return res
 }
 
