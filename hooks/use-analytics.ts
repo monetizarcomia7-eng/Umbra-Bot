@@ -12,9 +12,19 @@ type EventMap = {
   pix_payment_created:       { amount: number; product_name: string }
   avatar_updated:            Record<string, never>
   profile_avatar_updated:    Record<string, never>
-  csv_exported:              { section: string; rows: number }
+  csv_exported:              { section: string; rows: number; period?: string }
   plan_upgraded:             { from: string; to: string }
   user_registered:           { method: string }
+  // Aba Análises
+  analytics_filter_changed:  {
+    period: string
+    compare: boolean
+    bot_filtered: boolean
+    product_filtered: boolean
+    flow_filtered: boolean
+    utm_filtered: boolean
+  }
+  analytics_cohort_error:    { error: string }
 }
 
 export function useAnalytics() {

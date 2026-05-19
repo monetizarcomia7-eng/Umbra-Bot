@@ -7,6 +7,7 @@ import { PageHeader } from '@/components/dashboard/PageHeader'
 import { exportCSV } from '@/lib/csv'
 import { cn } from '@/lib/utils'
 import { AlertTriangle, Download, RefreshCw } from 'lucide-react'
+import { useAnalytics } from '@/hooks/use-analytics'
 import type { AnalyticsSummary, Filters } from './_types'
 import { fmtBRL, fmtNum } from './_utils'
 import { FilterBar } from './_components/FilterBar'
@@ -64,6 +65,7 @@ export function AnalyticsClient({ summary }: { summary: AnalyticsSummary }) {
   const [exporting, setExporting] = useState(false)
 
   const { filters } = summary
+  const { track } = useAnalytics()
 
   function handleFilterChange(patch: Partial<Filters>) {
     const next = { ...filters, ...patch }
@@ -74,6 +76,14 @@ export function AnalyticsClient({ summary }: { summary: AnalyticsSummary }) {
     if (next.flowId !== 'all')   params.set('flowId',      next.flowId)
     if (next.utmSource !== 'all') params.set('utmSource',  next.utmSource)
     if (next.compare)            params.set('compare',     '1')
+    track('analytics_filter_changed', {
+      period:           next.period,
+      compare:          next.compare,
+      bot_filtered:     next.botId !== 'all',
+      product_filtered: next.productName !== 'all',
+      flow_filtered:    next.flowId !== 'all',
+      utm_filtered:     next.utmSource !== 'all',
+    })
     startTransition(() => {
       router.replace(
         `/dashboard/analytics${params.size > 0 ? `?${params.toString()}` : ''}`,
@@ -83,11 +93,17 @@ export function AnalyticsClient({ summary }: { summary: AnalyticsSummary }) {
   }
 
   function handleClear() {
+    track('analytics_filter_changed', {
+      period: '30d', compare: false,
+      bot_filtered: false, product_filtered: false,
+      flow_filtered: false, utm_filtered: false,
+    })
     startTransition(() => router.replace('/dashboard/analytics', { scroll: false }))
   }
 
   const handleExport = useCallback(() => {
     setExporting(true)
+    track('csv_exported', { section: 'analytics', rows: summary.exportRows.length, period: filters.period })
     exportCSV(
       `analytics-${filters.period}-${new Date().toISOString().slice(0, 10)}.csv`,
       ['Data', 'Produto', 'Valor bruto (R$)', 'Taxa (R$)', 'Valor líquido (R$)', 'Bot', 'Fluxo', 'Origem (UTM)', 'Campanha (UTM)'],
@@ -97,7 +113,7 @@ export function AnalyticsClient({ summary }: { summary: AnalyticsSummary }) {
       ]),
     )
     setTimeout(() => setExporting(false), 600)
-  }, [summary.exportRows, filters.period])
+  }, [summary.exportRows, filters.period, track])
 
   const flowHasRealData = summary.byFlow.some((f) => f.isReal)
 

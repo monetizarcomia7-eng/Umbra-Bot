@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
+import { captureEvent } from '@/lib/analytics-server'
 import { AnalyticsClient } from './AnalyticsClient'
 import type { AnalyticsSummary, Filters, Period } from './_types'
 import { getDateRange } from './_utils'
@@ -118,6 +119,10 @@ export default async function AnalyticsPage({
     evtRes.error?.message ??
     cohortRes.error?.message ??
     null
+
+  if (cohortRes.error) {
+    void captureEvent(uid, 'analytics_cohort_error', { error: cohortRes.error.message })
+  }
   const limitReached =
     (txRes.data?.length ?? 0) >= QUERY_LIMIT ||
     (cntRes.data?.length ?? 0) >= QUERY_LIMIT ||
