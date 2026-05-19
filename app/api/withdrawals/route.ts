@@ -18,10 +18,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Não autorizado.' }, { status: 401 })
   }
 
-  // 5 saques por hora por usuário
-  const limited = await rateLimit(`withdrawals:${user.id}`, 5, 60 * 60 * 1000)
+  // 3 saques por dia por usuário (padrão financeiro conservador)
+  const limited = await rateLimit(`withdrawals:${user.id}`, 3, 24 * 60 * 60 * 1000)
   if (!limited.ok) {
-    return NextResponse.json({ error: 'Limite de saques atingido. Tente novamente em 1 hora.' }, { status: 429 })
+    return NextResponse.json({ error: 'Limite de saques atingido. Você pode solicitar no máximo 3 saques por dia.' }, { status: 429 })
   }
 
   let rawBody: unknown
@@ -52,7 +52,6 @@ export async function POST(request: NextRequest) {
   }
 
   // Usa profiles.balance — mantido atomicamente por triggers (migration 029).
-  // É sempre preciso independente do número de transações.
   const { data: profile, error: profileError } = await supabase
     .from('profiles')
     .select('balance')
@@ -70,12 +69,19 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: `Saldo insuficiente. Disponível: R$ ${available.toFixed(2)}.` }, { status: 422 })
   }
 
+  // Captura IP para auditoria e detecção de fraude
+  const requesterIp =
+    request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ??
+    request.headers.get('x-real-ip') ??
+    null
+
   const { error: insertError } = await supabase.from('withdrawals').insert({
     user_id:       user.id,
     amount,
     account_id,
     account_label,
     status:        'pending',
+    requester_ip:  requesterIp,
   })
 
   if (insertError) {

@@ -187,7 +187,7 @@ create table if not exists public.transactions (
   gateway_payment_id text,
   amount             numeric(12,2) not null,
   fee                numeric(12,2) not null default 0,
-  net                numeric(12,2) generated always as (amount - fee) stored,
+  net                numeric(12,2),
   status             text          not null default 'pending'
                        check (status in ('pending','approved','refunded','cancelled','expired')),
   pix_qr_code        text,

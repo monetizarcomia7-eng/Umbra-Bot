@@ -1,4 +1,4 @@
-create table if not exists bank_accounts (
+create table if not exists public.bank_accounts (
   id         uuid        primary key default gen_random_uuid(),
   user_id    uuid        not null references auth.users(id) on delete cascade,
   label      text        not null check (char_length(label) between 1 and 200),

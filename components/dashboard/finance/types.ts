@@ -8,7 +8,7 @@ export interface Transaction {
   id: string; dt: string
   type: 'sale' | 'fee' | 'commission' | 'refund' | 'withdraw'
   desc: string; value: number
-  status: 'available' | 'pending' | 'completed' | 'failed'
+  status: 'available' | 'pending' | 'completed' | 'failed' | 'expired' | 'cancelled'
   detail?: TxDetail
 }
 
@@ -22,8 +22,6 @@ export interface Invoice {
   id: string; period: string; value: number; due: string
   status: 'paid' | 'pending' | 'overdue'
 }
-
-export interface Conta { id: string; label: string; bank: string; kind: string }
 
 export interface BankAccount {
   id: string
@@ -40,7 +38,6 @@ export interface FinanceSummary {
 
 export interface FinanceData {
   summary: FinanceSummary
-  contas: Conta[]
   transactions: Transaction[]
   withdrawals: Withdrawal[]
   invoices: Invoice[]
@@ -55,6 +52,7 @@ export interface RawTransaction {
   fee: number | null
   status: string
   type: string | null
+  payment_method: string | null
   product_name: string | null
   customer_name: string | null
   customer_email: string | null

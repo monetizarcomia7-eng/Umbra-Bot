@@ -39,7 +39,7 @@ umbra-bot/
 │   │   │   ├── pix/route.ts      # Cria pagamento PIX (Mercado Pago) + Sentry + analytics
 │   │   │   └── mercadopago-webhook/route.ts # Confirma pagamento (valida secret em prod)
 │   │   ├── withdrawals/
-│   │   │   └── route.ts          # POST: solicita saque (auth + zod + rate limit 5/h + Sentry)
+│   │   │   └── route.ts          # POST: solicita saque (auth + zod + rate limit 3/dia + IP + Sentry)
 │   │   ├── bank-accounts/
 │   │   │   ├── route.ts          # GET: lista contas; POST: cria conta (zod + Sentry)
 │   │   │   └── [id]/route.ts     # DELETE: remove conta (verifica user_id)
@@ -51,6 +51,9 @@ umbra-bot/
 │   │   │   ├── subscribe/route.ts
 │   │   │   └── notify/route.ts
 │   │   ├── broadcasts/send/route.ts
+│   │   ├── finance/
+│   │   │   ├── balance/route.ts  # GET: saldo fresco via RPC finance_summary (usado pelo WithdrawModal)
+│   │   │   └── transactions/route.ts # GET: paginação "carregar mais" (?offset=N, limit 500)
 │   │   ├── checkout/
 │   │   │   └── track/route.ts    # POST: registra eventos de funil (visited/cart_added/payment_initiated)
 │   │   │                         # Público (sem auth), CORS *, rate-limit 60/min por IP
@@ -260,6 +263,14 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Financeiro — transactions.type ('sale'|'fee'|'commission'|'refund') — migration 044 | ✅ Implementado |
 | Financeiro — withdrawals.notes: motivo de falha exibido abaixo do badge — migration 044 | ✅ Implementado |
 | Financeiro — withdrawals/route.ts usa profiles.balance (trigger atômico) em vez de full scan | ✅ Implementado |
+| Financeiro — auditoria P1: split memo mapRawRows (sem period) + buildPeriodSummary (com period) | ✅ Implementado |
+| Financeiro — paginação P2: botão "Carregar mais" via GET /api/finance/transactions?offset=N | ✅ Implementado |
+| Financeiro — status corretos P3: expired→Expirado, cancelled→Cancelado, refunded→Falhou | ✅ Implementado |
+| Financeiro — payment_method P5: coluna no banco (mig 047) + METHOD_LABEL no front | ✅ Implementado |
+| Financeiro — cron P6: filtra payout_tx_id IS NULL + salva processed_by='cron' (mig 048) | ✅ Implementado |
+| Financeiro — rate limit P7: saques 3/dia (era 5/hora) + captura requester_ip | ✅ Implementado |
+| Financeiro — saldo fresco P8: WithdrawModal busca GET /api/finance/balance ao abrir | ✅ Implementado |
+| Financeiro — transactions.net corrigido de GENERATED→coluna normal (mig 046) | ✅ Implementado |
 | CSV export (Financeiro + Clientes) + evento csv_exported | ✅ Funcional |
 | Atalhos de teclado | ✅ Funcional |
 | Busca global (14 tabelas, race-condition safe, sem any) | ✅ Funcional |
@@ -280,7 +291,7 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Sentry (client Replay + server tracePropagation + captureException) | ✅ Configurado |
 | PostHog (19 eventos rastreados) | ✅ Configurado |
 | Vercel Analytics + Speed Insights | ✅ Ativo |
-| Schema do banco (31 tabelas — inclui invoices, migration 043) | ✅ Migrações SQL criadas e aplicadas no Supabase |
+| Schema do banco (28 tabelas — inclui invoices, migration 043) | ✅ Migrações SQL criadas e aplicadas no Supabase |
 | RLS em todas as tabelas | ✅ Configurado (flows corrigida na migração 040) |
 | Content-Security-Policy (CSP sem unsafe-eval em produção) | ✅ Configurado no middleware |
 | Sistema de planos/billing | ❌ Não iniciado |
@@ -407,23 +418,29 @@ FinancePage (Server Component)
 
 FinanceDashboard (Client Component)
   ├── period state: '7d' | '30d' | '90d' | 'all'  (default: '30d')
-  ├── useMemo → buildLiveData(txs, wds, period, bots, flows, invoices, dbSummary)
+  ├── allRawTxs state: acumula rows iniciais + carregamentos adicionais
+  ├── hasMore state: true enquanto houver mais rows a carregar
+  ├── Memo A — mapRawRows (SEM dependência de period — roda só quando rows/bots/flows mudam):
   │     ├── botMap / flowMap para lookup O(1) de nomes por id
   │     ├── transaction.type lido do banco (mig 044); fallback: heurística por status
   │     │     'fee' | 'commission' → tipos diretos; isRefund → 'refund'; default → 'sale'
-  │     ├── TxDetail populado de dados reais para transações approved:
+  │     ├── status mapping correto: approved→available, pending→pending, expired→expired,
+  │     │     cancelled→cancelled, refunded/cancelled→failed
+  │     ├── TxDetail: method via payment_method (mig 047) + METHOD_LABEL; fallback 'Pix'
   │     │     customer_name, customer_email, gateway (GATEWAY_LABEL), bot_id→nome, flow_id→nome,
-  │     │     utm_source, utm_campaign  — method hardcoded 'Pix' (não está no DB)
+  │     │     utm_source, utm_campaign
+  │     └── invoices: rawInvoices.length > 0 → dados reais; senão financeMock.invoices (fallback)
+  ├── Memo B — buildPeriodSummary (COM dependência de period — só roda ao trocar período):
   │     ├── summary cards — usa dbSummary (RPC) quando disponível:
   │     │     saldoDisponivel = profiles.balance (trigger atômico, sempre preciso)
   │     │     aLiberar / totalRecebido / comissoesPlataforma = SUM() no banco (sem limite de rows)
-  │     │     Fallback se RPC falhar: computa dos rows carregados (pode ser incompleto com >500 txs)
-  │     ├── deltas reais: compara período atual vs anterior (client-side, dos rows carregados)
-  │     │     pct(cur, prev) = prev > 0 ? round(((cur-prev)/prev)*1000)/10 : 0
-  │     └── invoices: rawInvoices.length > 0 → dados reais; senão financeMock.invoices (fallback)
-  ├── filteredTxs = m.transactions filtradas por period (client-side)
-  ├── filteredWds = m.withdrawals filtradas por period (client-side)
-  ├── banner limitReached: "totais nos cards são precisos, mas % de variação e tabela podem ser incompletos"
+  │     │     Fallback se RPC falhar: computa dos rows carregados
+  │     └── deltas reais: compara período atual vs anterior
+  │           pct(cur, prev) = prev > 0 ? round(((cur-prev)/prev)*1000)/10 : 0
+  ├── filteredTxs = txRows filtradas por period (useMemo)
+  ├── filteredWds = wdRows filtradas por period (useMemo)
+  ├── banner hasMore: mostra quantidade carregada + botão "Carregar mais →"
+  │     → GET /api/finance/transactions?offset=N → acumula em allRawTxs
   ├── CSV export usa dados filtrados pelo período ativo (inclui campo period no evento PostHog)
   │     — saques incluem coluna "Observação" (withdrawal.notes)
   ├── handleTabChange → track('finance_tab_changed', { tab })
@@ -432,6 +449,9 @@ FinanceDashboard (Client Component)
 
 WithdrawModal (Client Component — sem props de contas)
   ├── self-fetch de GET /api/bank-accounts ao abrir
+  ├── self-fetch de GET /api/finance/balance ao abrir → saldo sempre fresco
+  │     displayBalance = liveBalance ?? saldoDisponivel (fallback para prop stale)
+  │     subtitle exibe "Verificando saldo…" enquanto carrega
   ├── maskPixKey(key): exibe primeiros 4 + '•••' + últimos 4 para privacidade
   ├── permite adicionar nova conta inline (label + tipo + chave)
   │     → track('bank_account_added', { kind })

@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { AlertTriangle } from 'lucide-react'
 import { DashboardLayout } from '@/components/dashboard/Layout'
@@ -8,12 +8,12 @@ import { PageHeader } from '@/components/dashboard/PageHeader'
 import { exportCSV } from '@/lib/csv'
 import { useAnalytics } from '@/hooks/use-analytics'
 import type {
-  FinanceData, RawTransaction, RawWithdrawal, RawFinanceBot, RawFinanceFlow, RawInvoice,
-  RawFinanceSummary, Transaction, Withdrawal, Invoice, TxDetail,
+  RawTransaction, RawWithdrawal, RawFinanceBot, RawFinanceFlow, RawInvoice,
+  RawFinanceSummary, Transaction, Withdrawal, Invoice, TxDetail, FinanceSummary,
 } from './types'
 import { financeMock } from './mock-data'
 import { txTypeMap, txStatusMap, wdStatusMap, invStatusMap } from './constants'
-import { SummaryCard, Tabs, Btn } from './atoms'
+import { SummaryCard, Tabs, Btn, Spinner } from './atoms'
 import { TransactionsSection } from './TransactionsSection'
 import { WithdrawalsSection } from './WithdrawalsSection'
 import { InvoicesSection } from './InvoicesSection'
@@ -21,6 +21,8 @@ import { WithdrawModal } from './WithdrawModal'
 import { cn } from '@/lib/utils'
 
 type Period = '7d' | '30d' | '90d' | 'all'
+
+const LOAD_MORE_LIMIT = 500
 
 const tabsDef = [
   { id: 'tx',        label: 'Transações', icon: 'arrow-left-right'   },
@@ -38,40 +40,49 @@ const GATEWAY_LABEL: Record<string, string> = {
   stripe:      'Stripe',
 }
 
-function buildLiveData(
-  rows:          RawTransaction[],
+const METHOD_LABEL: Record<string, string> = {
+  pix:    'Pix',
+  card:   'Cartão',
+  boleto: 'Boleto',
+  ted:    'TED',
+  other:  'Outro',
+}
+
+// ── Memo A: mapeamento caro de rows brutos → tipados (sem dependência de period) ──
+
+function mapRawRows(
+  rows:           RawTransaction[],
   rawWithdrawals: RawWithdrawal[],
-  period:        Period,
-  bots:          RawFinanceBot[],
-  flows:         RawFinanceFlow[],
-  rawInvoices:   RawInvoice[],
-  dbSummary:     RawFinanceSummary | null,
-): FinanceData {
+  bots:           RawFinanceBot[],
+  flows:          RawFinanceFlow[],
+  rawInvoices:    RawInvoice[],
+): { txRows: Transaction[]; wdRows: Withdrawal[]; invoices: Invoice[] } {
   const botMap  = new Map(bots.map((b)  => [b.id, b.username ? `@${b.username}` : b.name]))
   const flowMap = new Map(flows.map((f) => [f.id, f.name]))
 
   const txRows: Transaction[] = rows.map((row) => {
-    // Usa coluna type do banco quando disponível; fallback para heurística de status
     const dbType   = row.type as string | null
-    const isRefund = dbType === 'refund'
-                  || row.status === 'refunded'
-                  || row.status === 'cancelled'
+    const isRefund = dbType === 'refund' || row.status === 'refunded' || row.status === 'cancelled'
     const txType: Transaction['type'] =
-      dbType === 'fee'        ? 'fee'
+      dbType === 'fee'          ? 'fee'
       : dbType === 'commission' ? 'commission'
-      : isRefund              ? 'refund'
-      : 'sale'
+      : isRefund                ? 'refund'
+      :                           'sale'
 
     const gross = Number(row.amount)
     const fee   = Number(row.fee ?? 0)
     const net   = netOf(row)
+
+    const paymentMethod = row.payment_method
+      ? (METHOD_LABEL[row.payment_method] ?? row.payment_method)
+      : 'Pix'
 
     const detail: TxDetail | undefined = (!isRefund && row.status === 'approved') ? {
       customer:    row.customer_name  || '—',
       email:       row.customer_email || '—',
       product:     row.product_name   || '—',
       gateway:     GATEWAY_LABEL[row.gateway ?? ''] ?? (row.gateway || '—'),
-      method:      'Pix',
+      method:      paymentMethod,
       gross,
       gatewayFee:  fee,
       platformFee: 0,
@@ -82,15 +93,20 @@ function buildLiveData(
       utmCampaign: row.utm_campaign ?? undefined,
     } : undefined
 
+    const status: Transaction['status'] =
+      row.status === 'approved'   ? 'available'
+      : row.status === 'pending'  ? 'pending'
+      : row.status === 'expired'  ? 'expired'
+      : row.status === 'cancelled'? 'cancelled'
+      :                             'failed'  // refunded → failed
+
     return {
       id:     String(row.id),
       dt:     String(row.created_at),
       type:   txType,
       desc:   String(row.product_name || 'Venda'),
       value:  isRefund ? -Math.abs(gross) : net,
-      status: row.status === 'approved' ? 'available'
-            : row.status === 'pending'  ? 'pending'
-            : 'completed',
+      status,
       detail,
     }
   })
@@ -105,84 +121,6 @@ function buildLiveData(
     notes:     w.notes ?? null,
   }))
 
-  // ── Summary cards ──────────────────────────────────────────
-  // Usa a RPC finance_summary quando disponível (sempre preciso,
-  // independente do limite de 500 rows carregadas).
-  // Fallback: computa dos dados carregados (pode ser impreciso
-  // se o usuário atingiu o limite de 500 transações).
-  let summaryValues: {
-    saldoDisponivel: number
-    aLiberar: number
-    totalRecebido: number
-    comissoesPlataforma: number
-  }
-
-  if (dbSummary) {
-    summaryValues = {
-      saldoDisponivel:     Number(dbSummary.saldo_disponivel),
-      aLiberar:            Number(dbSummary.a_liberar),
-      totalRecebido:       Number(dbSummary.total_recebido),
-      comissoesPlataforma: Number(dbSummary.comissoes_plataforma),
-    }
-  } else {
-    // Fallback: calcula dos dados carregados (pode ser incompleto com >500 txs)
-    const approved = rows.filter((r) => r.status === 'approved')
-    const pending  = rows.filter((r) => r.status === 'pending')
-    const totalApprovedNet = approved.reduce((s, r) => s + netOf(r), 0)
-    const totalWithdrawn   = rawWithdrawals
-      .filter((w) => w.status === 'pending' || w.status === 'completed')
-      .reduce((s, w) => s + Number(w.amount), 0)
-    summaryValues = {
-      saldoDisponivel:     Math.max(0, totalApprovedNet - totalWithdrawn),
-      aLiberar:            pending.reduce((s, r) => s + netOf(r), 0),
-      totalRecebido:       approved.reduce((s, r) => s + Number(r.amount), 0),
-      comissoesPlataforma: approved.reduce((s, r) => s + Number(r.fee ?? 0), 0),
-    }
-  }
-
-  // ── Deltas — período atual vs anterior (calculados dos rows carregados) ──
-  // Os deltas podem ser imprecisos se limitReached=true, mas o banner avisa.
-  let deltas = { saldo: 0, liberar: 0, total: 0, comissoes: 0 }
-  if (period !== 'all' && rows.length > 0) {
-    const approved = rows.filter((r) => r.status === 'approved')
-    const pending  = rows.filter((r) => r.status === 'pending')
-    const days      = period === '7d' ? 7 : period === '30d' ? 30 : 90
-    const now       = Date.now()
-    const curStart  = new Date(now - days * 86_400_000)
-    const prevStart = new Date(now - 2 * days * 86_400_000)
-
-    const inCur  = (r: RawTransaction) => new Date(r.created_at) >= curStart
-    const inPrev = (r: RawTransaction) =>
-      new Date(r.created_at) >= prevStart && new Date(r.created_at) < curStart
-
-    const curApproved  = approved.filter(inCur)
-    const prevApproved = approved.filter(inPrev)
-    const curPending   = pending.filter(inCur)
-    const prevPending  = pending.filter(inPrev)
-
-    const pct = (cur: number, prev: number) =>
-      prev > 0 ? Math.round(((cur - prev) / prev) * 1000) / 10 : 0
-
-    deltas = {
-      saldo:     pct(
-        curApproved.reduce((s, r) => s + netOf(r), 0),
-        prevApproved.reduce((s, r) => s + netOf(r), 0),
-      ),
-      liberar:   pct(
-        curPending.reduce((s, r) => s + netOf(r), 0),
-        prevPending.reduce((s, r) => s + netOf(r), 0),
-      ),
-      total:     pct(
-        curApproved.reduce((s, r) => s + Number(r.amount), 0),
-        prevApproved.reduce((s, r) => s + Number(r.amount), 0),
-      ),
-      comissoes: pct(
-        curApproved.reduce((s, r) => s + Number(r.fee ?? 0), 0),
-        prevApproved.reduce((s, r) => s + Number(r.fee ?? 0), 0),
-      ),
-    }
-  }
-
   const invoices: Invoice[] = rawInvoices.length > 0
     ? rawInvoices.map((inv) => ({
         id:     inv.id,
@@ -193,22 +131,67 @@ function buildLiveData(
       }))
     : financeMock.invoices
 
-  return {
-    ...financeMock,
-    summary: {
-      ...summaryValues,
-      deltas,
-    },
-    transactions: txRows,
-    withdrawals:  wdRows,
-    invoices,
-  }
+  return { txRows, wdRows, invoices }
 }
 
-function periodSince(period: Period): Date | null {
-  if (period === 'all') return null
-  const days = period === '7d' ? 7 : period === '30d' ? 30 : 90
-  return new Date(Date.now() - days * 86_400_000)
+// ── Memo B: summary + deltas (apenas esta parte depende de period) ──
+
+function buildPeriodSummary(
+  rawRows:   RawTransaction[],
+  rawWds:    RawWithdrawal[],
+  period:    Period,
+  dbSummary: RawFinanceSummary | null,
+): FinanceSummary {
+  let saldoDisponivel: number
+  let aLiberar: number
+  let totalRecebido: number
+  let comissoesPlataforma: number
+
+  if (dbSummary) {
+    saldoDisponivel     = Number(dbSummary.saldo_disponivel)
+    aLiberar            = Number(dbSummary.a_liberar)
+    totalRecebido       = Number(dbSummary.total_recebido)
+    comissoesPlataforma = Number(dbSummary.comissoes_plataforma)
+  } else {
+    const approved = rawRows.filter((r) => r.status === 'approved')
+    const pending  = rawRows.filter((r) => r.status === 'pending')
+    const totalApprovedNet = approved.reduce((s, r) => s + netOf(r), 0)
+    const totalWithdrawn   = rawWds
+      .filter((w) => w.status === 'pending' || w.status === 'completed')
+      .reduce((s, w) => s + Number(w.amount), 0)
+    saldoDisponivel     = Math.max(0, totalApprovedNet - totalWithdrawn)
+    aLiberar            = pending.reduce((s, r) => s + netOf(r), 0)
+    totalRecebido       = approved.reduce((s, r) => s + Number(r.amount), 0)
+    comissoesPlataforma = approved.reduce((s, r) => s + Number(r.fee ?? 0), 0)
+  }
+
+  let deltas = { saldo: 0, liberar: 0, total: 0, comissoes: 0 }
+  if (period !== 'all' && rawRows.length > 0) {
+    const approved = rawRows.filter((r) => r.status === 'approved')
+    const pending  = rawRows.filter((r) => r.status === 'pending')
+    const days      = period === '7d' ? 7 : period === '30d' ? 30 : 90
+    const now       = Date.now()
+    const curStart  = now - days * 86_400_000
+    const prevStart = now - 2 * days * 86_400_000
+
+    const inCur  = (r: RawTransaction) => new Date(r.created_at).getTime() >= curStart
+    const inPrev = (r: RawTransaction) => {
+      const t = new Date(r.created_at).getTime()
+      return t >= prevStart && t < curStart
+    }
+
+    const pct = (cur: number, prev: number) =>
+      prev > 0 ? Math.round(((cur - prev) / prev) * 1000) / 10 : 0
+
+    deltas = {
+      saldo:     pct(approved.filter(inCur).reduce((s, r) => s + netOf(r), 0),           approved.filter(inPrev).reduce((s, r) => s + netOf(r), 0)),
+      liberar:   pct(pending.filter(inCur).reduce((s, r) => s + netOf(r), 0),            pending.filter(inPrev).reduce((s, r) => s + netOf(r), 0)),
+      total:     pct(approved.filter(inCur).reduce((s, r) => s + Number(r.amount), 0),   approved.filter(inPrev).reduce((s, r) => s + Number(r.amount), 0)),
+      comissoes: pct(approved.filter(inCur).reduce((s, r) => s + Number(r.fee ?? 0), 0), approved.filter(inPrev).reduce((s, r) => s + Number(r.fee ?? 0), 0)),
+    }
+  }
+
+  return { saldoDisponivel, aLiberar, totalRecebido, comissoesPlataforma, deltas }
 }
 
 const PERIOD_LABEL: Record<Period, string> = { '7d': '7d', '30d': '30d', '90d': '90d', 'all': 'Tudo' }
@@ -231,24 +214,58 @@ export function FinanceDashboard({
   limitReached:        boolean
 }) {
   const router = useRouter()
-  const [tab,       setTab]       = useState('tx')
-  const [period,    setPeriod]    = useState<Period>('30d')
-  const [modalOpen, setModalOpen] = useState(false)
+  const [tab,          setTab]          = useState('tx')
+  const [period,       setPeriod]       = useState<Period>('30d')
+  const [modalOpen,    setModalOpen]    = useState(false)
+  const [allRawTxs,    setAllRawTxs]    = useState<RawTransaction[]>(initialTransactions)
+  const [loadingMore,  setLoadingMore]  = useState(false)
+  const [hasMore,      setHasMore]      = useState(limitReached)
   const { track } = useAnalytics()
 
-  const m = useMemo(
-    () => buildLiveData(
-      initialTransactions, initialWithdrawals, period,
-      initialBots, initialFlows, initialInvoices, initialSummary,
-    ),
-    [initialTransactions, initialWithdrawals, period, initialBots, initialFlows, initialInvoices, initialSummary],
+  // Memo A: mapeamento raw → tipado (caro, sem dependência de period)
+  const { txRows, wdRows, invoices } = useMemo(
+    () => mapRawRows(allRawTxs, initialWithdrawals, initialBots, initialFlows, initialInvoices),
+    [allRawTxs, initialWithdrawals, initialBots, initialFlows, initialInvoices],
   )
 
-  const since       = periodSince(period)
-  const filteredTxs = since ? m.transactions.filter((t) => new Date(t.dt)   >= since) : m.transactions
-  const filteredWds = since ? m.withdrawals.filter((w)  => new Date(w.date) >= since) : m.withdrawals
+  // Memo B: summary + deltas (leve, só roda quando period muda)
+  const summary = useMemo(
+    () => buildPeriodSummary(allRawTxs, initialWithdrawals, period, initialSummary),
+    [allRawTxs, initialWithdrawals, period, initialSummary],
+  )
 
-  const openInvCount = m.invoices.filter((i) => i.status !== 'paid').length
+  // Filtros por período (roda só quando txRows ou period mudam)
+  const filteredTxs = useMemo(() => {
+    if (period === 'all') return txRows
+    const days = period === '7d' ? 7 : period === '30d' ? 30 : 90
+    const ts = Date.now() - days * 86_400_000
+    return txRows.filter((t) => new Date(t.dt).getTime() >= ts)
+  }, [txRows, period])
+
+  const filteredWds = useMemo(() => {
+    if (period === 'all') return wdRows
+    const days = period === '7d' ? 7 : period === '30d' ? 30 : 90
+    const ts = Date.now() - days * 86_400_000
+    return wdRows.filter((w) => new Date(w.date).getTime() >= ts)
+  }, [wdRows, period])
+
+  const openInvCount = useMemo(
+    () => invoices.filter((i) => i.status !== 'paid').length,
+    [invoices],
+  )
+
+  const loadMoreTransactions = useCallback(async () => {
+    setLoadingMore(true)
+    try {
+      const res = await fetch(`/api/finance/transactions?offset=${allRawTxs.length}`)
+      if (!res.ok) return
+      const data: RawTransaction[] = await res.json()
+      setAllRawTxs((prev) => [...prev, ...data])
+      setHasMore(data.length >= LOAD_MORE_LIMIT)
+    } finally {
+      setLoadingMore(false)
+    }
+  }, [allRawTxs.length])
 
   function handleTabChange(id: string) {
     setTab(id)
@@ -282,9 +299,9 @@ export function FinanceDashboard({
     } else {
       exportCSV(`faturas_${today}.csv`,
         ['ID', 'Período', 'Vencimento', 'Valor (R$)', 'Status'],
-        m.invoices.map((i) => [i.id, i.period, i.due, i.value, invStatusMap[i.status]?.label ?? i.status]),
+        invoices.map((i) => [i.id, i.period, i.due, i.value, invStatusMap[i.status]?.label ?? i.status]),
       )
-      track('csv_exported', { section: 'financeiro_faturas', rows: m.invoices.length })
+      track('csv_exported', { section: 'financeiro_faturas', rows: invoices.length })
     }
   }
 
@@ -301,11 +318,18 @@ export function FinanceDashboard({
         }
       />
 
-      {limitReached && (
+      {hasMore && (
         <div className="flex items-center gap-2.5 px-4 py-2.5 bg-warning-soft border border-warning/30 rounded-xl text-[12.5px] text-warning mb-4">
           <AlertTriangle size={14} className="shrink-0" />
-          <span>
-            Exibindo as <strong>500</strong> transações mais recentes. Os totais nos cards são precisos, mas os percentuais de variação (%) e a tabela podem estar incompletos.
+          <span className="flex-1">
+            Exibindo <strong>{allRawTxs.length}</strong> transações. Os totais nos cards são precisos, mas a tabela pode estar incompleta.{' '}
+            <button
+              onClick={loadMoreTransactions}
+              disabled={loadingMore}
+              className="font-semibold underline hover:no-underline disabled:opacity-60 inline-flex items-center gap-1"
+            >
+              {loadingMore ? <><Spinner /> Carregando…</> : 'Carregar mais →'}
+            </button>
           </span>
         </div>
       )}
@@ -313,8 +337,8 @@ export function FinanceDashboard({
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 mb-5">
         <SummaryCard
           label="Saldo disponível"
-          value={m.summary.saldoDisponivel}
-          delta={m.summary.deltas.saldo}
+          value={summary.saldoDisponivel}
+          delta={summary.deltas.saldo}
           icon="wallet"
           tone="primary"
           accessory={
@@ -323,12 +347,11 @@ export function FinanceDashboard({
             </button>
           }
         />
-        <SummaryCard label="A liberar"                  value={m.summary.aLiberar}            delta={m.summary.deltas.liberar}   icon="clock"       />
-        <SummaryCard label="Total recebido (histórico)" value={m.summary.totalRecebido}        delta={m.summary.deltas.total}     icon="trending-up" />
-        <SummaryCard label="Comissões da plataforma"    value={m.summary.comissoesPlataforma}  delta={m.summary.deltas.comissoes} icon="percent"     />
+        <SummaryCard label="A liberar"                  value={summary.aLiberar}            delta={summary.deltas.liberar}   icon="clock"       />
+        <SummaryCard label="Total recebido (histórico)" value={summary.totalRecebido}        delta={summary.deltas.total}     icon="trending-up" />
+        <SummaryCard label="Comissões da plataforma"    value={summary.comissoesPlataforma}  delta={summary.deltas.comissoes} icon="percent"     />
       </div>
 
-      {/* Tabs + seletor de período */}
       <div className="flex items-end justify-between border-b border-border mb-4">
         <Tabs
           className="border-b-0"
@@ -360,13 +383,13 @@ export function FinanceDashboard({
 
       {tab === 'tx'        && <TransactionsSection data={filteredTxs} />}
       {tab === 'withdraws' && <WithdrawalsSection  data={filteredWds} onNew={() => setModalOpen(true)} />}
-      {tab === 'invoices'  && <InvoicesSection     data={m.invoices} />}
+      {tab === 'invoices'  && <InvoicesSection     data={invoices} />}
 
       <WithdrawModal
         open={modalOpen}
         onClose={() => setModalOpen(false)}
         onSuccess={handleWithdrawalSuccess}
-        saldoDisponivel={m.summary.saldoDisponivel}
+        saldoDisponivel={summary.saldoDisponivel}
       />
     </DashboardLayout>
   )

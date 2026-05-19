@@ -11,6 +11,8 @@ export const txStatusMap: Record<string, { label: string; tone: string }> = {
   pending:   { label: 'A liberar',  tone: 'warning' },
   completed: { label: 'Concluído',  tone: 'success' },
   failed:    { label: 'Falhou',     tone: 'danger'  },
+  expired:   { label: 'Expirado',   tone: 'muted'   },
+  cancelled: { label: 'Cancelado',  tone: 'danger'  },
 }
 
 export const wdStatusMap: Record<string, { label: string; tone: string }> = {
@@ -38,9 +40,14 @@ export const typeToFilter: Record<string, string> = {
 }
 
 export const statusToFilter: Record<string, string> = {
-  'Disponível': 'available', 'A liberar': 'pending', 'Concluído': 'completed', 'Falhou': 'failed',
+  'Disponível': 'available',
+  'A liberar':  'pending',
+  'Concluído':  'completed',
+  'Falhou':     'failed',
+  'Expirado':   'expired',
+  'Cancelado':  'cancelled',
 }
 
 export const filterPeriods = ['Últimos 7 dias', 'Últimos 30 dias', 'Últimos 90 dias', 'Este mês', 'Personalizado']
 export const filterTypes   = ['Todos os tipos', 'Venda', 'Comissão', 'Taxa', 'Estorno', 'Saque']
-export const filterStatus  = ['Todos os status', 'Disponível', 'A liberar', 'Concluído', 'Falhou']
+export const filterStatus  = ['Todos os status', 'Disponível', 'A liberar', 'Concluído', 'Falhou', 'Expirado', 'Cancelado']

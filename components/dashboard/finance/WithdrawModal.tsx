@@ -69,6 +69,10 @@ export function WithdrawModal({ open, onClose, onSuccess, saldoDisponivel }: {
   const [loading,    setLoading]    = useState(false)
   const [apiError,   setApiError]   = useState<string | null>(null)
 
+  // Saldo fresco buscado ao abrir o modal (P8)
+  const [liveBalance,    setLiveBalance]    = useState<number | null>(null)
+  const [balanceLoading, setBalanceLoading] = useState(false)
+
   // Contas bancárias
   const [accounts,        setAccounts]        = useState<BankAccount[]>([])
   const [accountsLoading, setAccountsLoading] = useState(false)
@@ -98,8 +102,25 @@ export function WithdrawModal({ open, onClose, onSuccess, saldoDisponivel }: {
     }
   }, [])
 
+  const fetchBalance = useCallback(async () => {
+    setBalanceLoading(true)
+    try {
+      const res = await fetch('/api/finance/balance')
+      if (!res.ok) return
+      const d: { saldo_disponivel: number } = await res.json()
+      setLiveBalance(Number(d.saldo_disponivel))
+    } catch {
+      // fallback silencioso para o saldo da prop
+    } finally {
+      setBalanceLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
-    if (!open) return
+    if (!open) {
+      setLiveBalance(null)
+      return
+    }
     setStep('form')
     setValorCents(0)
     setLoading(false)
@@ -112,7 +133,8 @@ export function WithdrawModal({ open, onClose, onSuccess, saldoDisponivel }: {
     setAddSuccess(false)
     setDeleteError(null)
     fetchAccounts()
-  }, [open, fetchAccounts])
+    fetchBalance()
+  }, [open, fetchAccounts, fetchBalance])
 
   useEffect(() => {
     if (!addSuccess) return
@@ -171,16 +193,19 @@ export function WithdrawModal({ open, onClose, onSuccess, saldoDisponivel }: {
     }
   }
 
+  // Usa o saldo fresco quando disponível, caso contrário usa a prop (stale)
+  const displayBalance = liveBalance ?? saldoDisponivel
+
   const valor   = valorCents / 100
   const account = accounts.find((a) => a.id === accountId)
 
-  const amountError = valor <= 0 ? null : valor > saldoDisponivel
-    ? `Valor acima do saldo disponível (${fmtBRLdec(saldoDisponivel)}).`
+  const amountError = valor <= 0 ? null : valor > displayBalance
+    ? `Valor acima do saldo disponível (${fmtBRLdec(displayBalance)}).`
     : null
 
   const canContinue = valor > 0 && !amountError && !!account
 
-  function handleQuick(pct: number) { setValorCents(Math.floor(saldoDisponivel * pct * 100)) }
+  function handleQuick(pct: number) { setValorCents(Math.floor(displayBalance * pct * 100)) }
 
   async function handleConfirm() {
     if (!account) return
@@ -211,7 +236,11 @@ export function WithdrawModal({ open, onClose, onSuccess, saldoDisponivel }: {
       open={open}
       onClose={onClose}
       title={step === 'success' ? null : 'Solicitar saque'}
-      subtitle={step === 'form' ? `Saldo disponível: ${fmtBRLdec(saldoDisponivel)}` : null}
+      subtitle={step === 'form'
+        ? balanceLoading
+          ? 'Verificando saldo…'
+          : `Saldo disponível: ${fmtBRLdec(displayBalance)}`
+        : null}
       size="md"
       footer={
         step === 'form' ? (
@@ -410,7 +439,7 @@ export function WithdrawModal({ open, onClose, onSuccess, saldoDisponivel }: {
           <div className="bg-surface-2/50 border border-border rounded-lg p-4">
             <div className="text-[11px] uppercase tracking-wider font-semibold text-text-subtle">Valor a sacar</div>
             <div className="text-[32px] font-semibold tnum text-text leading-none mt-1.5 tracking-tight">{fmtBRLdec(valor)}</div>
-            <div className="text-[11.5px] text-text-muted mt-1.5 tnum">Saldo após o saque: {fmtBRLdec(saldoDisponivel - valor)}</div>
+            <div className="text-[11.5px] text-text-muted mt-1.5 tnum">Saldo após o saque: {fmtBRLdec(displayBalance - valor)}</div>
           </div>
 
           <div className="bg-surface border border-border rounded-lg p-4 space-y-2.5">

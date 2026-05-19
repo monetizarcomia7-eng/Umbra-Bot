@@ -8,11 +8,6 @@ export const financeMock: FinanceData = {
     comissoesPlataforma: 5529.60,
     deltas: { saldo: 12.4, liberar: -3.2, total: 12.4, comissoes: 8.1 },
   },
-  contas: [
-    { id: 'bb',     label: 'Conta BB · Ag 1234 · final 8842', bank: 'Banco do Brasil', kind: 'PJ'  },
-    { id: 'nubank', label: 'Nubank · final 0297',              bank: 'Nubank',          kind: 'PJ'  },
-    { id: 'pix',    label: 'Pix · CPF 123.***.***-45',         bank: 'Chave Pix',       kind: 'CPF' },
-  ],
   transactions: [
     { id: 'tx_2418', dt: '2026-05-18T14:32', type: 'sale',       desc: 'Mentoria Premium Anual',          value: 1297.00, status: 'available',
       detail: { customer: 'João da Silva',        email: 'joao.silva@gmail.com',  product: 'Mentoria Premium Anual',  gateway: 'Pushinpay',    method: 'Pix',        gross: 1297.00, gatewayFee: 47.45, platformFee: 38.91, net: 1210.64, bot: '@mentoria_vip_bot',   flow: 'Funil VIP — Lançamento'  } },
@@ -22,7 +17,7 @@ export const financeMock: FinanceData = {
       detail: { customer: 'Maria Souza',          email: 'maria.s@outlook.com',   product: 'Curso Intensivo 90 dias', gateway: 'Mercado Pago', method: 'Cartão 12x', gross: 147.00,  gatewayFee: 6.91,  platformFee: 4.41,  net: 135.68, bot: '@vendas_curso_bot',   flow: 'Bem-vindo + Oferta'      } },
     { id: 'tx_2414', dt: '2026-05-17T18:21', type: 'sale',       desc: 'Pack Templates Pro',              value: 70.00,   status: 'available',
       detail: { customer: 'Pedro Castro',         email: 'pcastro@empresa.com',   product: 'Pack Templates Pro',      gateway: 'Pushinpay',    method: 'Pix',        gross: 70.00,   gatewayFee: 2.56,  platformFee: 2.10,  net: 65.34,  bot: '@upsell_pos_bot',     flow: 'Upsell pós-compra'       } },
-    { id: 'tx_2413', dt: '2026-05-17T16:08', type: 'refund',     desc: 'Estorno · #ord_8842',             value: -297.00, status: 'completed'  },
+    { id: 'tx_2413', dt: '2026-05-17T16:08', type: 'refund',     desc: 'Estorno · #ord_8842',             value: -297.00, status: 'failed'     },
     { id: 'tx_2412', dt: '2026-05-17T09:21', type: 'sale',       desc: 'Consultoria Individual',          value: 675.00,  status: 'available',
       detail: { customer: 'Luana Andrade',        email: 'luana@studio.co',       product: 'Consultoria Individual',  gateway: 'Stripe',       method: 'Cartão',     gross: 675.00,  gatewayFee: 30.38, platformFee: 20.25, net: 624.37, bot: '@mentoria_vip_bot',   flow: 'Funil VIP — Lançamento'  } },
     { id: 'tx_2411', dt: '2026-05-16T22:14', type: 'sale',       desc: 'Curso Intensivo 90 dias',         value: 147.00,  status: 'available',

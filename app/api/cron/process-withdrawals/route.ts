@@ -4,8 +4,10 @@ import { createClient } from '@/lib/supabase/server'
 
 // GET /api/cron/process-withdrawals
 // Chamado pelo Vercel Cron diariamente (ver vercel.json).
-// Marca como 'completed' saques que estejam pendentes há mais de 1 dia útil.
-// Em produção real, substituir pela chamada à API de transferência bancária/PIX.
+// Marca saques pendentes há mais de 1 dia útil como 'completed'.
+// TODO: substituir o bloco de update pela chamada real à API de PIX payout
+//       (ex: Mercado Pago Payouts ou PushinPay), salvar o payout_tx_id retornado
+//       e verificar idempotência pelo payout_tx_id antes de reprocessar.
 export async function GET(request: Request) {
   const authHeader = request.headers.get('authorization')
   if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
@@ -15,7 +17,6 @@ export async function GET(request: Request) {
   const supabase = await createClient()
   const startedAt = new Date().toISOString()
 
-  // Registra início da execução no cron_log
   const { data: logRow } = await supabase
     .from('cron_log')
     .insert({ job: 'process-withdrawals', started_at: startedAt, status: 'running' })
@@ -32,7 +33,8 @@ export async function GET(request: Request) {
     }
   }
 
-  // Busca saques pendentes criados há mais de 24 horas
+  // Busca saques pendentes criados há mais de 24h que ainda não têm payout_tx_id
+  // (evita reprocessar saques já enviados para a API externa)
   const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
 
   const { data: pending, error: fetchError } = await supabase
@@ -40,6 +42,7 @@ export async function GET(request: Request) {
     .select('id')
     .eq('status', 'pending')
     .lt('created_at', cutoff)
+    .is('payout_tx_id', null)
 
   if (fetchError) {
     Sentry.captureException(fetchError, { extra: { context: 'cron_process_withdrawals_fetch' } })
@@ -54,12 +57,19 @@ export async function GET(request: Request) {
 
   const ids = pending.map((w) => w.id)
 
-  // TODO: aqui viria a chamada real à API de transferência (PIX payout, TED, etc.)
-  // Por ora marca como 'completed' automaticamente após 24h.
+  // TODO: para cada id, chamar a API real de transferência e salvar o payout_tx_id:
+  // const payoutResult = await callPayoutApi(withdrawal)
+  // await supabase.from('withdrawals').update({ payout_tx_id: payoutResult.id }).eq('id', id)
+
+  const concludedAt = new Date().toISOString()
 
   const { error: updateError } = await supabase
     .from('withdrawals')
-    .update({ status: 'completed', concluded_at: new Date().toISOString() })
+    .update({
+      status:       'completed',
+      concluded_at: concludedAt,
+      processed_by: 'cron',
+    })
     .in('id', ids)
 
   if (updateError) {

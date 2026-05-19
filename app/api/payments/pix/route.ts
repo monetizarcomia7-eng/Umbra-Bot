@@ -118,6 +118,7 @@ export async function POST(request: NextRequest) {
       fee,
       net,
       type:                  'sale',
+      payment_method:        'pix',
       status:                'pending',
       pix_qr_code:           pixInfo?.qr_code_base64 ?? null,
       pix_copy_paste:        pixInfo?.qr_code ?? null,
