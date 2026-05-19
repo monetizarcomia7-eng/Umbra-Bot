@@ -47,7 +47,8 @@ umbra-bot/
 │   │   │   └── migrate-tokens/route.ts  # POST: re-encripta tokens legados (ADMIN_MIGRATION_SECRET)
 │   │   ├── cron/
 │   │   │   ├── process-withdrawals/route.ts  # GET: processa saques pendentes (CRON_SECRET, horário)
-│   │   │   └── cleanup-activity/route.ts     # GET: deleta activity_events com >90 dias (CRON_SECRET)
+│   │   │   ├── cleanup-activity/route.ts     # GET: deleta activity_events com >90 dias (CRON_SECRET)
+│   │   │   └── check-bots/route.ts           # GET: verifica conectividade de todos os bots a cada 30 min
 │   │   ├── push/
 │   │   │   ├── subscribe/route.ts
 │   │   │   └── notify/route.ts
@@ -142,7 +143,7 @@ umbra-bot/
 ├── public/
 │   └── sw.js                     # Service Worker para Web Push
 ├── supabase/migrations/          # 52 migrações SQL (000 a 051)
-├── vercel.json                   # 2 Cron jobs: process-withdrawals (06:00 UTC) + cleanup-activity (02:00 UTC)
+├── vercel.json                   # 3 Cron jobs: process-withdrawals (06:00 UTC) + cleanup-activity (02:00 UTC) + check-bots (a cada 30 min)
 ├── sentry.*.config.ts            # Sentry (client com Replay / server com tracePropagation)
 ├── instrumentation.ts            # Next.js hook para Sentry server
 ├── middleware.ts                 # Auth guard + security headers + CSP (unsafe-eval só em dev)
@@ -287,6 +288,12 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Atividade — webhook Telegram: type='lead' correto + bot.username + contact_id | ✅ Corrigido |
 | Atividade — PIX route: insere activity_event type='payment' ao criar cobrança | ✅ Implementado |
 | Atividade — migração 049: bot_id FK + contact_id FK + índices + CHECK corrigido | ✅ Aplicado |
+| Atividade — filtro de data (7d/30d/90d/Tudo) persistido em localStorage | ✅ Implementado |
+| Atividade — busca por texto (title/description) persistida em localStorage | ✅ Implementado |
+| Atividade — filtros persistentes via localStorage (category, bot, period, search) | ✅ Implementado |
+| Atividade — contador de não-lidos no botão "Ao vivo" (zerado ao rolar para o topo) | ✅ Implementado |
+| Atividade — cron check-bots: detecta disconnect/reconnect via getWebhookInfo a cada 30 min | ✅ Implementado |
+| Atividade — NoDataState: estado vazio visual quando activity_events está vazio | ✅ Implementado |
 | CSV export (Financeiro + Clientes + Atividade) + evento csv_exported | ✅ Funcional |
 | Atalhos de teclado | ✅ Funcional |
 | Busca global (14 tabelas, race-condition safe, sem any) | ✅ Funcional |
@@ -343,7 +350,7 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | `bank_account_deleted` | `WithdrawModal.tsx` — ao remover conta bancária |
 | `finance_tab_changed` | `FinanceDashboard.tsx` — ao trocar entre Transações / Saques / Faturas |
 | `finance_period_changed` | `FinanceDashboard.tsx` — ao mudar período (7d / 30d / 90d / Tudo) |
-| `activity_filter_changed` | `ActivityClient.tsx` — ao mudar categoria ou bot no filtro (inclui category + bot_filtered) |
+| `activity_filter_changed` | `ActivityClient.tsx` — ao mudar categoria, bot, período ou busca (inclui category + bot_filtered + period? + search?) |
 | `activity_live_toggled` | `ActivityClient.tsx` — ao ligar/desligar modo ao vivo (inclui live: boolean) |
 
 ---
@@ -878,7 +885,7 @@ Para produção completa, ver `.env.example` — todas as variáveis estão docu
 Variáveis adicionais documentadas (além do básico):
 - `MERCADOPAGO_ACCESS_TOKEN` / `MERCADOPAGO_WEBHOOK_SECRET`
 - `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN`
-- `CRON_SECRET` — protege `GET /api/cron/process-withdrawals` e `GET /api/cron/cleanup-activity`
+- `CRON_SECRET` — protege `GET /api/cron/process-withdrawals`, `GET /api/cron/cleanup-activity` e `GET /api/cron/check-bots`
 - `ADMIN_MIGRATION_SECRET` — protege `POST /api/admin/migrate-tokens`
 - `ADMIN_EMAIL` — protege `GET /api/migrations`
 - `NEXT_PUBLIC_VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_EMAIL`
@@ -932,25 +939,48 @@ ActivityClient (Client Component)
   ├── rows state: initialEvents.map(mapRaw) — sempre dados reais, sem fallback mock
   ├── now state: Date.now() — tick a cada 30s (timestamp relativo correto)
   ├── live state: boolean — ativa canal Realtime
+  ├── unreadCount state: número de eventos recebidos via Realtime sem ter rolado para o topo
+  ├── period state: '7d' | '30d' | '90d' | 'all' (default 'all') — persiste em localStorage
+  ├── search state: string — busca por título/descrição, persiste em localStorage
+  ├── category state: 'all' | 'sales' | ... — persiste em localStorage
+  ├── botId state: 'all' | uuid — persiste em localStorage
+  ├── LS helper: thin wrapper sobre localStorage com guard de SSR (typeof window !== 'undefined')
   ├── botMap: Map<uuid, string> — resolve bot_id → '@username' | 'nome' em O(1)
+  ├── topSentinelRef + IntersectionObserver:
+  │     div invisível (h-px) acima do feed
+  │     quando visível (usuário rolou ao topo) → setUnreadCount(0)
+  ├── periodRef: useRef espelhando period — evita stale closure em loadMore
   ├── Supabase Realtime:
   │     canal 'activity-feed', event INSERT, tabela activity_events
   │     payload tipado: (payload: { new: Record<string, unknown> })
   │     cast: payload.new as unknown as RawActivityEvent  (required — TypeScript strict)
-  │     insere no topo de rows (prepend)
+  │     insere no topo de rows (prepend) + setUnreadCount((c) => c + 1)
   │     só ativo quando live=true
-  ├── Filtros:
-  │     category: 'all' | 'sales' | 'leads' | 'payments' | 'bots' | 'system'
-  │     botId: 'all' | uuid
-  │     categoryGroups: mapa de category → string[] de tipos
+  ├── Botão "Ao vivo":
+  │     badge vermelho com contagem quando unreadCount > 0
+  │     exibe '99+' quando > 99; desaparece ao rolar para o topo
+  │     track('activity_live_toggled', { live })
+  ├── Filtros + localStorage:
+  │     category, botId, period, search — lidos do localStorage no useState inicial
+  │     handlePeriodChange / handleSearchChange salvam em localStorage antes de atualizar state
+  │     onClear: limpa os 4 itens do localStorage + reseta states
+  │     hasFilters: true se algum dos 4 não for o default
+  ├── getPeriodCutoff(period): retorna timestamp (ms) de cutoff ou null para 'all'
+  ├── filtered useMemo:
+  │     filtra por category, botId, period (cutoff no created_at) e search (title/description)
   ├── Paginação "Carregar mais":
   │     PAGE_SIZE = 25
   │     dbOffset state: avança +25 a cada clique
-  │     GET activity_events .range(offset, offset+24) acumula em rows
+  │     GET activity_events .range(offset, offset+24) + .gte('created_at', cutoff) se period ativo
+  │     periodRef usado para ler period sem re-criar loadMore callback
   │     hasMore: false quando retorna < PAGE_SIZE
   ├── Estados vazios:
   │     allEvents.length === 0 → <NoDataState> ("Aguardando primeiros eventos")
   │     filtered.length === 0 && hasFilters → <EmptyFeed> ("Nenhum evento nos filtros")
+  ├── FilterBar (props adicionais):
+  │     period, onPeriodChange, search, onSearchChange, unreadCount
+  │     search input: X para limpar, ícone Search
+  │     period Dropdown: '7d' / '30d' / '90d' / 'Tudo'
   ├── Export CSV:
   │     campos: Data | Tipo | Título | Descrição | Bot | Valor (R$)
   │     nome do arquivo: atividade_YYYY-MM-DD.csv
@@ -1022,6 +1052,25 @@ Popula `activity_events` com eventos passados, resolvendo o problema de a tabela
 - Rodar no Supabase SQL Editor: Dashboard → SQL Editor → cole e execute o arquivo da migration
 - Após o backfill, a aba Atividade exibe os dados reais; se ainda vazio, exibe NoDataState
 - Novos eventos entram em tempo real via Realtime (INSERT na tabela)
+
+### Cron check-bots — detecção de conectividade (a cada 30 min)
+
+**Arquivo:** `app/api/cron/check-bots/route.ts`  
+**Agendamento:** `*/30 * * * *` (vercel.json) — protegido por `CRON_SECRET`
+
+**Algoritmo por bot:**
+1. Chama `https://api.telegram.org/bot{token}/getWebhookInfo`
+2. Considera **offline** se: `!info.url` (sem webhook configurado) **OU** `last_error_date` dentro dos últimos 1800 s
+3. Busca o último evento `disconnect` / `reconnect` do bot em `activity_events` (evita duplicatas)
+4. Se offline e último evento ≠ `disconnect` → insere `type: 'disconnect'`
+5. Se online e último evento = `disconnect` → insere `type: 'reconnect'`
+6. Erros por bot são capturados com Sentry sem parar o loop
+
+**Resposta:** `{ checked, disconnected, reconnected, message }`
+
+**Dependências:**
+- `decryptToken()` de `lib/crypto` — tokens ficam encriptados no banco
+- `bot.username` → campo `bot` usa `@username` ou `bot.name` como fallback
 
 ### botMap — resolução de nomes
 
