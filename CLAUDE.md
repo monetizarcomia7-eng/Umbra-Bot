@@ -110,13 +110,13 @@ umbra-bot/
 │           ├── formatters.ts     # fmtBRL, fmtBRLdec, fmtDate, fmtDateTime, fmtTime, fmtPct
 │           │                     # — todos com timeZone: 'America/Sao_Paulo'
 │           ├── constants.ts      # txTypeMap, txStatusMap, wdStatusMap, invStatusMap, filtros
-│           ├── mock-data.ts      # financeMock (faturas mock fallback; contas bancárias são reais)
+│           ├── mock-data.ts      # financeMock (apenas dados de demonstração — não usado em produção)
 │           ├── atoms.tsx         # Icon, Badge, Card, Tabs, Modal, Dropdown, Btn, Spinner, etc.
 │           ├── FinanceDashboard.tsx  # Componente raiz (client) — seletor de período 7d/30d/90d/Tudo
-│           │                         # buildLiveData: deltas reais, TxDetail real, invoices reais/mock
+│           │                         # Memo A: mapRawRows (rows→tipados), Memo B: buildPeriodSummary (period-dep)
 │           ├── TransactionsSection.tsx # Tabela com filtros, paginação e detalhe expandível real
 │           ├── WithdrawalsSection.tsx  # Tabela de saques (filtrada pelo período selecionado)
-│           ├── InvoicesSection.tsx     # Tabela de faturas (reais quando billing ativo)
+│           ├── InvoicesSection.tsx     # Tabela de faturas reais; estado vazio quando tabela está vazia
 │           └── WithdrawModal.tsx       # Modal multi-step: self-fetch de bank_accounts, add/delete inline
 │                                       # maskPixKey: oculta meio da chave PIX para privacidade
 ├── hooks/
@@ -253,7 +253,7 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Financeiro — saldo correto (aprovadas − saques pending+completed) | ✅ Implementado |
 | Financeiro — deltas reais (período atual vs anterior, calculado client-side) | ✅ Implementado |
 | Financeiro — detalhe expansível com dados reais (customer, gateway, bot, flow, UTM) | ✅ Implementado |
-| Financeiro — tabela invoices real + fallback mock enquanto billing não existe (migração 043) | ✅ Implementado |
+| Financeiro — tabela invoices real + estado vazio quando billing não existe (migração 043) | ✅ Implementado |
 | Financeiro — 5 eventos PostHog: withdrawal_requested, bank_account_added/deleted, finance_tab/period_changed | ✅ Implementado |
 | Financeiro — maskPixKey: oculta meio da chave PIX no modal de saque | ✅ Implementado |
 | Financeiro — tratamento de erro ao deletar conta bancária (deleteError state) | ✅ Implementado |
@@ -429,7 +429,7 @@ FinanceDashboard (Client Component)
   │     ├── TxDetail: method via payment_method (mig 047) + METHOD_LABEL; fallback 'Pix'
   │     │     customer_name, customer_email, gateway (GATEWAY_LABEL), bot_id→nome, flow_id→nome,
   │     │     utm_source, utm_campaign
-  │     └── invoices: rawInvoices.length > 0 → dados reais; senão financeMock.invoices (fallback)
+  │     └── invoices: rawInvoices.length > 0 → dados reais; senão [] (estado vazio — sem mock)
   ├── Memo B — buildPeriodSummary (COM dependência de period — só roda ao trocar período):
   │     ├── summary cards — usa dbSummary (RPC) quando disponível:
   │     │     saldoDisponivel = profiles.balance (trigger atômico, sempre preciso)
@@ -552,7 +552,7 @@ create table public.invoices (
 -- RLS: policy "invoices_owner" → auth.uid() = user_id
 ```
 
-**Nota:** enquanto o sistema de billing não existe, a tabela estará vazia → `buildLiveData` retorna `financeMock.invoices` como fallback. Quando o billing for ativado, inserir linhas reais na tabela `invoices` e o fallback deixa de ser usado automaticamente.
+**Nota:** enquanto o sistema de billing não existe, a tabela estará vazia → `InvoicesSection` exibe estado vazio ("Nenhuma fatura gerada ainda."). Quando o billing for ativado, basta inserir linhas reais na tabela `invoices` e a listagem aparece automaticamente. Não há fallback mock — o `financeMock` não é importado no `FinanceDashboard`.
 
 ---
 
