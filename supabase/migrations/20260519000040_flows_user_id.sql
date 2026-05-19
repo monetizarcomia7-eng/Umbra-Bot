@@ -22,8 +22,9 @@ alter table public.flows
 create index if not exists flows_user_id_idx
   on public.flows (user_id);
 
--- Substitui a policy aberta pela policy de owner
-drop policy if exists "flows_open" on public.flows;
+-- Substitui qualquer policy existente pela policy de owner
+drop policy if exists "flows_open"  on public.flows;
+drop policy if exists "flows_owner" on public.flows;
 
 create policy "flows_owner" on public.flows
   for all
