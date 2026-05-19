@@ -3,9 +3,15 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import { AlertCircle, AlertTriangle, Info, Check, Plus, Trash2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useAnalytics } from '@/hooks/use-analytics'
 import type { BankAccount } from './types'
 import { fmtBRLdec } from './formatters'
 import { Icon, Modal, Btn, Spinner } from './atoms'
+
+function maskPixKey(key: string): string {
+  if (key.length <= 8) return key
+  return `${key.slice(0, 4)}•••${key.slice(-4)}`
+}
 
 function CurrencyInput({ valueCents, onChange, error }: {
   valueCents: number; onChange: (v: number) => void; error?: string | null
@@ -50,9 +56,13 @@ function CurrencyInput({ valueCents, onChange, error }: {
 const KIND_LABEL: Record<string, string> = { pix: 'Pix', conta: 'Conta corrente', ted: 'TED' }
 const KIND_ICON:  Record<string, string> = { pix: 'zap', conta: 'landmark', ted: 'landmark' }
 
-export function WithdrawModal({ open, onClose, saldoDisponivel }: {
-  open: boolean; onClose: () => void; saldoDisponivel: number
+export function WithdrawModal({ open, onClose, onSuccess, saldoDisponivel }: {
+  open: boolean
+  onClose: () => void
+  onSuccess: () => void
+  saldoDisponivel: number
 }) {
+  const { track } = useAnalytics()
   const [step,       setStep]       = useState<'form' | 'confirm' | 'success'>('form')
   const [valorCents, setValorCents] = useState(0)
   const [accountId,  setAccountId]  = useState<string>('')
@@ -63,6 +73,7 @@ export function WithdrawModal({ open, onClose, saldoDisponivel }: {
   const [accounts,        setAccounts]        = useState<BankAccount[]>([])
   const [accountsLoading, setAccountsLoading] = useState(false)
   const [deletingId,      setDeletingId]      = useState<string | null>(null)
+  const [deleteError,     setDeleteError]     = useState<string | null>(null)
 
   // Formulário de nova conta
   const [showAddForm, setShowAddForm] = useState(false)
@@ -99,6 +110,7 @@ export function WithdrawModal({ open, onClose, saldoDisponivel }: {
     setNewKind('pix')
     setAddError(null)
     setAddSuccess(false)
+    setDeleteError(null)
     fetchAccounts()
   }, [open, fetchAccounts])
 
@@ -134,6 +146,7 @@ export function WithdrawModal({ open, onClose, saldoDisponivel }: {
       setNewPixKey('')
       setNewKind('pix')
       setAddSuccess(true)
+      track('bank_account_added', { kind: newKind })
     } finally {
       setAddLoading(false)
     }
@@ -141,11 +154,18 @@ export function WithdrawModal({ open, onClose, saldoDisponivel }: {
 
   async function handleDeleteAccount(id: string) {
     setDeletingId(id)
+    setDeleteError(null)
     try {
-      await fetch(`/api/bank-accounts/${id}`, { method: 'DELETE' })
+      const res = await fetch(`/api/bank-accounts/${id}`, { method: 'DELETE' })
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}))
+        setDeleteError(json.error ?? 'Erro ao remover conta.')
+        return
+      }
       const remaining = accounts.filter((a) => a.id !== id)
       setAccounts(remaining)
       if (accountId === id) setAccountId(remaining[0]?.id ?? '')
+      track('bank_account_deleted', {})
     } finally {
       setDeletingId(null)
     }
@@ -177,6 +197,7 @@ export function WithdrawModal({ open, onClose, saldoDisponivel }: {
         setApiError(json.error ?? 'Erro ao solicitar saque. Tente novamente.')
         return
       }
+      track('withdrawal_requested', { amount: valor, account_kind: account.kind })
       setStep('success')
     } catch {
       setApiError('Erro de conexão. Verifique sua internet e tente novamente.')
@@ -206,7 +227,7 @@ export function WithdrawModal({ open, onClose, saldoDisponivel }: {
             </Btn>
           </>
         ) : (
-          <Btn variant="primary" onClick={onClose} className="ml-auto">Fechar</Btn>
+          <Btn variant="primary" onClick={onSuccess} className="ml-auto">Fechar</Btn>
         )
       }
     >
@@ -263,7 +284,9 @@ export function WithdrawModal({ open, onClose, saldoDisponivel }: {
                     </span>
                     <div className="flex-1 min-w-0">
                       <div className="text-[12.5px] font-medium text-text truncate">{acc.label}</div>
-                      <div className="text-[11px] text-text-muted truncate">{acc.pix_key} · {KIND_LABEL[acc.kind] ?? acc.kind}</div>
+                      <div className="text-[11px] text-text-muted truncate">
+                        {maskPixKey(acc.pix_key)} · {KIND_LABEL[acc.kind] ?? acc.kind}
+                      </div>
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
                       <Icon name={KIND_ICON[acc.kind] ?? 'landmark'} size={15} className="text-text-muted" />
@@ -289,6 +312,12 @@ export function WithdrawModal({ open, onClose, saldoDisponivel }: {
                     <Plus size={14} /> Adicionar conta
                   </button>
                 )}
+              </div>
+            )}
+
+            {deleteError && (
+              <div className="flex items-center gap-1 text-[11.5px] text-danger mt-2">
+                <AlertCircle size={12} /> {deleteError}
               </div>
             )}
 
@@ -389,7 +418,9 @@ export function WithdrawModal({ open, onClose, saldoDisponivel }: {
               </span>
               <div className="min-w-0">
                 <div className="text-[12.5px] font-medium text-text truncate">{account.label}</div>
-                <div className="text-[11px] text-text-muted truncate">{account.pix_key} · {KIND_LABEL[account.kind] ?? account.kind}</div>
+                <div className="text-[11px] text-text-muted truncate">
+                  {maskPixKey(account.pix_key)} · {KIND_LABEL[account.kind] ?? account.kind}
+                </div>
               </div>
             </div>
           </div>

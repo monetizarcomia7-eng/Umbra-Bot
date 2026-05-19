@@ -25,6 +25,12 @@ type EventMap = {
     utm_filtered: boolean
   }
   analytics_cohort_error:    { error: string }
+  // Aba Financeiro
+  withdrawal_requested:      { amount: number; account_kind: string }
+  bank_account_added:        { kind: 'pix' | 'conta' | 'ted' }
+  bank_account_deleted:      Record<string, never>
+  finance_tab_changed:       { tab: string }
+  finance_period_changed:    { period: string }
 }
 
 export function useAnalytics() {

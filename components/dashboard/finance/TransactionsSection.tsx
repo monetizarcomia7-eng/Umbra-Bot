@@ -4,7 +4,7 @@ import React, { useState, useMemo, useEffect } from 'react'
 import { Search, Inbox, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { Transaction } from './types'
-import { txTypeMap, txStatusMap, typeToFilter, statusToFilter, filterPeriods, filterTypes, filterStatus } from './constants'
+import { txTypeMap, txStatusMap, typeToFilter, statusToFilter, filterTypes, filterStatus } from './constants'
 import { fmtBRLdec, fmtPct, fmtDateShort, fmtTime } from './formatters'
 import { Badge, Card, Dropdown, Pagination, Icon } from './atoms'
 
@@ -114,7 +114,6 @@ function TransactionRow({ tx, expanded, onToggle }: {
 
 export function TransactionsSection({ data }: { data: Transaction[] }) {
   const [filters, setFilters] = useState({
-    period: 'Últimos 30 dias',
     type:   'Todos os tipos',
     status: 'Todos os status',
     search: '',
@@ -156,12 +155,11 @@ export function TransactionsSection({ data }: { data: Transaction[] }) {
             className="w-full h-9 pl-9 pr-3 bg-surface border border-border rounded-lg text-[12.5px] placeholder:text-text-subtle text-text focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50"
           />
         </div>
-        <Dropdown icon="calendar"     label="Período" value={filters.period} options={filterPeriods} onChange={(v) => setFilters((f) => ({ ...f, period: v }))} />
         <Dropdown icon="tag"          label="Tipo"    value={filters.type}   options={filterTypes}   onChange={(v) => setFilters((f) => ({ ...f, type: v }))}   />
         <Dropdown icon="circle-check" label="Status"  value={filters.status} options={filterStatus}  onChange={(v) => setFilters((f) => ({ ...f, status: v }))} />
         {hasFilters && (
           <button
-            onClick={() => setFilters({ period: 'Últimos 30 dias', type: 'Todos os tipos', status: 'Todos os status', search: '' })}
+            onClick={() => setFilters({ type: 'Todos os tipos', status: 'Todos os status', search: '' })}
             className="h-9 px-2.5 inline-flex items-center gap-1.5 text-[12.5px] text-text-muted hover:text-text rounded-lg hover:bg-surface-2"
           >
             <X size={13} /> Limpar
