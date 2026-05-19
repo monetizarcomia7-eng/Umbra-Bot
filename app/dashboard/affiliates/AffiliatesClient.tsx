@@ -356,7 +356,7 @@ function CopyableLink({ url, onCopy }: { url: string; onCopy?: () => void }) {
   const [copied, setCopied] = useState(false)
   function handleCopy(e: React.MouseEvent) {
     e.stopPropagation()
-    try { navigator.clipboard?.writeText('https://' + url) } catch (_) {}
+    try { navigator.clipboard?.writeText(url) } catch (_) {}
     setCopied(true)
     setTimeout(() => setCopied(false), 1800)
     onCopy?.()
