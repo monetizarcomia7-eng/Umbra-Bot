@@ -544,6 +544,31 @@ function SortIcon({ field, active, dir }: { field: SortField; active: SortField;
     : <ArrowDown size={11} className="text-primary ml-0.5" />
 }
 
+function SortTh({ field, children, align = 'left', sortField, sortDir, onToggle }: {
+  field: SortField
+  children: React.ReactNode
+  align?: 'left' | 'right'
+  sortField: SortField
+  sortDir: SortDir
+  onToggle: (f: SortField) => void
+}) {
+  const active = sortField === field
+  return (
+    <th className={cn('font-semibold px-2 py-2.5', align === 'right' ? 'text-right' : 'text-left')}>
+      <button
+        onClick={() => onToggle(field)}
+        className={cn(
+          'inline-flex items-center gap-0.5 rounded transition-colors hover:text-text',
+          active ? 'text-primary' : 'text-text-subtle',
+        )}
+      >
+        {children}
+        <SortIcon field={field} active={sortField} dir={sortDir} />
+      </button>
+    </th>
+  )
+}
+
 /* ── CustomersTable ───────────────────────────────────────── */
 
 function CustomersTable({ data, selected, setSelected, onOpenCustomer, totalLoaded, totalCount, hasMore, loadingMore, onLoadMore, onAdd }: {
@@ -603,24 +628,6 @@ function CustomersTable({ data, selected, setSelected, onOpenCustomer, totalLoad
     )
   }
 
-  function SortTh({ field, children, align = 'left' }: { field: SortField; children: React.ReactNode; align?: 'left' | 'right' }) {
-    const active = sortField === field
-    return (
-      <th className={cn('font-semibold px-2 py-2.5', align === 'right' ? 'text-right' : 'text-left')}>
-        <button
-          onClick={() => toggleSort(field)}
-          className={cn(
-            'inline-flex items-center gap-0.5 rounded transition-colors hover:text-text',
-            active ? 'text-primary' : 'text-text-subtle',
-          )}
-        >
-          {children}
-          <SortIcon field={field} active={sortField} dir={sortDir} />
-        </button>
-      </th>
-    )
-  }
-
   return (
     <div className="bg-surface border border-border rounded-xl overflow-hidden">
       {hasMore && (
@@ -640,12 +647,12 @@ function CustomersTable({ data, selected, setSelected, onOpenCustomer, totalLoad
               <th className="pl-4 pr-2 py-2.5 w-10">
                 <Checkbox checked={allOnPageSelected} indeterminate={someOnPageSelected && !allOnPageSelected} onChange={togglePage} />
               </th>
-              <SortTh field="name">Cliente</SortTh>
-              <SortTh field="origin">Origem</SortTh>
-              <SortTh field="status">Status</SortTh>
-              <SortTh field="purchases" align="right">Compras</SortTh>
-              <SortTh field="totalSpent" align="right">Total gasto</SortTh>
-              <SortTh field="lastContact">Último contato</SortTh>
+              <SortTh field="name" sortField={sortField} sortDir={sortDir} onToggle={toggleSort}>Cliente</SortTh>
+              <SortTh field="origin" sortField={sortField} sortDir={sortDir} onToggle={toggleSort}>Origem</SortTh>
+              <SortTh field="status" sortField={sortField} sortDir={sortDir} onToggle={toggleSort}>Status</SortTh>
+              <SortTh field="purchases" align="right" sortField={sortField} sortDir={sortDir} onToggle={toggleSort}>Compras</SortTh>
+              <SortTh field="totalSpent" align="right" sortField={sortField} sortDir={sortDir} onToggle={toggleSort}>Total gasto</SortTh>
+              <SortTh field="lastContact" sortField={sortField} sortDir={sortDir} onToggle={toggleSort}>Último contato</SortTh>
               <th className="w-10" />
             </tr>
           </thead>
