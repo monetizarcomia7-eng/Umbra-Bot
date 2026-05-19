@@ -378,7 +378,7 @@ function FilterBar({
   search, onSearchChange,
   bots,
   live, onLiveToggle,
-  eventsPerHour, onClear, hasFilters,
+  eventsPerHour, onClear, hasFilters, unreadCount,
 }: {
   category: string; onCategoryChange: (v: string) => void
   botId: string; onBotChange: (v: string) => void
@@ -386,7 +386,7 @@ function FilterBar({
   search: string; onSearchChange: (v: string) => void
   bots: BotOption[]
   live: boolean; onLiveToggle: () => void
-  eventsPerHour: number; onClear: () => void; hasFilters: boolean
+  eventsPerHour: number; onClear: () => void; hasFilters: boolean; unreadCount: number
 }) {
   const categoryOptions = Object.keys(categoryGroups).map((k) => ({ value: k, label: k }))
   const botOptions = [
@@ -449,6 +449,11 @@ function FilterBar({
         </span>
         {live ? 'Ao vivo' : 'Pausado'}
         {live && <span className="text-success/70 tnum">· {eventsPerHour}/h</span>}
+        {unreadCount > 0 && (
+          <span className="min-w-[18px] h-[18px] bg-success text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1 leading-none">
+            {unreadCount > 99 ? '99+' : unreadCount}
+          </span>
+        )}
       </button>
     </div>
   )
@@ -644,18 +649,32 @@ export default function ActivityClient({
   const [botId,    setBotId]    = useState(() => LS.get('umbra_act_bot',      'all'))
   const [period,   setPeriod]   = useState(() => LS.get('umbra_act_period',   'all'))
   const [search,   setSearch]   = useState(() => LS.get('umbra_act_search',   ''))
+  const [unreadCount, setUnreadCount] = useState(0)
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
   const [dbOffset, setDbOffset] = useState(initialEvents.length)
   const [hasMore, setHasMore] = useState(initialEvents.length >= PAGE_SIZE)
   const [isLoadingMore, setIsLoadingMore] = useState(false)
 
-  const sentinelRef = useRef<HTMLDivElement>(null)
+  const sentinelRef   = useRef<HTMLDivElement>(null)
+  const topSentinelRef = useRef<HTMLDivElement>(null)
   const initialNewIds = useRef(new Set<string>())
-  const liveRef = useRef(live)
+  const liveRef  = useRef(live)
   const periodRef = useRef(period)
 
   useEffect(() => { liveRef.current = live }, [live])
   useEffect(() => { periodRef.current = period }, [period])
+
+  // Zera não-lidos quando o topo do feed fica visível
+  useEffect(() => {
+    const el = topSentinelRef.current
+    if (!el) return
+    const obs = new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting) setUnreadCount(0) },
+      { threshold: 0 },
+    )
+    obs.observe(el)
+    return () => obs.disconnect()
+  }, [])
 
   // Tick now a cada 30s usando Date.now() real (sem incremento de valor fixo)
   useEffect(() => {
@@ -677,6 +696,7 @@ export default function ActivityClient({
           const evt = mapRaw(row)
           initialNewIds.current.add(evt.id)
           setExtras((prev) => [evt, ...prev].slice(0, 40))
+          setUnreadCount((c) => c + 1)
           setNow(Date.now())
         },
       )
@@ -868,7 +888,10 @@ export default function ActivityClient({
             eventsPerHour={eventsPerHour}
             onClear={onClear}
             hasFilters={hasFilters}
+            unreadCount={unreadCount}
           />
+
+          <div ref={topSentinelRef} className="h-px" />
 
           {allEvents.length === 0 ? (
             <NoDataState />
