@@ -1,6 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { DashboardLayout } from '@/components/dashboard/Layout'
-import AffiliatesClient, { type RawAffiliate, type RawPayment, type RawConfig } from './AffiliatesClient'
+import AffiliatesClient, { type RawAffiliate, type RawPayment, type RawConfig, type RawBot } from './AffiliatesClient'
 
 export const dynamic = 'force-dynamic'
 
@@ -22,10 +22,10 @@ export default async function AffiliatesPage() {
 
   const uid = user.id
 
-  const [affiliatesRes, paymentsRes, configRes] = await Promise.all([
+  const [affiliatesRes, paymentsRes, configRes, botsRes] = await Promise.all([
     supabase
       .from('affiliates')
-      .select('id, name, email, slug, status, clicks, sales, commission, conversion_rate, payment_method, commission_pct, joined_at')
+      .select('id, name, email, slug, status, clicks, sales, commission, conversion_rate, payment_method, commission_pct, joined_at, notes')
       .eq('user_id', uid)
       .order('commission', { ascending: false }),
     supabase
@@ -38,6 +38,11 @@ export default async function AffiliatesPage() {
       .select('*')
       .eq('user_id', uid)
       .single(),
+    supabase
+      .from('bots')
+      .select('id, name, username')
+      .eq('user_id', uid)
+      .order('name'),
   ])
 
   const config: RawConfig = configRes.data ? {
@@ -60,6 +65,7 @@ export default async function AffiliatesPage() {
         initialConfig={config}
         userId={uid}
         appUrl={appUrl}
+        bots={(botsRes.data ?? []) as unknown as RawBot[]}
       />
     </DashboardLayout>
   )

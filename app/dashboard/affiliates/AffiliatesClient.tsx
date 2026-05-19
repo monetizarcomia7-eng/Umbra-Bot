@@ -27,6 +27,7 @@ export interface RawAffiliate {
   payment_method: string | null
   commission_pct: number
   joined_at: string
+  notes: string | null
 }
 
 export interface RawPayment {
@@ -50,6 +51,12 @@ export interface RawConfig {
   minPayout: number
 }
 
+export interface RawBot {
+  id: string
+  name: string
+  username: string | null
+}
+
 /* ── Internal types ───────────────────────────────────────── */
 
 interface Affiliate {
@@ -67,6 +74,7 @@ interface Affiliate {
   joined: number
   paymentMethod: string
   commissionPct: number
+  notes: string | null
 }
 
 interface Payment {
@@ -127,6 +135,7 @@ function mapAffiliate(row: RawAffiliate): Affiliate {
     joined: row.joined_at ? new Date(row.joined_at).getTime() : Date.now(),
     paymentMethod: row.payment_method ?? 'Pix',
     commissionPct: Number(row.commission_pct ?? 30),
+    notes: row.notes ?? null,
   }
 }
 
@@ -417,11 +426,12 @@ function NoDataState({ onAdd }: { onAdd: () => void }) {
 
 /* ── AffiliateActionsMenu ─────────────────────────────────── */
 
-function AffiliateActionsMenu({ affiliate, onEdit, onStatusChange, onDeleteRequest }: {
+function AffiliateActionsMenu({ affiliate, onEdit, onStatusChange, onDeleteRequest, onApproveRequest }: {
   affiliate: Affiliate
   onEdit: () => void
   onStatusChange: (status: 'active' | 'paused' | 'archived') => void
   onDeleteRequest: () => void
+  onApproveRequest: () => void
 }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -445,7 +455,7 @@ function AffiliateActionsMenu({ affiliate, onEdit, onStatusChange, onDeleteReque
         <div className="absolute right-0 z-50 top-full mt-1 bg-surface border border-border rounded-xl shadow-lg py-1 w-44 overflow-hidden">
           {isPending ? (
             <>
-              <button onClick={() => { onStatusChange('active'); setOpen(false) }}
+              <button onClick={() => { onApproveRequest(); setOpen(false) }}
                 className="w-full flex items-center gap-2 px-3 py-2 text-[12.5px] text-success hover:bg-success-soft">
                 <Check size={13} /> Aprovar
               </button>
@@ -502,13 +512,14 @@ function AffiliateActionsMenu({ affiliate, onEdit, onStatusChange, onDeleteReque
 
 /* ── AffiliatesTable ──────────────────────────────────────── */
 
-function AffiliatesTable({ data, onAddClick, onEdit, onStatusChange, onDeleteRequest, onCopyLink }: {
+function AffiliatesTable({ data, onAddClick, onEdit, onStatusChange, onDeleteRequest, onCopyLink, onApproveRequest }: {
   data: Affiliate[]
   onAddClick: () => void
   onEdit: (id: string) => void
   onStatusChange: (id: string, status: 'active' | 'paused' | 'archived') => void
   onDeleteRequest: (id: string) => void
   onCopyLink: () => void
+  onApproveRequest: (id: string) => void
 }) {
   const [search, setSearch]       = useState('')
   const [statusFilter, setStatusFilter] = useState('Todos os status')
@@ -627,6 +638,7 @@ function AffiliatesTable({ data, onAddClick, onEdit, onStatusChange, onDeleteReq
                         onEdit={() => onEdit(a.id)}
                         onStatusChange={(status) => onStatusChange(a.id, status)}
                         onDeleteRequest={() => onDeleteRequest(a.id)}
+                        onApproveRequest={() => onApproveRequest(a.id)}
                       />
                     </td>
                   </tr>
@@ -1193,6 +1205,114 @@ function DeleteConfirmModal({ affiliate, open, onClose, onConfirm }: {
   )
 }
 
+/* ── ApproveAffiliateModal ────────────────────────────────── */
+
+function ApproveAffiliateModal({ affiliate, open, onClose, onApprove, bots }: {
+  affiliate: Affiliate | null
+  open: boolean
+  onClose: () => void
+  onApprove: (id: string, notes: string) => Promise<void>
+  bots: RawBot[]
+}) {
+  const [selectedBots, setSelectedBots] = useState<string[]>([])
+  const [products, setProducts] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    if (open) { setSelectedBots([]); setProducts(''); setLoading(false) }
+  }, [open])
+
+  function toggleBot(id: string) {
+    setSelectedBots((prev) => prev.includes(id) ? prev.filter((b) => b !== id) : [...prev, id])
+  }
+
+  async function submit() {
+    if (!affiliate) return
+    setLoading(true)
+    const notes = JSON.stringify({
+      bots: selectedBots.map((id) => {
+        const bot = bots.find((b) => b.id === id)
+        return { id, name: bot?.username ? `@${bot.username}` : (bot?.name ?? id) }
+      }),
+      products: products.trim(),
+    })
+    await onApprove(affiliate.id, notes)
+    setLoading(false)
+    onClose()
+  }
+
+  return (
+    <Modal open={open} onClose={onClose} title="Aprovar afiliado"
+      subtitle={affiliate ? `Configurar acesso de ${affiliate.name}` : undefined}
+      footer={
+        <>
+          <Btn variant="secondary" onClick={onClose}>Cancelar</Btn>
+          <Btn variant="primary" disabled={loading} onClick={submit}>
+            {loading ? <><Spinner size={12} />Aprovando…</> : <><Check size={13} />Aprovar afiliado</>}
+          </Btn>
+        </>
+      }>
+      <div className="space-y-4">
+        {affiliate && (
+          <div className="flex items-center gap-3 p-3 bg-surface-2/50 rounded-lg border border-border">
+            <Avatar name={affiliate.name} initials={affiliate.initials} size={36} />
+            <div>
+              <div className="text-[13px] font-semibold text-text">{affiliate.name}</div>
+              <div className="text-[11.5px] text-text-muted">{affiliate.email}</div>
+            </div>
+          </div>
+        )}
+
+        <div>
+          <div className="text-[12.5px] font-semibold text-text mb-1">Bots que pode divulgar</div>
+          <div className="text-[11.5px] text-text-muted mb-2.5">Selecione quais bots este afiliado está autorizado a promover.</div>
+          {bots.length === 0 ? (
+            <div className="text-[12px] text-text-muted py-2">Nenhum bot cadastrado ainda.</div>
+          ) : (
+            <div className="space-y-1.5">
+              {bots.map((bot) => {
+                const checked = selectedBots.includes(bot.id)
+                return (
+                  <label key={bot.id} className={cn(
+                    'flex items-center gap-3 p-2.5 rounded-lg border cursor-pointer transition-colors select-none',
+                    checked ? 'border-primary/40 bg-primary-soft/30' : 'border-border bg-surface hover:bg-surface-2'
+                  )}>
+                    <input type="checkbox" checked={checked} onChange={() => toggleBot(bot.id)}
+                      className="w-4 h-4 accent-primary rounded shrink-0" />
+                    <div className="min-w-0">
+                      <div className="text-[12.5px] font-medium text-text">
+                        {bot.username ? `@${bot.username}` : bot.name}
+                      </div>
+                      {bot.username && <div className="text-[11px] text-text-muted">{bot.name}</div>}
+                    </div>
+                  </label>
+                )
+              })}
+            </div>
+          )}
+        </div>
+
+        <div>
+          <div className="text-[12.5px] font-semibold text-text mb-1">
+            Produtos que vai divulgar <span className="text-text-muted font-normal">(opcional)</span>
+          </div>
+          <textarea
+            value={products}
+            onChange={(e) => setProducts(e.target.value)}
+            placeholder="Ex.: Curso de Marketing Digital, Mentoria Individual"
+            rows={3}
+            className="w-full px-3 py-2 bg-surface border border-border rounded-lg text-[13px] text-text placeholder:text-text-subtle focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50 resize-none"
+          />
+        </div>
+
+        <div className="text-[11.5px] text-text-muted bg-primary-soft/20 border border-primary/15 rounded-lg p-3 leading-relaxed">
+          Ao aprovar, o status muda para <strong className="text-primary">Ativo</strong> e o afiliado pode divulgar usando o link de afiliado gerado.
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
 /* ── Tabs ─────────────────────────────────────────────────── */
 
 function Tabs({ tabs, active, onChange }: { tabs: { id: string; label: string; count?: number }[]; active: string; onChange: (id: string) => void }) {
@@ -1217,12 +1337,13 @@ function Tabs({ tabs, active, onChange }: { tabs: { id: string; label: string; c
 
 /* ── AffiliatesClient ─────────────────────────────────────── */
 
-export default function AffiliatesClient({ initialAffiliates, initialPayments, initialConfig, userId, appUrl }: {
+export default function AffiliatesClient({ initialAffiliates, initialPayments, initialConfig, userId, appUrl, bots }: {
   initialAffiliates: RawAffiliate[]
   initialPayments: RawPayment[]
   initialConfig: RawConfig
   userId: string
   appUrl: string
+  bots: RawBot[]
 }) {
   const { track } = useAnalytics()
 
@@ -1233,6 +1354,7 @@ export default function AffiliatesClient({ initialAffiliates, initialPayments, i
   const [addOpen,    setAddOpen]    = useState(false)
   const [editingId,  setEditingId]  = useState<string | null>(null)
   const [deleteId,   setDeleteId]   = useState<string | null>(null)
+  const [approveId,  setApproveId]  = useState<string | null>(null)
   const [toast,      setToast]      = useState('')
   const [toastKind,  setToastKind]  = useState<'success' | 'error'>('success')
 
@@ -1313,6 +1435,20 @@ export default function AffiliatesClient({ initialAffiliates, initialPayments, i
     if (error) { showToast('Erro ao apagar afiliado.', 'error'); return }
     setAffiliates((prev) => prev.filter((a) => a.id !== deleteId))
     showToast(`${aff?.name ?? 'Afiliado'} removido do programa.`)
+  }
+
+  // ── Approve affiliate
+  async function handleApprove(id: string, notes: string) {
+    const supabase = createClient()
+    const { error } = await supabase
+      .from('affiliates')
+      .update({ status: 'active', notes })
+      .eq('id', id)
+      .eq('user_id', userId)
+    if (error) { showToast('Erro ao aprovar afiliado.', 'error'); return }
+    setAffiliates((prev) => prev.map((a) => a.id === id ? { ...a, status: 'active' as const, notes } : a))
+    track('affiliate_status_changed', { status: 'active' })
+    showToast('Afiliado aprovado com sucesso.')
   }
 
   // ── Save config
@@ -1434,6 +1570,7 @@ export default function AffiliatesClient({ initialAffiliates, initialPayments, i
           onStatusChange={handleStatusChange}
           onDeleteRequest={(id) => setDeleteId(id)}
           onCopyLink={() => track('affiliate_link_copied', {})}
+          onApproveRequest={(id) => setApproveId(id)}
         />
       )}
       {tab === 'program' && (
@@ -1461,6 +1598,13 @@ export default function AffiliatesClient({ initialAffiliates, initialPayments, i
         open={!!deleteId}
         onClose={() => setDeleteId(null)}
         onConfirm={handleDelete}
+      />
+      <ApproveAffiliateModal
+        affiliate={affiliates.find((a) => a.id === approveId) ?? null}
+        open={!!approveId}
+        onClose={() => setApproveId(null)}
+        onApprove={handleApprove}
+        bots={bots}
       />
     </>
   )
