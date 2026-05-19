@@ -40,7 +40,7 @@ umbra-bot/
 │   │   │   │                     # Lê cookie 'umbra_aff' → valida afiliado (.eq user_id, IDOR-safe) → salva affiliate_id
 │   │   │   └── mercadopago-webhook/route.ts # Confirma pagamento (valida secret em prod)
 │   │   │                                    # Aprovado: credita comissão via RPC credit_affiliate_sale (mig 058)
-│   │   │                                    # Aprovado: insere alert type='sale' com context [{circle-dollar-sign, valor}, {users, cliente}]
+│   │   │                                    # Aprovado: insere alert type='sale', source='webhook', context chips
 │   │   ├── withdrawals/
 │   │   │   └── route.ts          # POST: solicita saque (auth + zod + rate limit 3/dia + IP + Sentry)
 │   │   ├── bank-accounts/
@@ -183,7 +183,7 @@ umbra-bot/
 │   └── DashboardProvider.tsx     # Contexto global: user, alerts, botsCount, logout — 1 fetch
 ├── public/
 │   └── sw.js                     # Service Worker para Web Push
-├── supabase/migrations/          # 58 migrações SQL (000 a 058)
+├── supabase/migrations/          # 61 migrações SQL (000 a 061)
 ├── vercel.json                   # 4 Cron jobs: process-withdrawals (06:00 UTC) + cleanup-activity (02:00 UTC) + check-bots (a cada 30 min) + cleanup-alerts (04:00 UTC)
 ├── sentry.*.config.ts            # Sentry (client com Replay / server com tracePropagation)
 ├── instrumentation.ts            # Next.js hook para Sentry server
@@ -377,9 +377,10 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | RLS em todas as tabelas | ✅ Configurado (flows corrigida na migração 040) |
 | Content-Security-Policy (CSP sem unsafe-eval em produção) | ✅ Configurado no middleware |
 | Notificações — Server Component SSR + Client Component (dados reais do banco) | ✅ Funcional |
-| Notificações — save() persiste via upsert ON CONFLICT user_id (migração 060) | ✅ Implementado |
+| Notificações — save() persiste via upsert ON CONFLICT user_id (migração 060 + 061) | ✅ Implementado |
 | Notificações — email e bot Telegram reais (user.email + bots.username do banco) | ✅ Implementado |
 | Notificações — RLS corrigida: política por usuário em vez de open (migração 060) | ✅ Corrigido |
+| Notificações — migração 061: fix CONSTRAINT UNIQUE completo (substitui índice parcial incompatível) | ✅ Corrigido |
 | Sistema de planos/billing | ❌ Não iniciado |
 | Editor de fluxos de venda | ❌ Não iniciado |
 | Afiliados — Server Component SSR + Client Component (dados reais) | ✅ Funcional |
@@ -1604,3 +1605,132 @@ get_public_affiliate_program(p_user_id uuid) → json
 | `affiliate_paid` | ao marcar pagamentos como pagos (inclui count + total em R$) |
 | `affiliate_config_saved` | ao salvar configuração do programa (inclui percentage, attribution, cookie_window) |
 | `affiliate_link_copied` | ao copiar link de afiliado |
+
+---
+
+## 18. MÓDULO DE NOTIFICAÇÕES
+
+### Arquivos
+
+```
+app/dashboard/notifications/
+  ├── page.tsx                # Server Component — busca prefs + firstBot em paralelo
+  └── NotificationsClient.tsx # Client Component — toda a UI interativa + save para o banco
+```
+
+### Fluxo de dados
+
+```
+NotificationsPage (Server Component)
+  ├── Promise.all em paralelo:
+  │     ├── notification_prefs: prefs, channel_state, quiet
+  │     │   .eq('user_id', user.id).maybeSingle()
+  │     └── bots: name, username
+  │         .eq('user_id', user.id).not('token', 'is', null).limit(1).maybeSingle()
+  └── passa como props:
+        userId: string
+        userEmail: string            ← user.email do Supabase Auth
+        initialPrefs: RawNotifPrefs | null
+        firstBot: { name, username } | null
+
+NotificationsClient (Client Component)
+  ├── prefs state: initialPrefs?.prefs ?? DEFAULT_PREFS
+  ├── channelState state: initialPrefs?.channel_state ?? buildDefaultChannels(!!firstBot)
+  │     email: { linked: true }
+  │     panel: { linked: true }
+  │     telegram: { linked: !!firstBot }  ← false se usuário não tem bot configurado
+  ├── quiet state: initialPrefs?.quiet ?? DEFAULT_QUIET
+  ├── snapshot state: cópia do estado persistido (compara com estado atual para dirty check)
+  ├── saving state: boolean — botão exibe Loader2 durante o upsert
+  ├── error state: string — exibe mensagem real do banco (ou genérica se longa)
+  ├── channelDescs (dinâmico):
+  │     email:    userEmail || 'Seu e-mail de cadastro'
+  │     panel:    'Sino + página de Atividade'
+  │     telegram: firstBot ? `Bot @${username ?? name}` : 'Nenhum bot configurado'
+  ├── save() async:
+  │     supabase.from('notification_prefs').upsert(
+  │       { user_id, prefs, channel_state, quiet, updated_at },
+  │       { onConflict: 'user_id' }           ← requer CONSTRAINT UNIQUE (migração 061)
+  │     )
+  │     on success: atualiza snapshot + setSaved(true)
+  │     on error: console.error + setError(msg)
+  ├── discard(): reset ao snapshot (último salvo)
+  ├── reset(): reset aos DEFAULT_PREFS / DEFAULT_QUIET / buildDefaultChannels
+  ├── dirty: JSON.stringify(current) !== JSON.stringify(snapshot)
+  ├── ChannelsCard: recebe descs dinâmicos por canal
+  ├── PreferencesTable: matriz eventos × canais com toggles por célula e por coluna/linha
+  └── QuietHoursCard: toggle enable + time pickers (De / Até) + toggle exceptCritical
+```
+
+### Tabela notification_prefs — schema (migração 018 + 060 + 061)
+
+```sql
+-- Base (migração 018)
+id            text        primary key default gen_random_uuid()::text
+prefs         jsonb       not null default '{}'
+channel_state jsonb       not null default '{"email":{"linked":true},"panel":{"linked":true},"telegram":{"linked":false}}'
+quiet         jsonb       not null default '{"enabled":true,"from":"22:00","to":"07:00","exceptCritical":true}'
+created_at    timestamptz not null default now()
+updated_at    timestamptz not null default now()
+
+-- Adicionado migração 060 + corrigido na 061
+user_id       uuid references auth.users(id) on delete cascade
+
+-- Constraint único completo (migração 061 — substitui índice parcial da 060)
+-- Obrigatório para upsert ON CONFLICT (user_id) funcionar no PostgREST
+CONSTRAINT notification_prefs_user_id_key UNIQUE (user_id)
+
+-- RLS (migração 060)
+policy "notification_prefs_owner": auth.uid() = user_id
+-- Substitui "notification_prefs_open" (using true) que expunha dados entre usuários
+```
+
+### Catálogo de eventos (EVENT_CATALOG)
+
+| Grupo | ID | Label |
+|---|---|---|
+| Vendas e pagamentos | `sale_approved` | Nova venda aprovada |
+| | `sale_pending` | Venda pendente |
+| | `sale_refunded` | Estorno solicitado |
+| | `payment_failed` | Pagamento falhou |
+| | `chargeback` | Chargeback recebido |
+| Leads e contatos | `lead_created` | Novo lead capturado |
+| | `cart_abandoned` | Carrinho abandonado |
+| | `lead_blocked` | Lead bloqueou o bot |
+| Sistema e integrações | `bot_down` | Bot desconectado |
+| | `gateway_fail` | Gateway com falha |
+| | `webhook_fail` | Webhook falhando |
+| | `quota_warning` | Limite do plano próximo |
+| Resumos | `daily_recap` | Resumo diário |
+| | `weekly_recap` | Resumo semanal |
+| | `monthly_recap` | Fechamento mensal |
+| Equipe | `team_invite` | Convite aceito |
+| | `role_change` | Mudança de papel |
+
+### Canais
+
+| ID | Label | Descrição dinâmica |
+|---|---|---|
+| `email` | E-mail | `user.email` do Supabase Auth |
+| `panel` | Painel | Sino + página de Atividade (fixo) |
+| `telegram` | Telegram | `Bot @username` real ou "Nenhum bot configurado" |
+
+### Horário de silêncio (QuietHours)
+
+```ts
+interface QuietHours {
+  enabled:       boolean   // ativa/desativa o silêncio
+  from:          string    // ex: '22:00'
+  to:            string    // ex: '07:00'
+  exceptCritical: boolean  // bot_down, gateway_fail e chargeback passam mesmo no silêncio
+}
+// Default: enabled=true, from='22:00', to='07:00', exceptCritical=true
+```
+
+### Histórico de migrações
+
+| Migração | O que fez |
+|---|---|
+| 018 | Criou a tabela com RLS aberta (`using true`) — sem user_id |
+| 060 | Adicionou `user_id` + índice parcial (bugado) + corrigiu RLS |
+| 061 | Removeu índice parcial, adicionou `CONSTRAINT UNIQUE` completo (compatível com PostgREST upsert) |
