@@ -207,7 +207,7 @@ function Badge({ tone = 'muted', children }: { tone?: string; children: React.Re
 }
 
 function Btn({ variant = 'secondary', size = 'md', icon: Ico, children, onClick, disabled, className, type = 'button' }: {
-  variant?: 'primary' | 'secondary' | 'ghost'
+  variant?: 'primary' | 'secondary' | 'ghost' | 'danger'
   size?: 'sm' | 'md'
   icon?: LucideIcon
   children?: React.ReactNode
@@ -220,7 +220,8 @@ function Btn({ variant = 'secondary', size = 'md', icon: Ico, children, onClick,
     <button type={type} onClick={onClick} disabled={disabled} className={cn(
       'inline-flex items-center gap-1.5 font-medium rounded-lg transition-colors disabled:opacity-60 disabled:cursor-not-allowed',
       size === 'sm' ? 'h-7 px-2.5 text-[12px]' : 'h-8 px-3 text-[13px]',
-      variant === 'primary' ? 'bg-primary text-primary-fg hover:opacity-90' :
+      variant === 'primary'   ? 'bg-primary text-primary-fg hover:opacity-90' :
+      variant === 'danger'    ? 'bg-danger text-white hover:opacity-90' :
       variant === 'secondary' ? 'border border-border bg-surface text-text hover:bg-surface-2' :
       'text-text-muted hover:bg-surface-2 hover:text-text',
       className,
@@ -725,20 +726,24 @@ function TimelineItem({ event }: { event: TimelineEvent }) {
 
 /* ── ProfilePanel ─────────────────────────────────────────── */
 
-function ProfilePanel({ customer, open, onClose, onUpdate }: {
+function ProfilePanel({ customer, open, onClose, onUpdate, onDelete }: {
   customer: Customer | null
   open: boolean
   onClose: () => void
   onUpdate: (id: string, patch: { tags: string[] }) => void
+  onDelete: (id: string) => Promise<void>
 }) {
   const [tab, setTab] = useState<'timeline' | 'purchases'>('timeline')
   const [addingTag, setAddingTag] = useState(false)
   const [tagInput, setTagInput] = useState('')
   const [timeline, setTimeline] = useState<TimelineEvent[]>([])
   const [timelineLoading, setTimelineLoading] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   useEffect(() => {
     if (open) { setTab('timeline'); setTimeline([]) }
+    setConfirmDelete(false)
   }, [open, customer?.id])
 
   // Load timeline lazily
@@ -945,18 +950,43 @@ function ProfilePanel({ customer, open, onClose, onUpdate }: {
         </div>
 
         {/* Footer */}
-        <footer className="px-5 py-3 border-t border-border bg-surface-2/40 flex items-center justify-between gap-2">
-          <div className="text-[11px] text-text-subtle tnum">
-            Desde {fmtDate(customer.firstContact)}
-          </div>
-          <div className="flex gap-2">
-            {customer.email && (
-              <Btn size="sm" icon={Mail} onClick={() => window.location.href = `mailto:${customer.email}`}>
-                E-mail
-              </Btn>
-            )}
-            <Btn variant="primary" size="sm" icon={MessageCircle}>Mensagem</Btn>
-          </div>
+        <footer className="px-5 py-3 border-t border-border bg-surface-2/40">
+          {confirmDelete ? (
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-[12px] text-text-muted">Apagar permanentemente?</span>
+              <div className="flex gap-2">
+                <Btn size="sm" onClick={() => setConfirmDelete(false)}>Cancelar</Btn>
+                <Btn size="sm" variant="danger" disabled={deleting}
+                  onClick={async () => {
+                    setDeleting(true)
+                    await onDelete(customer.id)
+                    setDeleting(false)
+                    setConfirmDelete(false)
+                  }}>
+                  {deleting ? <Loader2 size={13} className="animate-spin" /> : null}
+                  {deleting ? 'Apagando…' : 'Apagar'}
+                </Btn>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center justify-between gap-2">
+              <button
+                onClick={() => setConfirmDelete(true)}
+                className="text-[12px] text-danger hover:opacity-75 transition-opacity flex items-center gap-1"
+                title="Apagar cliente">
+                <X size={13} />
+                Apagar cliente
+              </button>
+              <div className="flex gap-2">
+                {customer.email && (
+                  <Btn size="sm" icon={Mail} onClick={() => window.location.href = `mailto:${customer.email}`}>
+                    E-mail
+                  </Btn>
+                )}
+                <Btn variant="primary" size="sm" icon={MessageCircle}>Mensagem</Btn>
+              </div>
+            </div>
+          )}
         </footer>
       </aside>
     </>
@@ -1430,6 +1460,20 @@ export default function CustomersClient({
     if (error) setToast('Erro ao salvar tag.')
   }
 
+  async function deleteCustomer(id: string) {
+    const customer = customers.find(c => c.id === id)
+    const supabase = createClient()
+    const { error } = await supabase.from('contacts').delete().eq('id', id)
+    if (error) { setToast('Erro ao apagar cliente.'); return }
+    setCustomers(cs => cs.filter(c => c.id !== id))
+    setTotalCount(n => n - 1)
+    if (customer?.status === 'buyer') setBuyersCount(n => n - 1)
+    else setLeadsCount(n => n - 1)
+    setSelected(sel => { const next = new Set(sel); next.delete(id); return next })
+    setOpenCustomerId(null)
+    setToast('Cliente apagado.')
+  }
+
   // ── Bulk add tag via RPC
   async function bulkAddTag(tag: string) {
     const ids = Array.from(selected)
@@ -1538,6 +1582,7 @@ export default function CustomersClient({
         open={!!openCustomerId}
         onClose={() => setOpenCustomerId(null)}
         onUpdate={updateCustomer}
+        onDelete={deleteCustomer}
       />
 
       <AddCustomerModal
