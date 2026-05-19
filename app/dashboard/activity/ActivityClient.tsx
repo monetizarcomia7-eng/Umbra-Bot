@@ -129,86 +129,6 @@ const categoryGroups: Record<string, string[] | 'critical' | null> = {
   'Apenas críticos':     'critical',
 }
 
-/* ── Mock data — usado apenas quando banco está vazio ─────── */
-
-const MOCK_BOT_NAMES = [
-  '@mentoria_vip_bot', '@lancamento_black_bot', '@upsell_pos_bot',
-  '@vendas_curso_bot', '@suporte_premium_bot',
-]
-
-function seededRand(seed: number) {
-  let s = seed % 233280
-  return () => { s = (s * 9301 + 49297) % 233280; return s / 233280 }
-}
-
-const pick = <T,>(arr: T[], r: () => number) => arr[Math.floor(r() * arr.length)]
-
-function pickWeighted<T>(items: [T, number][], r: () => number): T {
-  const total = items.reduce((s, [, w]) => s + w, 0)
-  let v = r() * total
-  for (const [item, w] of items) { if ((v -= w) <= 0) return item }
-  return items[items.length - 1][0]
-}
-
-const PRODUCT_TICKETS: Record<string, number> = {
-  'Mentoria Premium Anual': 1297, 'Curso Intensivo 90 dias': 147,
-  'Pack Templates Pro': 70, 'Consultoria Individual': 675, 'E-book Estratégias': 20,
-}
-const CUSTOMER_NAMES = [
-  'João da Silva', 'Maria Souza', 'Pedro Castro', 'Ana Lima', 'Luana Andrade',
-  'Rafael Mendes', 'Bianca Ramos', 'Thiago Lopes', 'Camila Oliveira', 'Diego Antunes',
-  'Sabrina Pinheiro', 'Fernando Pires', 'Igor Bertolini', 'Renata Cavalcanti',
-]
-const PRODUCTS = Object.keys(PRODUCT_TICKETS)
-
-const TYPE_WEIGHTS: [string, number][] = [
-  ['sale', 28], ['lead', 24], ['payment', 18], ['failure', 6],
-  ['reconnect', 3], ['refund', 4], ['disconnect', 2], ['limit', 2],
-  ['newBot', 1], ['webhookFailed', 4], ['flowPublished', 4], ['cancellation', 4],
-]
-
-const MOCK_LIVE_WEIGHTS: [string, number][] = [
-  ['sale', 35], ['lead', 30], ['payment', 18], ['failure', 8], ['webhookFailed', 4], ['flowPublished', 5],
-]
-
-function buildMockContent(type: string, r: () => number): { title: string; desc: string; bot: string } {
-  const bot = pick(MOCK_BOT_NAMES, r)
-  const customer = pick(CUSTOMER_NAMES, r)
-  const product = pick(PRODUCTS, r)
-  const ticket = PRODUCT_TICKETS[product]
-  switch (type) {
-    case 'sale':          return { title: `Nova venda — ${product}`,       desc: `${customer} · ${fmtBRLdec(ticket)}`, bot }
-    case 'lead':          return { title: 'Novo lead',                     desc: `${customer} iniciou conversa`, bot }
-    case 'payment':       return { title: 'Pagamento confirmado',          desc: `${customer} · ${fmtBRLdec(ticket)} via Pix`, bot }
-    case 'failure':       return { title: 'Falha ao enviar mensagem',      desc: `${customer} bloqueou ou desinstalou o app`, bot }
-    case 'reconnect':     return { title: 'Bot reconectado',               desc: `${bot} voltou a operar normalmente`, bot }
-    case 'refund':        return { title: 'Estorno solicitado',            desc: `${customer} · ${fmtBRLdec(ticket)} · motivo: arrependimento`, bot }
-    case 'disconnect':    return { title: 'Bot desconectado',              desc: `${bot} perdeu conexão com a API do Telegram`, bot }
-    case 'limit':         return { title: 'Limite mensal próximo',         desc: 'Você usou 84% do plano Pro (8.412 / 10.000 mensagens)', bot }
-    case 'newBot':        return { title: 'Bot adicionado',                desc: `${bot} foi conectado ao workspace`, bot }
-    case 'webhookFailed': return { title: 'Webhook falhou',                desc: 'POST /receive retornou 502 · 3 tentativas restantes', bot }
-    case 'flowPublished': return { title: 'Fluxo publicado',               desc: '"Upsell pós-compra v3" agora está ativo', bot }
-    case 'cancellation':  return { title: 'Assinatura cancelada',          desc: `${customer} cancelou Mentoria Premium · churn em 30 d`, bot }
-    default:              return { title: type, desc: '', bot }
-  }
-}
-
-// Gerado uma única vez no carregamento do módulo, relativo ao momento atual
-function generateMockEvents(): ActivityEvent[] {
-  const r = seededRand(42)
-  const events: ActivityEvent[] = []
-  let cursor = Date.now()
-  for (let i = 0; i < 80; i++) {
-    const gap = (0.4 + r() * 4.5) * 60 * 1000 * (1 + i * 0.05)
-    cursor -= gap
-    const type = pickWeighted(TYPE_WEIGHTS, r)
-    const c = buildMockContent(type, r)
-    events.push({ id: `mock_${i}`, type, dt: cursor, ...c, bot_id: null, amount: null })
-  }
-  return events
-}
-
-const MOCK_EVENTS = generateMockEvents()
 
 /* ── Map raw DB row → ActivityEvent ──────────────────────── */
 
@@ -631,7 +551,7 @@ function SummarySidebar({ events, now, onSelectCategory, botMap }: {
   )
 }
 
-/* ── Empty Feed ───────────────────────────────────────────── */
+/* ── Empty states ─────────────────────────────────────────── */
 
 function EmptyFeed({ onClear }: { onClear: () => void }) {
   return (
@@ -644,6 +564,25 @@ function EmptyFeed({ onClear }: { onClear: () => void }) {
         Tente ampliar a categoria, mudar de bot ou limpar os filtros para ver o histórico completo.
       </p>
       <Btn iconName="x" onClick={onClear} className="mt-4">Limpar filtros</Btn>
+    </div>
+  )
+}
+
+function NoDataState() {
+  return (
+    <div className="bg-surface border border-dashed border-border rounded-xl py-16 px-6 flex flex-col items-center justify-center text-center">
+      <div className="w-14 h-14 rounded-xl bg-surface-2 border border-border flex items-center justify-center text-text-muted mb-5">
+        <Bell size={22} />
+      </div>
+      <div className="text-[15px] font-semibold text-text">Aguardando primeiros eventos</div>
+      <p className="text-[12.5px] text-text-muted mt-2 max-w-sm leading-relaxed">
+        Os eventos aparecerão aqui em tempo real conforme seus bots receberem mensagens e
+        pagamentos forem processados.
+      </p>
+      <div className="mt-5 flex flex-col gap-1.5 text-[11.5px] text-text-subtle">
+        <span>• Conecte um bot do Telegram para registrar leads</span>
+        <span>• Pagamentos aprovados via PIX aparecem automaticamente</span>
+      </div>
     </div>
   )
 }
@@ -662,12 +601,7 @@ export default function ActivityClient({
   const { track } = useAnalytics()
   const router = useRouter()
 
-  // Se há dados reais no banco, nunca exibe mock
-  const useRealData = initialEvents.length > 0
-
-  const [rows, setRows] = useState<ActivityEvent[]>(() =>
-    useRealData ? initialEvents.map(mapRaw) : MOCK_EVENTS,
-  )
+  const [rows, setRows] = useState<ActivityEvent[]>(() => initialEvents.map(mapRaw))
   const [extras, setExtras] = useState<ActivityEvent[]>([])
   const [now, setNow] = useState(() => Date.now())
   const [live, setLive] = useState(true)
@@ -711,26 +645,10 @@ export default function ActivityClient({
     return () => { supabase.removeChannel(channel) }
   }, [])
 
-  // Mock live — APENAS quando banco está vazio (modo demonstração)
-  useEffect(() => {
-    if (!live || useRealData) return
-    const r = seededRand(Math.floor(Date.now()) % 233280)
-    let counter = 0
-    const t = setInterval(() => {
-      const type = pickWeighted(MOCK_LIVE_WEIGHTS, r)
-      const c = buildMockContent(type, r)
-      const dt = Date.now()
-      const id = `live_${dt}_${counter++}`
-      initialNewIds.current.add(id)
-      setNow(dt)
-      setExtras((prev) => [{ id, type, dt, ...c, bot_id: null, amount: null }, ...prev].slice(0, 40))
-    }, 5500)
-    return () => clearInterval(t)
-  }, [live, useRealData])
 
   // Carrega mais eventos do banco com offset
   const loadMore = useCallback(async () => {
-    if (isLoadingMore || !hasMore || !useRealData) return
+    if (isLoadingMore || !hasMore) return
     setIsLoadingMore(true)
     try {
       const supabase = createClient()
@@ -750,7 +668,7 @@ export default function ActivityClient({
     } finally {
       setIsLoadingMore(false)
     }
-  }, [isLoadingMore, hasMore, dbOffset, useRealData])
+  }, [isLoadingMore, hasMore, dbOffset])
 
   // Mapa id → nome de exibição do bot (para resolver bot_id → @username)
   const botMap = useMemo(() => {
@@ -799,13 +717,13 @@ export default function ActivityClient({
       if (!entry.isIntersecting) return
       if (visibleCount < filtered.length) {
         setVisibleCount((c) => Math.min(c + PAGE_SIZE, filtered.length))
-      } else if (hasMore && useRealData && !isLoadingMore) {
+      } else if (hasMore && !isLoadingMore) {
         loadMore()
       }
     }, { rootMargin: '400px', threshold: 0 })
     obs.observe(sentinel)
     return () => obs.disconnect()
-  }, [visibleCount, filtered.length, hasMore, useRealData, isLoadingMore, loadMore])
+  }, [visibleCount, filtered.length, hasMore, isLoadingMore, loadMore])
 
   const eventsPerHour = useMemo(
     () => allEvents.filter((e) => now - e.dt < 3600000).length,
@@ -886,7 +804,9 @@ export default function ActivityClient({
             hasFilters={hasFilters}
           />
 
-          {filtered.length === 0 ? (
+          {allEvents.length === 0 ? (
+            <NoDataState />
+          ) : filtered.length === 0 ? (
             <EmptyFeed onClear={onClear} />
           ) : (
             <div className="space-y-1">
