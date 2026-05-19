@@ -87,23 +87,38 @@ export async function POST(request: NextRequest) {
     return new NextResponse(null, { status: 200 }) // responde 200 para MP não retentar
   }
 
-  // On approval: log event and notify buyer via Telegram
-  if (newStatus === 'approved') {
-    const amount = Number(tx.amount).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+  const fmtBRL = (v: number) =>
+    Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 
+  // ── Aprovada ────────────────────────────────────────────────────────────────
+  if (newStatus === 'approved') {
+    const amountFmt = fmtBRL(Number(tx.amount))
+
+    // 1. Log de atividade
     const { error: activityError } = await supabase.from('activity_events').insert({
       user_id:     tx.user_id,
       bot_id:      tx.bot_id,
       type:        'sale',
       title:       `Venda aprovada: ${tx.product_name}`,
-      description: `${tx.customer_name} · ${amount}`,
+      description: `${tx.customer_name} · ${amountFmt}`,
       amount:      tx.amount,
     })
     if (activityError) {
       Sentry.captureException(activityError, { extra: { txId: tx.id, context: 'mp_webhook_activity' } })
     }
 
-    // Send confirmation to buyer if we know their Telegram ID
+    // 2. Alerta para o operador no dashboard
+    await supabase.from('alerts').insert({
+      user_id:     tx.user_id,
+      type:        'sale',
+      severity:    'info',
+      title:       `Nova venda: ${tx.product_name}`,
+      description: `${tx.customer_name} · ${amountFmt}`,
+    }).then(({ error }) => {
+      if (error) Sentry.captureException(error, { extra: { txId: tx.id, context: 'mp_webhook_alert' } })
+    })
+
+    // 3. Mensagem de confirmação para o comprador via Telegram
     if (tx.customer_telegram_id && tx.bot_id) {
       const { data: bot } = await supabase
         .from('bots')
@@ -115,11 +130,30 @@ export async function POST(request: NextRequest) {
         await sendTelegramMessage(
           decryptToken(bot.token),
           tx.customer_telegram_id,
-          `✅ <b>Pagamento confirmado!</b>\n\nProduto: <b>${tx.product_name}</b>\nValor: <b>${amount}</b>\n\nObrigado pela sua compra! 🎉`,
+          `✅ <b>Pagamento confirmado!</b>\n\nProduto: <b>${tx.product_name}</b>\nValor: <b>${amountFmt}</b>\n\nObrigado pela sua compra! 🎉`,
         ).catch((err) => {
           Sentry.captureException(err, { extra: { txId: tx.id, context: 'mp_webhook_telegram_notify' } })
         })
       }
+    }
+  }
+
+  // ── PIX expirado / cancelado → follow-up para o comprador ──────────────────
+  if (newStatus === 'cancelled' && tx.status === 'pending' && tx.customer_telegram_id && tx.bot_id) {
+    const { data: bot } = await supabase
+      .from('bots')
+      .select('token')
+      .eq('id', tx.bot_id)
+      .single()
+
+    if (bot?.token) {
+      await sendTelegramMessage(
+        decryptToken(bot.token),
+        tx.customer_telegram_id,
+        `⏳ <b>Seu PIX expirou!</b>\n\nO pagamento de <b>${tx.product_name}</b> não foi concluído a tempo.\n\nSe ainda tiver interesse, entre em contato para gerar um novo link de pagamento.`,
+      ).catch((err) => {
+        Sentry.captureException(err, { extra: { txId: tx.id, context: 'mp_webhook_pix_expired' } })
+      })
     }
   }
 

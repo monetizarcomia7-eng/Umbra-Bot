@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { rateLimit } from '@/lib/rate-limit'
 import { captureEvent } from '@/lib/analytics-server'
+import { decryptToken } from '@/lib/crypto'
 
 const RATE_LIMIT_MS = 35 // ~28 messages/second (under Telegram's 30/s limit)
 
@@ -88,17 +89,32 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'bot token not found' }, { status: 404 })
   }
 
-  // Fetch target contacts based on audience filter
+  // Fetch target contacts — audience + segmentation filters
   let contactsQuery = supabase
     .from('contacts')
     .select('telegram_id')
     .eq('user_id', user.id)
     .not('telegram_id', 'is', null)
 
+  // Segmentation: audience type
   if (broadcast.audience === 'buyers') {
-    contactsQuery = contactsQuery.gt('purchases', 0)
+    contactsQuery = contactsQuery.gt('orders_count', 0)
   } else if (broadcast.audience === 'leads') {
-    contactsQuery = contactsQuery.eq('purchases', 0)
+    contactsQuery = contactsQuery.eq('orders_count', 0)
+  }
+
+  // Segmentation: only contacts from the specific bot (if broadcast is bot-scoped)
+  if (broadcast.bot_id) {
+    contactsQuery = contactsQuery.eq('bot_id', broadcast.bot_id)
+  }
+
+  // Segmentation: registration date range from broadcast.filters JSONB
+  const filters = (broadcast.filters ?? {}) as Record<string, string>
+  if (filters.registered_after) {
+    contactsQuery = contactsQuery.gte('created_at', filters.registered_after)
+  }
+  if (filters.registered_before) {
+    contactsQuery = contactsQuery.lte('created_at', filters.registered_before)
   }
 
   const { data: contacts } = await contactsQuery
@@ -122,7 +138,7 @@ export async function POST(request: NextRequest) {
     if (!contact.telegram_id) continue
 
     const ok = await sendTelegramMessage(
-      bot.token,
+      decryptToken(bot.token),
       contact.telegram_id,
       broadcast.message,
       broadcast.buttons ?? [],

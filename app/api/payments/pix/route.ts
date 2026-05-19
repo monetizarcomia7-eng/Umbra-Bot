@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { createClient } from '@/lib/supabase/server'
 import { rateLimit } from '@/lib/rate-limit'
 import { captureEvent } from '@/lib/analytics-server'
+import { getMercadoPagoToken } from '@/lib/gateway'
 import * as Sentry from '@sentry/nextjs'
 
 const pixSchema = z.object({
@@ -38,7 +39,8 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  const accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN
+  // Usa credenciais do próprio usuário se cadastradas; cai no env var global
+  const accessToken = await getMercadoPagoToken()
   if (!accessToken) {
     return NextResponse.json({ error: 'Gateway não configurado.' }, { status: 500 })
   }
