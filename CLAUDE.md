@@ -68,7 +68,7 @@ umbra-bot/
 │       ├── finance/              # Financeiro — Server Component + módulo finance/
 │       ├── activity/             # Feed de eventos — dados reais do Supabase
 │       │   ├── page.tsx          # Server Component: busca 25 eventos + bots em paralelo (SSR)
-│       │   └── ActivityClient.tsx # Client Component: Realtime, filtros, mock condicional, CSV export
+│       │   └── ActivityClient.tsx # Client Component: Realtime, filtros, paginação, CSV export, NoDataState
 │       ├── customers/            # Clientes + CSV export com analytics (mock)
 │       ├── analytics/            # Análises — dados reais do Supabase (arquitetura modular)
 │       │   ├── page.tsx          # Server Component: filtros SQL, bots/flows no Promise.all principal, paralelismo total
@@ -141,7 +141,7 @@ umbra-bot/
 │   └── DashboardProvider.tsx     # Contexto global: user, alerts, botsCount, logout — 1 fetch
 ├── public/
 │   └── sw.js                     # Service Worker para Web Push
-├── supabase/migrations/          # 51 migrações SQL (000 a 050)
+├── supabase/migrations/          # 52 migrações SQL (000 a 051)
 ├── vercel.json                   # 2 Cron jobs: process-withdrawals (06:00 UTC) + cleanup-activity (02:00 UTC)
 ├── sentry.*.config.ts            # Sentry (client com Replay / server com tracePropagation)
 ├── instrumentation.ts            # Next.js hook para Sentry server
@@ -275,7 +275,7 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Financeiro — saldo fresco P8: WithdrawModal busca GET /api/finance/balance ao abrir | ✅ Implementado |
 | Financeiro — transactions.net corrigido de GENERATED→coluna normal (mig 046) | ✅ Implementado |
 | Atividade — Server Component + Client Component (SSR + Realtime) | ✅ Funcional |
-| Atividade — dados reais do banco (activity_events) + fallback mock | ✅ Funcional |
+| Atividade — dados reais do banco (activity_events) — sem mock, estado vazio quando vazio | ✅ Funcional |
 | Atividade — Supabase Realtime (INSERT em tempo real) | ✅ Funcional |
 | Atividade — filtro por categoria + dropdown de bots real | ✅ Funcional |
 | Atividade — Export CSV (ActivityClient) + evento csv_exported | ✅ Funcional |
@@ -283,7 +283,9 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Atividade — botão "Configurar alertas" (redireciona /dashboard/alerts) | ✅ Funcional |
 | Atividade — paginação "Carregar mais" (offset via Supabase) | ✅ Funcional |
 | Atividade — TTL: Vercel Cron cleanup-activity (02:00 UTC) + pg_cron opcional (mig 050) | ✅ Implementado |
-| Atividade — webhook Telegram: type='lead' correto + bot.username no campo bot | ✅ Corrigido |
+| Atividade — backfill histórico: mig 051 popula activity_events de transactions + contacts | ✅ Implementado |
+| Atividade — webhook Telegram: type='lead' correto + bot.username + contact_id | ✅ Corrigido |
+| Atividade — PIX route: insere activity_event type='payment' ao criar cobrança | ✅ Implementado |
 | Atividade — migração 049: bot_id FK + contact_id FK + índices + CHECK corrigido | ✅ Aplicado |
 | CSV export (Financeiro + Clientes + Atividade) + evento csv_exported | ✅ Funcional |
 | Atalhos de teclado | ✅ Funcional |
@@ -911,7 +913,7 @@ Variáveis adicionais documentadas (além do básico):
 ```
 app/dashboard/activity/
   ├── page.tsx            # Server Component — busca initialEvents (25 rows) + bots em paralelo
-  └── ActivityClient.tsx  # Client Component — feed Realtime, filtros, export, mock gate
+  └── ActivityClient.tsx  # Client Component — feed Realtime, filtros, paginação, export, NoDataState
 ```
 
 ### Fluxo de dados
@@ -927,9 +929,7 @@ ActivityPage (Server Component)
         bots: BotOption[]
 
 ActivityClient (Client Component)
-  ├── useRealData = initialEvents.length > 0
-  │     true  → rows = initialEvents.map(mapRaw)  (dados reais, sem mock)
-  │     false → rows = MOCK_EVENTS                (fallback visual enquanto banco vazio)
+  ├── rows state: initialEvents.map(mapRaw) — sempre dados reais, sem fallback mock
   ├── now state: Date.now() — tick a cada 30s (timestamp relativo correto)
   ├── live state: boolean — ativa canal Realtime
   ├── botMap: Map<uuid, string> — resolve bot_id → '@username' | 'nome' em O(1)
@@ -948,9 +948,9 @@ ActivityClient (Client Component)
   │     dbOffset state: avança +25 a cada clique
   │     GET activity_events .range(offset, offset+24) acumula em rows
   │     hasMore: false quando retorna < PAGE_SIZE
-  ├── Mock live timer (só quando !useRealData):
-  │     useEffect com setInterval — insere eventos mock aleatórios a cada 4–8s
-  │     desativado automaticamente quando há dados reais
+  ├── Estados vazios:
+  │     allEvents.length === 0 → <NoDataState> ("Aguardando primeiros eventos")
+  │     filtered.length === 0 && hasFilters → <EmptyFeed> ("Nenhum evento nos filtros")
   ├── Export CSV:
   │     campos: Data | Tipo | Título | Descrição | Bot | Valor (R$)
   │     nome do arquivo: atividade_YYYY-MM-DD.csv
@@ -1007,6 +1007,21 @@ alter table public.activity_events add constraint activity_events_type_check
 - Defensiva: só executa se o schema `cron` existir (pg_cron habilitado no Supabase)
 - Agendado para 03:00 UTC (1h depois do Vercel Cron)
 - Habilitar: Dashboard → Database → Extensions → pg_cron
+
+### Backfill histórico — migração 051
+
+Popula `activity_events` com eventos passados, resolvendo o problema de a tabela ficar vazia quando criada após os dados já existirem.
+
+| Origem | type inserido | Condição |
+|---|---|---|
+| `transactions` | `sale` | `status = 'approved'` |
+| `transactions` | `refund` | `status in ('refunded', 'cancelled')` |
+| `contacts` | `lead` | todos com `user_id is not null` |
+
+- Idempotente via `NOT EXISTS` com janela de 2 s no `created_at` — seguro rodar mais de uma vez
+- Rodar no Supabase SQL Editor: Dashboard → SQL Editor → cole e execute o arquivo da migration
+- Após o backfill, a aba Atividade exibe os dados reais; se ainda vazio, exibe NoDataState
+- Novos eventos entram em tempo real via Realtime (INSERT na tabela)
 
 ### botMap — resolução de nomes
 

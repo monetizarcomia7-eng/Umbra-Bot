@@ -155,6 +155,18 @@ export async function POST(request: NextRequest) {
     if (error) Sentry.captureException(error, { extra: { txId: transaction.id, context: 'pix_cart_added_event' } })
   })
 
+  // Registra evento de atividade: pagamento PIX iniciado (fire-and-forget)
+  supabase.from('activity_events').insert({
+    user_id:     user.id,
+    bot_id:      bot_id ?? null,
+    type:        'payment',
+    title:       `Pagamento iniciado — ${product_name}`,
+    description: `${customer_name} · ${Number(amount).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })} via Pix`,
+    amount,
+  }).then(({ error }) => {
+    if (error) Sentry.captureException(error, { extra: { txId: transaction.id, context: 'pix_activity_event' } })
+  })
+
   await captureEvent(user.id, 'pix_payment_created', { amount, product_name })
 
   return NextResponse.json({
