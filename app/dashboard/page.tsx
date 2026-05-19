@@ -194,13 +194,16 @@ function EmptyState() {
 }
 
 interface RealKpi { revenue: number; sales: number; botsActive: number }
+interface RealFlow { id: number; name: string; sales: number; conv: number; color: string }
 
 export default function DashboardPage() {
   const [period, setPeriod] = useState<Period>('30d')
-  const [botsCount,  setBotsCount]  = useState<number | null>(null)
-  const [userId,     setUserId]     = useState('')
-  const [showWizard, setShowWizard] = useState(false)
-  const [realKpi,    setRealKpi]    = useState<RealKpi | null>(null)
+  const [botsCount,     setBotsCount]     = useState<number | null>(null)
+  const [userId,        setUserId]        = useState('')
+  const [showWizard,    setShowWizard]    = useState(false)
+  const [realKpi,       setRealKpi]       = useState<RealKpi | null>(null)
+  const [realChartData, setRealChartData] = useState<ChartPoint[] | null>(null)
+  const [realFlows,     setRealFlows]     = useState<RealFlow[] | null>(null)
 
   useEffect(() => {
     const supabase = createClient()
@@ -222,29 +225,62 @@ export default function DashboardPage() {
     })
   }, [])
 
-  // Fetch real KPIs from transactions table
+  // Fetch real KPIs, chart data and top flows from transactions table
   useEffect(() => {
-    if (!botsCount) return
+    if (botsCount === null || botsCount === 0) return
     const days = period === '7d' ? 7 : period === '30d' ? 30 : 90
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
     const supabase = createClient()
 
     Promise.all([
-      supabase.from('transactions').select('amount, net').eq('status', 'approved').gte('created_at', since),
+      supabase
+        .from('transactions')
+        .select('amount, net, created_at, product_name')
+        .eq('status', 'approved')
+        .gte('created_at', since),
       supabase.from('bots').select('id', { count: 'exact', head: true }).eq('status', 'active'),
     ]).then(([txRes, botsRes]) => {
       const txs = txRes.data ?? []
+
+      // KPIs
       setRealKpi({
-        revenue: txs.reduce((s, t) => s + Number(t.net ?? t.amount ?? 0), 0),
-        sales: txs.length,
+        revenue:    txs.reduce((s, t) => s + Number(t.net ?? t.amount ?? 0), 0),
+        sales:      txs.length,
         botsActive: botsRes.count ?? 0,
       })
+
+      // Chart — agrupa receita por dia
+      const byDay: Record<string, number> = {}
+      for (const tx of txs) {
+        const key = String(tx.created_at).slice(0, 10)
+        byDay[key] = (byDay[key] ?? 0) + Number(tx.net ?? tx.amount ?? 0)
+      }
+      const points: ChartPoint[] = Array.from({ length: days }, (_, i) => {
+        const d   = new Date(Date.now() - (days - 1 - i) * 86400000)
+        const key = d.toISOString().slice(0, 10)
+        return { day: String(i + 1).padStart(2, '0'), value: byDay[key] ?? 0 }
+      })
+      setRealChartData(points)
+
+      // Top produtos/fluxos — agrupa por product_name
+      const flowMap: Record<string, number> = {}
+      for (const tx of txs) {
+        const name = String(tx.product_name || 'Sem nome')
+        flowMap[name] = (flowMap[name] ?? 0) + 1
+      }
+      const COLORS = ['var(--primary)', 'var(--success)', 'var(--warning)', 'var(--danger)']
+      const flows: RealFlow[] = Object.entries(flowMap)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 4)
+        .map(([name, sales], i) => ({ id: i + 1, name, sales, conv: 0, color: COLORS[i] }))
+      if (flows.length > 0) setRealFlows(flows)
     })
   }, [botsCount, period])
 
   const chartData = useMemo(() => genChartData(period === '7d' ? 7 : period === '30d' ? 30 : 90), [period])
   const kpis      = KPI_BY_PERIOD[period]
-  const maxSales  = Math.max(...topFlows.map((f) => f.sales))
+  const activeFlows = realFlows ?? topFlows
+  const maxSales  = Math.max(...activeFlows.map((f) => f.sales))
 
   const fmtBRL = (v: number) =>
     new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 2 }).format(v)
@@ -322,28 +358,32 @@ export default function DashboardPage() {
                 ))}
               </div>
             </div>
-            <RevenueChart data={chartData} />
+            <RevenueChart data={realChartData ?? chartData} />
           </div>
 
           <div className="bg-surface border border-border rounded-xl p-5">
-            <div className="text-[14px] font-semibold text-text">Top fluxos de venda</div>
-            <div className="text-[12px] text-text-muted mb-4">Últimos 7 dias</div>
+            <div className="text-[14px] font-semibold text-text">Top produtos</div>
+            <div className="text-[12px] text-text-muted mb-4">
+              {realFlows ? `Últimos ${period === '7d' ? 7 : period === '30d' ? 30 : 90} dias · dados reais` : 'Últimos 7 dias'}
+            </div>
             <div className="space-y-3.5">
-              {topFlows.map((f) => (
+              {activeFlows.map((f) => (
                 <div key={f.id}>
                   <div className="flex items-center justify-between text-[12.5px] mb-1.5">
                     <span className="truncate font-medium text-text">{f.name}</span>
-                    <span className="tnum text-text-muted shrink-0 ml-2">{f.sales}</span>
+                    <span className="tnum text-text-muted shrink-0 ml-2">{f.sales} vendas</span>
                   </div>
                   <div className="h-1.5 bg-surface-2 rounded-full overflow-hidden">
                     <div
                       className="h-full rounded-full"
-                      style={{ width: `${(f.sales / maxSales) * 100}%`, background: f.color }}
+                      style={{ width: `${maxSales > 0 ? (f.sales / maxSales) * 100 : 0}%`, background: f.color }}
                     />
                   </div>
-                  <div className="text-[11px] text-text-muted mt-1 tnum">
-                    Conversão {String(f.conv).replace('.', ',')}%
-                  </div>
+                  {f.conv > 0 && (
+                    <div className="text-[11px] text-text-muted mt-1 tnum">
+                      Conversão {String(f.conv).replace('.', ',')}%
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
