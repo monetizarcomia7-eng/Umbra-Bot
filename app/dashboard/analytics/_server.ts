@@ -61,7 +61,6 @@ const STATUS_META: Record<string, { label: string; color: string }> = {
   pending:   { label: 'Pendentes',    color: 'var(--warning)' },
   cancelled: { label: 'Cancelados',   color: 'var(--danger)' },
   refunded:  { label: 'Reembolsados', color: 'var(--text-muted)' },
-  expired:   { label: 'Expirados',    color: 'var(--text-subtle)' },
 }
 
 // ── Funnel ───────────────────────────────────────────────────

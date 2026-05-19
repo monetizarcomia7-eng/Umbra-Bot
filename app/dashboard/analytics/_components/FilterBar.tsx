@@ -75,6 +75,7 @@ export function FilterBar({
   ]
   const utmOpts = [
     { value: 'all', label: 'Todas as origens' },
+    { value: '(direto)', label: '(direto)' },
     ...utmOptions.map((s) => ({ value: s, label: s })),
   ]
 

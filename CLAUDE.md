@@ -126,7 +126,7 @@ umbra-bot/
 │   └── DashboardProvider.tsx     # Contexto global: user, alerts, botsCount, logout — 1 fetch
 ├── public/
 │   └── sw.js                     # Service Worker para Web Push
-├── supabase/migrations/          # 40 migrações SQL (000 a 039)
+├── supabase/migrations/          # 41 migrações SQL (000 a 040)
 ├── vercel.json                   # Cron job: /api/cron/process-withdrawals todo dia às 06:00 UTC (Hobby: 1x/dia)
 ├── sentry.*.config.ts            # Sentry (client com Replay / server com tracePropagation)
 ├── instrumentation.ts            # Next.js hook para Sentry server
@@ -169,7 +169,7 @@ Browser
         └── middleware.ts        ← auth guard + security headers + CSP
 
 Next.js API Routes
-  ├── Supabase (PostgreSQL + RLS)  ← banco real, 29 tabelas
+  ├── Supabase (PostgreSQL + RLS)  ← banco real, 30 tabelas
   ├── Upstash Redis                ← rate limiting distribuído
   ├── Mercado Pago                 ← PIX payments
   ├── Telegram Bot API             ← webhooks
@@ -219,6 +219,9 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Seletor de período no Dashboard (7d/30d/90d) + cache useRef | ✅ Funcional |
 | DashboardProvider (contexto global, 1 fetch para user+alerts+bots) | ✅ Funcional |
 | Análises — módulo modular: filtros SQL server-side, coorte via RPC, cliente fino | ✅ Funcional |
+| Análises — checkout_events populado (cart_added via PIX, paid via MP, conversation_started via TG) | ✅ Implementado |
+| Análises — transactions gravando UTM + flow_id (aceitos no POST /api/payments/pix) | ✅ Implementado |
+| Análises — flows com user_id + RLS correta (migração 040) | ✅ Implementado |
 | Financeiro com dados reais do banco (Server Component) | ✅ Funcional |
 | Financeiro — módulo componentizado (10 arquivos) | ✅ Completo |
 | Financeiro — seletor de período (7d/30d/90d/Tudo) | ✅ Funcional |
@@ -246,8 +249,8 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Sentry (client Replay + server tracePropagation + captureException) | ✅ Configurado |
 | PostHog (14 eventos rastreados) | ✅ Configurado |
 | Vercel Analytics + Speed Insights | ✅ Ativo |
-| Schema do banco (29 tabelas) | ✅ Migrações SQL criadas e aplicadas |
-| RLS em todas as tabelas | ✅ Configurado |
+| Schema do banco (30 tabelas) | ✅ Migrações SQL criadas e aplicadas |
+| RLS em todas as tabelas | ✅ Configurado (flows corrigida na migração 040) |
 | Content-Security-Policy (CSP sem unsafe-eval em produção) | ✅ Configurado no middleware |
 | Sistema de planos/billing | ❌ Não iniciado |
 | Editor de fluxos de venda | ❌ Não iniciado |
@@ -425,8 +428,8 @@ AnalyticsPage (Server Component)
   │     ├── bots          → id, name, username
   │     ├── flows         → id, name, executions, conversion (limit 50)
   │     ├── RPC analytics_cohort_weekly(p_user_id, p_cohorts=6, p_weeks=6)  ← migração 039
-  │     ├── transactions distinct product_name (limit 200, all-time) — opções do dropdown
-  │     └── transactions distinct utm_source   (limit 200, all-time) — opções do dropdown
+  │     ├── transactions distinct product_name (limit 500, all-time) — opções do dropdown
+  │     └── transactions distinct utm_source   (limit 500, all-time) — opções do dropdown
   ├── prevBatch (Promise.all — só se compare=true && period!='all', dispara em paralelo):
   │     ├── transactions  (período anterior, mesmos filtros de bot/produto/fluxo/UTM)
   │     ├── contacts      (período anterior)
@@ -472,8 +475,10 @@ interface AnalyticsSummary {
 |---|---|---|
 | Visitou | `checkout_events` where `event_type = 'visited'` | Páginas de checkout (a implementar) |
 | Iniciou conversa | tabela `contacts` (created_at no período) | Webhook Telegram `/start` (já existe) |
-| Adicionou ao carrinho | `checkout_events` where `event_type = 'cart_added'` | Rota PIX ao gerar cobrança (a implementar) |
-| Comprou | `transactions` where `status = 'approved'` | Webhook Mercado Pago (já existe) |
+| Adicionou ao carrinho | `checkout_events` where `event_type = 'cart_added'` | **✅ Rota PIX** (`app/api/payments/pix/route.ts`) — inserido após criar transação |
+| Comprou | `transactions` where `status = 'approved'` | **✅ Webhook MP** — inserido ao aprovar pagamento |
+
+**Evento `conversation_started` no funil:** o webhook Telegram (`app/api/telegram/webhook/route.ts`) insere em `checkout_events` a cada `/start` recebido. É fire-and-forget (não bloqueia o 200).
 
 ### Coorte semanal (S0–S5) — migração 039
 
@@ -524,14 +529,34 @@ language plpgsql stable security invoker
 -- LEFT JOIN + array_agg para checar se cliente voltou na semana target
 ```
 
+### Tabela `flows` — migração 040
+
+- Adicionada coluna `user_id uuid references auth.users(id) on delete cascade`
+- RLS corrigida: policy `flows_open` (using true) substituída por `flows_owner` (auth.uid() = user_id)
+- Índice criado: `flows_user_id_idx on flows(user_id)`
+- A query de analytics usa `.eq('user_id', uid)` — agora funciona corretamente
+- Flows sem `user_id` (registros anteriores à migração) ficam inacessíveis — aceitável pois flows é feature mock
+
 ### Limites e proteções
 
 - `QUERY_LIMIT = 5000` — aplicado em todas as queries de transactions/contacts/events
-- `limitReached = true` quando alguma query atinge 5000 → banner de aviso no cliente
-- `error` propagado do servidor → banner de erro vermelho no cliente
+- `limitReached = true` quando qualquer uma das 3 queries (tx/cnt/evt) atinge 5000 → banner de aviso
+- `error` propagado do servidor → banner de erro vermelho no cliente (inclui erro de cohort)
 - `checkoutEvents` falha silenciosamente se migração 038 não aplicada (`data ?? []`)
-- `cohortRes` falha silenciosamente se migração 039 não aplicada (`data ?? []`)
+- `cohortRes` error → propagado no banner de erro principal (usuário sabe que a função SQL está faltando)
 - Casts `as unknown as Tipo[]` necessários porque novas colunas não estão nos tipos gerados pelo Supabase
+
+### PIX route — campos UTM e flow_id (migração 037)
+
+O `POST /api/payments/pix` aceita os campos abaixo no body (todos opcionais):
+```
+flow_id      uuid    — vincula a transação a um fluxo de venda
+utm_source   string  — ex: 'instagram', 'google', 'whatsapp'
+utm_medium   string  — ex: 'cpc', 'social', 'email'
+utm_campaign string  — ex: 'lancamento-junho'
+utm_content  string  — ex: 'banner-topo'
+```
+Todos são persistidos em `transactions` e o evento `cart_added` é inserido em `checkout_events`.
 
 ### Navegação por URL (filtros)
 

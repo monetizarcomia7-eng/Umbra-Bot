@@ -19,7 +19,13 @@ const pixSchema = z.object({
                          .pipe(z.string().length(11, 'CPF deve ter 11 dígitos.')),
   customer_telegram_id: z.string().max(50).optional(),
   bot_id:               z.string().uuid('bot_id inválido.').optional(),
+  flow_id:              z.string().uuid('flow_id inválido.').optional(),
   description:          z.string().max(200).optional(),
+  // Rastreamento de origem (UTM)
+  utm_source:           z.string().max(100).optional(),
+  utm_medium:           z.string().max(100).optional(),
+  utm_campaign:         z.string().max(100).optional(),
+  utm_content:          z.string().max(100).optional(),
 })
 
 // POST /api/payments/pix
@@ -56,7 +62,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: message }, { status: 400 })
   }
 
-  const { amount, product_name, customer_name, customer_email, customer_cpf, customer_telegram_id, bot_id, description } = parsed.data
+  const {
+    amount, product_name, customer_name, customer_email, customer_cpf,
+    customer_telegram_id, bot_id, flow_id, description,
+    utm_source, utm_medium, utm_campaign, utm_content,
+  } = parsed.data
 
   // Create payment on Mercado Pago
   const mpRes = await fetch('https://api.mercadopago.com/v1/payments', {
@@ -101,6 +111,7 @@ export async function POST(request: NextRequest) {
     .insert({
       user_id:               user.id,
       bot_id:                bot_id ?? null,
+      flow_id:               flow_id ?? null,
       gateway:               'mercadopago',
       gateway_payment_id:    String(mpData.id),
       amount,
@@ -114,6 +125,10 @@ export async function POST(request: NextRequest) {
       customer_name,
       customer_email,
       customer_telegram_id:  customer_telegram_id ?? null,
+      utm_source:            utm_source ?? null,
+      utm_medium:            utm_medium ?? null,
+      utm_campaign:          utm_campaign ?? null,
+      utm_content:           utm_content ?? null,
     })
     .select('id')
     .single()
@@ -122,6 +137,21 @@ export async function POST(request: NextRequest) {
     Sentry.captureException(txError, { extra: { user_id: user.id, amount, product_name } })
     return NextResponse.json({ error: 'erro ao salvar transação' }, { status: 500 })
   }
+
+  // Registra evento cart_added no funil de conversão (fire-and-forget)
+  supabase.from('checkout_events').insert({
+    user_id:        user.id,
+    bot_id:         bot_id ?? null,
+    flow_id:        flow_id ?? null,
+    transaction_id: transaction.id,
+    event_type:     'cart_added',
+    product_name,
+    utm_source:     utm_source ?? null,
+    utm_medium:     utm_medium ?? null,
+    utm_campaign:   utm_campaign ?? null,
+  }).then(({ error }) => {
+    if (error) Sentry.captureException(error, { extra: { txId: transaction.id, context: 'pix_cart_added_event' } })
+  })
 
   await captureEvent(user.id, 'pix_payment_created', { amount, product_name })
 

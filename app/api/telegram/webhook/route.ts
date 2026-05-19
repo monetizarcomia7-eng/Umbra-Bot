@@ -93,6 +93,17 @@ export async function POST(request: NextRequest) {
 
   // Handle /start command
   if (msg.text?.startsWith('/start')) {
+    // Registra evento de início de conversa no funil (fire-and-forget)
+    supabase.from('checkout_events').insert({
+      user_id:    bot.user_id,
+      bot_id:     bot.id,
+      contact_id: contact?.id ?? null,
+      event_type: 'conversation_started',
+      product_name: '',
+    }).then(({ error }) => {
+      if (error) console.error('[webhook] conversation_started error:', error.message)
+    })
+
     await sendTelegramMessage(
       decryptToken(bot.token),
       chatId,

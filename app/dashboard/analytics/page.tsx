@@ -94,8 +94,8 @@ export default async function AnalyticsPage({
       .order('executions', { ascending: false })
       .limit(50),
     supabase.rpc('analytics_cohort_weekly', { p_user_id: uid, p_cohorts: 6, p_weeks: 6 }),
-    supabase.from('transactions').select('product_name').eq('user_id', uid).not('product_name', 'is', null).limit(200),
-    supabase.from('transactions').select('utm_source').eq('user_id', uid).not('utm_source', 'is', null).limit(200),
+    supabase.from('transactions').select('product_name').eq('user_id', uid).not('product_name', 'is', null).limit(500),
+    supabase.from('transactions').select('utm_source').eq('user_id', uid).not('utm_source', 'is', null).limit(500),
   ])
 
   const prevBatch = canCompare
@@ -113,9 +113,15 @@ export default async function AnalyticsPage({
   // ── Extract data ─────────────────────────────────────────────
 
   const error =
-    txRes.error?.message ?? cntRes.error?.message ?? evtRes.error?.message ?? null
+    txRes.error?.message ??
+    cntRes.error?.message ??
+    evtRes.error?.message ??
+    cohortRes.error?.message ??
+    null
   const limitReached =
-    (txRes.data?.length ?? 0) >= QUERY_LIMIT || (cntRes.data?.length ?? 0) >= QUERY_LIMIT
+    (txRes.data?.length ?? 0) >= QUERY_LIMIT ||
+    (cntRes.data?.length ?? 0) >= QUERY_LIMIT ||
+    (evtRes.data?.length ?? 0) >= QUERY_LIMIT
 
   const curTxs    = (txRes.data    as unknown as RawTx[])             ?? []
   const curConts  = (cntRes.data   as unknown as RawContact[])        ?? []
