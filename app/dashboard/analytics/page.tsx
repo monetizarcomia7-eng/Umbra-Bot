@@ -1,3 +1,4 @@
+import { unstable_cache } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { captureEvent } from '@/lib/analytics-server'
 import { AnalyticsClient } from './AnalyticsClient'
@@ -14,6 +15,29 @@ const QUERY_LIMIT = 5000
 
 const TX_SEL =
   'bot_id, flow_id, status, amount, net, fee, product_name, utm_source, utm_campaign, created_at'
+
+// ── Cache de bots e flows (nível de módulo — obrigatório) ────
+// Dados raramente mudam. Cache de 5 min por uid elimina 2 roundtrips
+// ao Supabase na maioria dos renders de filtro.
+const getBotsAndFlows = unstable_cache(
+  async (uid: string) => {
+    const supabase = await createClient()
+    const [botsRes, flowsRes] = await Promise.all([
+      supabase.from('bots').select('id, name, username').eq('user_id', uid),
+      supabase.from('flows')
+        .select('id, name, executions, conversion')
+        .eq('user_id', uid)
+        .order('executions', { ascending: false })
+        .limit(50),
+    ])
+    return {
+      bots:  (botsRes.data  as unknown as RawBot[])  ?? [],
+      flows: (flowsRes.data as unknown as RawFlow[]) ?? [],
+    }
+  },
+  ['analytics-bots-flows'],
+  { revalidate: 300 },
+)
 
 export default async function AnalyticsPage({
   searchParams,
@@ -36,7 +60,7 @@ export default async function AnalyticsPage({
   const canCompare  = compare && period !== 'all'
 
   const filters: Filters = { period, botId, productName, flowId, utmSource, compare }
-  const uid  = user.id
+  const uid   = user.id
   const isAll = period === 'all'
   const { start, end, prevStart, prevEnd } = getDateRange(period)
 
@@ -59,7 +83,6 @@ export default async function AnalyticsPage({
     return q
   }
 
-  // COUNT-only: zero rows transferidas — só o número do PostgreSQL
   const buildCnt = (s: Date, e: Date, applyDate: boolean) => {
     let q = supabase
       .from('contacts')
@@ -82,33 +105,28 @@ export default async function AnalyticsPage({
     return q
   }
 
-  // ── Fire all queries in parallel ────────────────────────────
+  // ── Kick off prev queries BEFORE the main await ──────────────
+  // Garante que todas as queries (main + prev) disparam em paralelo.
+  // Promises HTTP já estão no ar antes de qualquer await abaixo.
+  const prevTxP  = canCompare ? buildTx(prevStart, prevEnd, true)  : null
+  const prevCntP = canCompare ? buildCnt(prevStart, prevEnd, true) : null
+  const prevEvtP = canCompare ? buildEvt(prevStart, prevEnd, true) : null
 
-  const mainBatch = Promise.all([
+  // ── Await main + cache em paralelo ───────────────────────────
+
+  const [txRes, cntRes, evtRes, cohortRes, filterOptsRes, { bots, flows }] = await Promise.all([
     buildTx(start, end, !isAll),
     buildCnt(start, end, !isAll),
     buildEvt(start, end, !isAll),
-    supabase.from('bots').select('id, name, username').eq('user_id', uid),
-    supabase.from('flows')
-      .select('id, name, executions, conversion')
-      .eq('user_id', uid)
-      .order('executions', { ascending: false })
-      .limit(50),
     supabase.rpc('analytics_cohort_weekly', { p_user_id: uid, p_cohorts: 6, p_weeks: 6 }),
-    // 1 RPC com SELECT DISTINCT substitui 2 queries de 500 linhas + dedup JS
     supabase.rpc('analytics_filter_options', { p_user_id: uid }),
+    getBotsAndFlows(uid),   // hit cache ou busca + armazena por 5 min
   ])
 
-  const prevBatch = canCompare
-    ? Promise.all([
-        buildTx(prevStart, prevEnd, true),
-        buildCnt(prevStart, prevEnd, true),
-        buildEvt(prevStart, prevEnd, true),
-      ])
+  // Prev já estava rodando — apenas coleta resultados
+  const prevRes = canCompare
+    ? await Promise.all([prevTxP!, prevCntP!, prevEvtP!])
     : null
-
-  const [txRes, cntRes, evtRes, botsRes, flowsRes, cohortRes, filterOptsRes] = await mainBatch
-  const prevResults = prevBatch ? await prevBatch : null
 
   // ── Extract data ─────────────────────────────────────────────
 
@@ -126,21 +144,19 @@ export default async function AnalyticsPage({
     (txRes.data?.length ?? 0) >= QUERY_LIMIT ||
     (evtRes.data?.length ?? 0) >= QUERY_LIMIT
 
-  const curTxs    = (txRes.data   as unknown as RawTx[])            ?? []
-  const curConts  = cntRes.count  ?? 0
-  const curEvts   = (evtRes.data  as unknown as RawCheckoutEvent[]) ?? []
-  const prevTxs   = (prevResults?.[0].data as unknown as RawTx[])            ?? []
-  const prevConts = prevResults?.[1].count ?? 0
-  const prevEvts  = (prevResults?.[2].data as unknown as RawCheckoutEvent[]) ?? []
-  const bots      = (botsRes.data  as unknown as RawBot[])          ?? []
-  const flows     = (flowsRes.data as unknown as RawFlow[])         ?? []
-  const cohortRaw = (cohortRes.data as unknown as CohortRpcRow[])   ?? []
+  const curTxs   = (txRes.data  as unknown as RawTx[])            ?? []
+  const curConts = cntRes.count ?? 0
+  const curEvts  = (evtRes.data as unknown as RawCheckoutEvent[]) ?? []
+  const prevTxs   = (prevRes?.[0].data as unknown as RawTx[])            ?? []
+  const prevConts = prevRes?.[1].count ?? 0
+  const prevEvts  = (prevRes?.[2].data as unknown as RawCheckoutEvent[]) ?? []
+  const cohortRaw = (cohortRes.data as unknown as CohortRpcRow[])  ?? []
 
   // ── Filter options (SELECT DISTINCT via RPC) ─────────────────
 
   const filterOpts = (filterOptsRes.data as { products: string[]; utm_sources: string[] } | null)
     ?? { products: [], utm_sources: [] }
-  const productOptions = filterOpts.products   ?? []
+  const productOptions = filterOpts.products    ?? []
   const utmOptions     = filterOpts.utm_sources ?? []
 
   // ── Assemble summary ─────────────────────────────────────────
