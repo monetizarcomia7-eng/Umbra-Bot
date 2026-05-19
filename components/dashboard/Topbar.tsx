@@ -1,8 +1,8 @@
 'use client'
 
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
 import Link from 'next/link'
-import { Search, Bell, Sun, Moon, ChevronDown, Settings, HelpCircle, LogOut, User, Menu } from 'lucide-react'
+import { Search, Bell, Sun, Moon, ChevronDown, Settings, HelpCircle, LogOut, User, Menu, Bot, Users, ArrowLeftRight, Loader2 } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { useRouter } from 'next/navigation'
 import { cn } from '@/lib/utils'
@@ -74,6 +74,73 @@ function MenuItem({
   }
   return (
     <button onClick={onClick} className={cls}>{content}</button>
+  )
+}
+
+interface SearchResult {
+  id: string
+  type: 'bot' | 'contact' | 'transaction'
+  title: string
+  subtitle: string
+  href: string
+}
+
+const TYPE_META = {
+  bot:         { label: 'Bots',        Icon: Bot,             href: '/dashboard/bots'      },
+  contact:     { label: 'Clientes',    Icon: Users,           href: '/dashboard/customers' },
+  transaction: { label: 'Transações',  Icon: ArrowLeftRight,  href: '/dashboard/finance'   },
+}
+
+function SearchDropdown({ results, loading, query, onClose }: {
+  results: SearchResult[]
+  loading: boolean
+  query: string
+  onClose: () => void
+}) {
+  const grouped = (Object.keys(TYPE_META) as SearchResult['type'][]).map((type) => ({
+    type,
+    items: results.filter((r) => r.type === type),
+  })).filter((g) => g.items.length > 0)
+
+  return (
+    <div className="absolute left-0 top-full mt-1.5 w-full bg-surface border border-border rounded-xl z-50 overflow-hidden"
+      style={{ boxShadow: 'var(--shadow-lg)' }}>
+      {loading ? (
+        <div className="flex items-center justify-center gap-2 py-6 text-[12.5px] text-text-muted">
+          <Loader2 size={14} className="animate-spin" /> Buscando…
+        </div>
+      ) : grouped.length === 0 ? (
+        <div className="py-6 text-center text-[12.5px] text-text-muted">
+          Nenhum resultado para <strong className="text-text">&ldquo;{query}&rdquo;</strong>
+        </div>
+      ) : (
+        <div className="max-h-[360px] overflow-y-auto py-1">
+          {grouped.map(({ type, items }) => {
+            const meta = TYPE_META[type]
+            return (
+              <div key={type}>
+                <div className="flex items-center gap-2 px-3 py-1.5">
+                  <meta.Icon size={11} className="text-text-muted" />
+                  <span className="text-[10.5px] font-semibold uppercase tracking-wider text-text-muted">{meta.label}</span>
+                </div>
+                {items.map((r) => (
+                  <Link key={r.id} href={r.href} onClick={onClose}
+                    className="flex items-center gap-3 px-3 py-2 hover:bg-surface-2 transition-colors">
+                    <div className="w-7 h-7 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
+                      <meta.Icon size={13} className="text-primary" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-[13px] font-medium text-text truncate">{r.title}</div>
+                      <div className="text-[11px] text-text-muted truncate">{r.subtitle}</div>
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -167,7 +234,65 @@ export function Topbar({ onMobileMenu }: TopbarProps) {
   const userRef = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
 
+  const [searchQuery,   setSearchQuery]   = useState('')
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([])
+  const [searchLoading, setSearchLoading] = useState(false)
+  const [searchOpen,    setSearchOpen]    = useState(false)
+  const searchWrapRef = useRef<HTMLDivElement>(null)
+
   const { identify, reset } = useAnalytics()
+
+  const runSearch = useCallback(async (q: string) => {
+    if (q.trim().length < 2) { setSearchResults([]); setSearchLoading(false); return }
+    setSearchLoading(true)
+    const supabase = createClient()
+    const term = `%${q.trim()}%`
+
+    const [botsRes, contactsRes, txRes] = await Promise.all([
+      supabase.from('bots').select('id, name, username, status').ilike('name', term).limit(4),
+      supabase.from('contacts').select('id, name, username, email').or(`name.ilike.${term},email.ilike.${term}`).limit(4),
+      supabase.from('transactions').select('id, product_name, customer_name, amount, status').ilike('product_name', term).limit(4),
+    ])
+
+    const results: SearchResult[] = [
+      ...(botsRes.data ?? []).map((b) => ({
+        id: b.id, type: 'bot' as const,
+        title: b.name || 'Bot sem nome',
+        subtitle: b.username ? `@${b.username}` : b.status ?? '',
+        href: '/dashboard/bots',
+      })),
+      ...(contactsRes.data ?? []).map((c) => ({
+        id: c.id, type: 'contact' as const,
+        title: c.name || c.email || 'Cliente',
+        subtitle: c.email ?? '',
+        href: '/dashboard/customers',
+      })),
+      ...(txRes.data ?? []).map((t) => ({
+        id: t.id, type: 'transaction' as const,
+        title: t.product_name || 'Transação',
+        subtitle: t.customer_name ? `${t.customer_name} · R$ ${Number(t.amount).toFixed(2)}` : `R$ ${Number(t.amount).toFixed(2)}`,
+        href: '/dashboard/finance',
+      })),
+    ]
+
+    setSearchResults(results)
+    setSearchLoading(false)
+  }, [])
+
+  useEffect(() => {
+    const t = setTimeout(() => { if (searchQuery) runSearch(searchQuery) }, 300)
+    return () => clearTimeout(t)
+  }, [searchQuery, runSearch])
+
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (searchWrapRef.current && !searchWrapRef.current.contains(e.target as Node)) {
+        setSearchOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
 
   useEffect(() => {
     setMounted(true)
@@ -232,7 +357,7 @@ export function Topbar({ onMobileMenu }: TopbarProps) {
   useEffect(() => {
     function handler(e: MouseEvent) {
       if (notifRef.current && !notifRef.current.contains(e.target as Node)) setNotifOpen(false)
-      if (userRef.current && !userRef.current.contains(e.target as Node)) setUserOpen(false)
+      if (userRef.current  && !userRef.current.contains(e.target as Node))  setUserOpen(false)
     }
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
@@ -259,17 +384,30 @@ export function Topbar({ onMobileMenu }: TopbarProps) {
         <Menu size={18} />
       </button>
 
-      <div className="hidden sm:flex flex-1 max-w-md relative ml-1">
-        <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
+      <div className="hidden sm:flex flex-1 max-w-md relative ml-1" ref={searchWrapRef}>
+        <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none z-10" />
         <input
           ref={searchRef}
           type="search"
+          value={searchQuery}
+          onChange={(e) => { setSearchQuery(e.target.value); setSearchOpen(true) }}
+          onFocus={() => setSearchOpen(true)}
+          onKeyDown={(e) => { if (e.key === 'Escape') { setSearchOpen(false); setSearchQuery('') } }}
           placeholder="Pesquisar bots, clientes, transações…"
           className="w-full h-9 pl-9 pr-14 bg-surface-2 border border-border rounded-lg text-[13px] placeholder:text-text-subtle text-text focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary/50"
+          autoComplete="off"
         />
         <kbd className="hidden md:flex absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-medium text-text-muted bg-surface border border-border rounded px-1.5 h-5 items-center tnum">
           ⌘K
         </kbd>
+        {searchOpen && searchQuery.trim().length >= 2 && (
+          <SearchDropdown
+            results={searchResults}
+            loading={searchLoading}
+            query={searchQuery}
+            onClose={() => { setSearchOpen(false); setSearchQuery('') }}
+          />
+        )}
       </div>
 
       <div className="flex-1 sm:hidden" />
