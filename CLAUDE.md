@@ -65,7 +65,7 @@ umbra-bot/
 │       ├── activity/             # Feed de eventos (mock)
 │       ├── customers/            # Clientes + CSV export com analytics (mock)
 │       ├── analytics/            # Análises — dados reais do Supabase (arquitetura modular)
-│       │   ├── page.tsx          # Server Component: filtros SQL, unstable_cache(5min) bots/flows, paralelismo total
+│       │   ├── page.tsx          # Server Component: filtros SQL, bots/flows no Promise.all principal, paralelismo total
 │       │   ├── AnalyticsClient.tsx # Client Component fino (~130 linhas): useTransition + router.replace + PostHog
 │       │   ├── _types.ts         # Tipos compartilhados: Period, Filters, AnalyticsSummary, etc.
 │       │   ├── _utils.ts         # Formatadores (fmtBRL, fmtNum, fmtPct) + getDateRange + PERIOD_LABELS
@@ -233,7 +233,7 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Análises — contacts: SELECT count(*) head:true (zero rows transferidas) | ✅ Implementado |
 | Análises — exportRows via Server Action getExportRows() — removido do AnalyticsSummary (zero KB no RSC) | ✅ Implementado |
 | Análises — dropdowns: RPC analytics_filter_options SELECT DISTINCT (migração 042) | ✅ Implementado |
-| Análises — bots e flows: unstable_cache(revalidate:300) escopado por uid | ✅ Implementado |
+| Análises — bots e flows: queries no Promise.all principal (sem cache — incompatível com cookies()) | ✅ Implementado |
 | Análises — todas as queries disparam em paralelo (prev criadas antes do await do main) | ✅ Implementado |
 | Financeiro com dados reais do banco (Server Component) | ✅ Funcional |
 | Financeiro — módulo componentizado (10 arquivos) | ✅ Completo |
@@ -419,7 +419,7 @@ Delta calculado: `((atual - anterior) / anterior) * 100`, formatado como `+12.4%
 
 ```
 app/dashboard/analytics/
-  ├── page.tsx            # Server Component — filtros SQL, unstable_cache(5min) bots/flows,
+  ├── page.tsx            # Server Component — filtros SQL, bots/flows no Promise.all principal,
   │                       # paralelismo total (prev queries kickoff antes do await main)
   ├── AnalyticsClient.tsx # Client Component fino (~130 linhas) — useTransition + router.replace
   │                       # + PostHog tracking (filter_changed, csv_exported)
@@ -454,7 +454,8 @@ AnalyticsPage (Server Component)
   │     ├── checkout_events → event_type, bot_id, flow_id (filtrado)
   │     ├── RPC analytics_cohort_weekly(p_user_id, p_cohorts=6, p_weeks=6)  ← migração 039
   │     ├── RPC analytics_filter_options(p_user_id)  ← migração 042 — SELECT DISTINCT produtos+UTMs
-  │     └── getBotsAndFlows(uid)  ← unstable_cache(revalidate:300) — cache 5min por uid
+  │     ├── bots   → id, name, username (diretamente no batch)
+  │     └── flows  → id, name, executions, conversion (diretamente no batch)
   ├── prevBatch (só se compare=true && period!='all' — já rodando em paralelo):
   │     ├── transactions  (período anterior, mesmos filtros)
   │     ├── contacts      (período anterior, count-only)
@@ -631,21 +632,6 @@ returns json language sql stable security invoker set search_path = public
 - Re-executa a query de transactions aprovadas com os filtros ativos (auth verificada no servidor)
 - **`exportRows` removido do `AnalyticsSummary`** — elimina centenas de KB do payload RSC por render
 
-### Cache de bots e flows — `unstable_cache`
-
-```typescript
-// Definido em nível de MÓDULO (fora do componente — obrigatório para o cache funcionar)
-const getBotsAndFlows = unstable_cache(
-  async (uid: string) => { /* busca bots + flows */ },
-  ['analytics-bots-flows'],
-  { revalidate: 300 }  // 5 minutos
-)
-```
-
-- Cache escopado por `uid` — cada usuário tem entrada independente (sem vazamento de dados)
-- Em cache miss: `createClient()` usa cookies do request atual para autenticar
-- Elimina 2 roundtrips ao Supabase na maioria dos renders de mudança de filtro
-
 ### Paralelismo total — prev queries kickoff
 
 ```typescript
@@ -655,7 +641,7 @@ const prevCntP = canCompare ? buildCnt(prevStart, prevEnd, true) : null
 const prevEvtP = canCompare ? buildEvt(prevStart, prevEnd, true) : null
 
 // Main await — prev já rodando em paralelo
-const [...] = await Promise.all([buildTx(...), buildCnt(...), ..., getBotsAndFlows(uid)])
+const [...] = await Promise.all([buildTx(...), buildCnt(...), ..., botsQuery, flowsQuery])
 
 // Coleta resultados (já prontos ou quase)
 const prevRes = canCompare ? await Promise.all([prevTxP!, prevCntP!, prevEvtP!]) : null
