@@ -65,10 +65,11 @@ umbra-bot/
 │       ├── activity/             # Feed de eventos (mock)
 │       ├── customers/            # Clientes + CSV export com analytics (mock)
 │       ├── analytics/            # Análises — dados reais do Supabase (arquitetura modular)
-│       │   ├── page.tsx          # Server Component: filtros via searchParams, SQL server-side, 2 batches paralelos
-│       │   ├── AnalyticsClient.tsx # Client Component fino (~130 linhas): useTransition + router.replace
+│       │   ├── page.tsx          # Server Component: filtros SQL, unstable_cache(5min) bots/flows, paralelismo total
+│       │   ├── AnalyticsClient.tsx # Client Component fino (~130 linhas): useTransition + router.replace + PostHog
 │       │   ├── _types.ts         # Tipos compartilhados: Period, Filters, AnalyticsSummary, etc.
 │       │   ├── _utils.ts         # Formatadores (fmtBRL, fmtNum, fmtPct) + getDateRange + PERIOD_LABELS
+│       │   ├── _actions.ts       # Server Action: getExportRows(filters) — CSV export sob demanda
 │       │   ├── _server.ts        # Funções de computação Node.js-only: computeFunnel, computeByBot, etc.
 │       │   └── _components/      # 5 componentes isolados
 │       │       ├── FilterBar.tsx     # Barra com 5 selects + toggle Comparar + Limpar
@@ -112,7 +113,7 @@ umbra-bot/
 │           ├── InvoicesSection.tsx     # Tabela de faturas
 │           └── WithdrawModal.tsx       # Modal multi-step: self-fetch de bank_accounts, add/delete inline
 ├── hooks/
-│   ├── use-analytics.ts          # PostHog events tipados (14 eventos)
+│   ├── use-analytics.ts          # PostHog events tipados (14 eventos: inclui analytics_filter_changed + analytics_cohort_error)
 │   ├── use-keyboard-shortcuts.ts # ⌘K, b, f, c, a, ?
 │   └── use-mobile.ts
 ├── lib/
@@ -130,7 +131,7 @@ umbra-bot/
 │   └── DashboardProvider.tsx     # Contexto global: user, alerts, botsCount, logout — 1 fetch
 ├── public/
 │   └── sw.js                     # Service Worker para Web Push
-├── supabase/migrations/          # 42 migrações SQL (000 a 041)
+├── supabase/migrations/          # 43 migrações SQL (000 a 042)
 ├── vercel.json                   # Cron job: /api/cron/process-withdrawals todo dia às 06:00 UTC (Hobby: 1x/dia)
 ├── sentry.*.config.ts            # Sentry (client com Replay / server com tracePropagation)
 ├── instrumentation.ts            # Next.js hook para Sentry server
@@ -227,6 +228,13 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Análises — transactions gravando UTM + flow_id (aceitos no POST /api/payments/pix) | ✅ Implementado |
 | Análises — flows com user_id + RLS correta (migração 021 + 040) | ✅ Implementado |
 | Análises — endpoint público POST /api/checkout/track para evento visited (migração 041) | ✅ Implementado |
+| Análises — monitoramento: analytics_filter_changed + analytics_cohort_error + csv_exported com period | ✅ Implementado |
+| Análises — flows RLS urgente corrigida (migração 040) + upsert flows/page.tsx inclui user_id | ✅ Implementado |
+| Análises — contacts: SELECT count(*) head:true (zero rows transferidas) | ✅ Implementado |
+| Análises — exportRows via Server Action getExportRows() — removido do AnalyticsSummary (zero KB no RSC) | ✅ Implementado |
+| Análises — dropdowns: RPC analytics_filter_options SELECT DISTINCT (migração 042) | ✅ Implementado |
+| Análises — bots e flows: unstable_cache(revalidate:300) escopado por uid | ✅ Implementado |
+| Análises — todas as queries disparam em paralelo (prev criadas antes do await do main) | ✅ Implementado |
 | Financeiro com dados reais do banco (Server Component) | ✅ Funcional |
 | Financeiro — módulo componentizado (10 arquivos) | ✅ Completo |
 | Financeiro — seletor de período (7d/30d/90d/Tudo) | ✅ Funcional |
@@ -278,11 +286,13 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | `onboarding_step_completed` | `OnboardingWizard` — cada transição de passo |
 | `onboarding_completed` | `OnboardingWizard` — ao finalizar |
 | `pix_payment_created` | `app/api/payments/pix/route.ts` |
-| `csv_exported` | `FinanceDashboard` e `customers/page.tsx` |
+| `csv_exported` | `FinanceDashboard`, `customers/page.tsx` e `AnalyticsClient.tsx` — inclui campo `period` |
 | `avatar_updated` | `dashboard/profile/page.tsx` |
 | `broadcast_sent` | disponível no EventMap |
 | `flow_created` | disponível no EventMap |
 | `plan_upgraded` | disponível no EventMap |
+| `analytics_filter_changed` | `AnalyticsClient.tsx` — toda mudança de filtro ou Limpar (period, compare, bot, produto, fluxo, UTM) |
+| `analytics_cohort_error` | `analytics/page.tsx` (server-side via `captureEvent`) — erro na RPC de coorte |
 
 ---
 
@@ -346,6 +356,13 @@ DashboardLayout (components/dashboard/Layout.tsx)
 - `saveBotAction` lê `userId` do servidor via `supabase.auth.getUser()` — nunca do cliente
 - APIs de bank-accounts validam `user_id` em todas as operações (select + delete com `.eq('user_id', user.id)`)
 
+### Flows RLS (migração 040)
+
+- **Vulnerabilidade corrigida:** tabela `flows` criada com `using (true)` → qualquer usuário autenticado via Supabase SDK direto podia ler fluxos de outros
+- **Fix:** migração 040 adiciona `user_id uuid references auth.users(id)` + policy `flows_owner (auth.uid() = user_id)` — reforça migração 021
+- **Código:** `saveFlow()` em `app/dashboard/flows/page.tsx` inclui `user_id: user.id` no upsert (sem isso o INSERT seria bloqueado pelo `with check` pós-migração)
+- **SQL consolidado:** `supabase/migrations/_pending_analytics_037_to_041.sql` — contém migrações 037–042 prontas para rodar no Supabase SQL Editor
+
 ---
 
 ## 10. MÓDULO FINANCEIRO
@@ -402,13 +419,16 @@ Delta calculado: `((atual - anterior) / anterior) * 100`, formatado como `+12.4%
 
 ```
 app/dashboard/analytics/
-  ├── page.tsx            # Server Component — filtros SQL + 2 batches paralelos + RPC coorte
-  ├── AnalyticsClient.tsx # Client Component fino (~130 linhas) — só UI + navegação URL
+  ├── page.tsx            # Server Component — filtros SQL, unstable_cache(5min) bots/flows,
+  │                       # paralelismo total (prev queries kickoff antes do await main)
+  ├── AnalyticsClient.tsx # Client Component fino (~130 linhas) — useTransition + router.replace
+  │                       # + PostHog tracking (filter_changed, csv_exported)
   ├── _types.ts           # Period, Filters, AnalyticsSummary, BotStat, FlowStat, CohortRow, etc.
   ├── _utils.ts           # fmtBRL, fmtNum, fmtPct, getDateRange, PERIOD_LABELS
-  ├── _server.ts          # computeFunnel, computeByBot, computeByProduct, computeByFlow,
-  │                       # computeByUtm, computeStatusBreakdown, computeExportRows,
-  │                       # transformCohortRpc — rodas no Node.js, zero custo no browser
+  ├── _actions.ts         # 'use server' — getExportRows(filters): busca aprovadas sob demanda (CSV)
+  ├── _server.ts          # computeFunnel(curTxs, curContactCount, ...) | computeByBot |
+  │                       # computeByProduct | computeByFlow | computeByUtm |
+  │                       # computeStatusBreakdown | computeExportRows | transformCohortRpc
   └── _components/
       ├── FilterBar.tsx   # 5 selects + toggle Comparar + Limpar — desabilita ao navegar (isPending)
       ├── FunnelChart.tsx # 4 etapas + % entre etapas + conv. total + deltas vs. anterior
@@ -425,28 +445,31 @@ URL: /dashboard/analytics?period=30d&botId=xxx&compare=1
 AnalyticsPage (Server Component)
   ├── Lê searchParams: period | botId | productName | flowId | utmSource | compare
   ├── Aplica filtros SQL diretamente nas queries (gte/lte data, eq por bot/produto/fluxo/UTM)
-  ├── mainBatch (Promise.all — dispara em paralelo):
+  ├── Kick off prev queries ANTES do primeiro await (paralelismo total com main):
+  │     prevTxP / prevCntP / prevEvtP — promises HTTP já no ar antes de qualquer await
+  ├── Promise.all principal (dispara em paralelo):
   │     ├── transactions  → bot_id, flow_id, status, amount, net, fee,
   │     │                   product_name, utm_source, utm_campaign, created_at
-  │     ├── contacts      → bot_id (filtrado por período + bot)
+  │     ├── contacts      → SELECT count(*) head:true — ZERO rows, apenas o número
   │     ├── checkout_events → event_type, bot_id, flow_id (filtrado)
-  │     ├── bots          → id, name, username
-  │     ├── flows         → id, name, executions, conversion (limit 50)
   │     ├── RPC analytics_cohort_weekly(p_user_id, p_cohorts=6, p_weeks=6)  ← migração 039
-  │     ├── transactions distinct product_name (limit 500, all-time) — opções do dropdown
-  │     └── transactions distinct utm_source   (limit 500, all-time) — opções do dropdown
-  ├── prevBatch (Promise.all — só se compare=true && period!='all', dispara em paralelo):
-  │     ├── transactions  (período anterior, mesmos filtros de bot/produto/fluxo/UTM)
-  │     ├── contacts      (período anterior)
+  │     ├── RPC analytics_filter_options(p_user_id)  ← migração 042 — SELECT DISTINCT produtos+UTMs
+  │     └── getBotsAndFlows(uid)  ← unstable_cache(revalidate:300) — cache 5min por uid
+  ├── prevBatch (só se compare=true && period!='all' — já rodando em paralelo):
+  │     ├── transactions  (período anterior, mesmos filtros)
+  │     ├── contacts      (período anterior, count-only)
   │     └── checkout_events (período anterior)
   ├── Computa server-side via _server.ts:
-  │     computeFunnel | computeByBot | computeByProduct | computeByFlow |
-  │     computeByUtm | computeStatusBreakdown | computeExportRows | transformCohortRpc
+  │     computeFunnel(curTxs, curContactCount, ...) | computeByBot | computeByProduct |
+  │     computeByFlow | computeByUtm | computeStatusBreakdown | transformCohortRpc
   └── Passa AnalyticsSummary (objeto serializado) para <AnalyticsClient summary={...} />
 
 AnalyticsClient (Client Component — ~130 linhas)
   ├── Recebe summary: AnalyticsSummary — nenhuma computação client-side
   ├── useTransition + router.replace → atualiza URL ao mudar filtro (sem reload)
+  ├── PostHog: track('analytics_filter_changed') a cada mudança de filtro ou Limpar
+  ├── handleExport → chama Server Action getExportRows(filters) sob demanda → exportCSV()
+  │     track('csv_exported', { section: 'analytics', rows, period })
   ├── FilterBar: isPending=true desabilita interação durante navegação
   └── Renderiza: FunnelChart | BarListCard×4 | StatusCard | CohortTable
 ```
@@ -464,10 +487,10 @@ interface AnalyticsSummary {
   statusBreakdown: StatusData[]  // distribuição por status (approved/pending/etc.)
   cohortRows: CohortRow[]        // resultado da RPC analytics_cohort_weekly
   botOptions: BotOption[]        // opções para o dropdown de bots
-  productOptions: string[]       // opções para o dropdown de produtos
+  productOptions: string[]       // opções para o dropdown de produtos (via analytics_filter_options)
   flowOptions: FlowOption[]      // opções para o dropdown de fluxos
-  utmOptions: string[]           // opções para o dropdown de origens
-  exportRows: ExportRow[]        // linhas aprovadas prontas para CSV
+  utmOptions: string[]           // opções para o dropdown de origens (via analytics_filter_options)
+  // exportRows REMOVIDO — fetched on-demand via getExportRows() Server Action (_actions.ts)
   error: string | null
   limitReached: boolean
   queryLimit: number             // 5000
@@ -559,11 +582,13 @@ language plpgsql stable security invoker
 
 ### Limites e proteções
 
-- `QUERY_LIMIT = 5000` — aplicado em todas as queries de transactions/contacts/events
-- `limitReached = true` quando qualquer uma das 3 queries (tx/cnt/evt) atinge 5000 → banner de aviso
+- `QUERY_LIMIT = 5000` — aplicado em transactions e checkout_events
+- `limitReached = true` quando transactions **ou** checkout_events atingem 5000 → banner de aviso
+  - contacts não entra no check pois usa `count(*)` — o número real é sempre preciso
 - `error` propagado do servidor → banner de erro vermelho no cliente (inclui erro de cohort)
 - `checkoutEvents` falha silenciosamente se migração 038 não aplicada (`data ?? []`)
 - `cohortRes` error → propagado no banner de erro principal (usuário sabe que a função SQL está faltando)
+  - Também capturado server-side via `captureEvent(uid, 'analytics_cohort_error', { error })`
 - Casts `as unknown as Tipo[]` necessários porque novas colunas não estão nos tipos gerados pelo Supabase
 
 ### Função SQL `track_checkout_event` (migração 041)
@@ -584,6 +609,68 @@ returns void language plpgsql security definer set search_path = public
 - Chamada via `POST /api/checkout/track` (sem auth, CORS *, rate-limit 60/min por IP)
 - Permite que qualquer página de checkout popule o evento **"Visitou"** do funil
 - `security definer` + postgres owner → BYPASSRLS → INSERT direto em `checkout_events`
+
+### Função SQL `analytics_filter_options` (migração 042)
+
+```sql
+create or replace function public.analytics_filter_options(p_user_id uuid)
+returns json language sql stable security invoker set search_path = public
+-- Retorna: { products: string[], utm_sources: string[] }
+-- SELECT DISTINCT product_name + SELECT DISTINCT utm_source em uma única query
+-- Substitui 2 queries de 500 linhas + dedup em JavaScript nos dropdowns de filtro
+-- grant execute to authenticated
+```
+
+- Chamada via `supabase.rpc('analytics_filter_options', { p_user_id: uid })` no mainBatch
+- Resultado desestruturado: `filterOpts.products` e `filterOpts.utm_sources`
+
+### Export CSV — Server Action (performance)
+
+- **`_actions.ts`** — `export async function getExportRows(filters: Filters): Promise<ExportRow[]>`
+- Chamada pelo `AnalyticsClient` apenas no clique de "Exportar CSV" (`handleExport async`)
+- Re-executa a query de transactions aprovadas com os filtros ativos (auth verificada no servidor)
+- **`exportRows` removido do `AnalyticsSummary`** — elimina centenas de KB do payload RSC por render
+
+### Cache de bots e flows — `unstable_cache`
+
+```typescript
+// Definido em nível de MÓDULO (fora do componente — obrigatório para o cache funcionar)
+const getBotsAndFlows = unstable_cache(
+  async (uid: string) => { /* busca bots + flows */ },
+  ['analytics-bots-flows'],
+  { revalidate: 300 }  // 5 minutos
+)
+```
+
+- Cache escopado por `uid` — cada usuário tem entrada independente (sem vazamento de dados)
+- Em cache miss: `createClient()` usa cookies do request atual para autenticar
+- Elimina 2 roundtrips ao Supabase na maioria dos renders de mudança de filtro
+
+### Paralelismo total — prev queries kickoff
+
+```typescript
+// Prev queries criadas ANTES do primeiro await → HTTP requests já no ar
+const prevTxP  = canCompare ? buildTx(prevStart, prevEnd, true)  : null
+const prevCntP = canCompare ? buildCnt(prevStart, prevEnd, true) : null
+const prevEvtP = canCompare ? buildEvt(prevStart, prevEnd, true) : null
+
+// Main await — prev já rodando em paralelo
+const [...] = await Promise.all([buildTx(...), buildCnt(...), ..., getBotsAndFlows(uid)])
+
+// Coleta resultados (já prontos ou quase)
+const prevRes = canCompare ? await Promise.all([prevTxP!, prevCntP!, prevEvtP!]) : null
+```
+
+### Contagem de contatos — COUNT sem fetch de linhas
+
+```typescript
+// Zero rows transferidas do PostgreSQL para o Node.js
+supabase.from('contacts').select('*', { count: 'exact', head: true })
+// Resposta: { data: null, count: number, error }
+// Uso: cntRes.count ?? 0  (em vez de cntRes.data?.length ?? 0)
+```
+
+- `computeFunnel` atualizado para aceitar `curContactCount: number` (não mais `RawContact[]`)
 
 ### PIX route — campos UTM e flow_id (migração 037)
 
