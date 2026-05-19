@@ -96,7 +96,6 @@ type Config = RawConfig
 
 /* ── Utilities ────────────────────────────────────────────── */
 
-const BASE_URL = 'umbra.bot/r/'
 const MONTHS = ['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro']
 
 function currentCycleLabel() {
@@ -124,14 +123,14 @@ function fmtDate(d: string | number) {
   return new Date(d).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'America/Sao_Paulo' })
 }
 
-function mapAffiliate(row: RawAffiliate): Affiliate {
+function mapAffiliate(row: RawAffiliate, appUrl: string): Affiliate {
   return {
     id: String(row.id),
     name: row.name ?? '',
     email: row.email ?? '',
     initials: mkInitials(row.name ?? 'A'),
     slug: row.slug ?? '',
-    url: BASE_URL + (row.slug ?? ''),
+    url: `${appUrl}/r/${row.slug ?? ''}`,
     clicks: Number(row.clicks ?? 0),
     sales: Number(row.sales ?? 0),
     commission: Number(row.commission ?? 0),
@@ -772,7 +771,7 @@ function ProgramConfigSection({ config, onSave }: {
                   className="w-full h-10 px-3 bg-surface border border-border rounded-lg text-[13px] text-text placeholder:text-text-subtle focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50"
                 />
                 <div className="text-[11px] text-text-muted mt-1">
-                  Para onde o visitante é redirecionado ao clicar no link <span className="font-mono">umbra.bot/r/slug</span>. Deixe vazio para redirecionar à página inicial.
+                  Para onde o visitante é redirecionado ao clicar no link de afiliado. Deixe vazio para redirecionar à página inicial.
                 </div>
               </div>
             </div>
@@ -1122,11 +1121,12 @@ function PaymentsSection({ affiliates, payments, onPay }: {
 
 /* ── AddAffiliateModal ────────────────────────────────────── */
 
-function AddAffiliateModal({ open, onClose, onAdd, defaultPercentage }: {
+function AddAffiliateModal({ open, onClose, onAdd, defaultPercentage, appUrl }: {
   open: boolean
   onClose: () => void
   onAdd: (data: { name: string; email: string; payment: string; commissionPct: number }) => Promise<void>
   defaultPercentage: number
+  appUrl: string
 }) {
   const [name, setName]       = useState('')
   const [email, setEmail]     = useState('')
@@ -1177,7 +1177,7 @@ function AddAffiliateModal({ open, onClose, onAdd, defaultPercentage }: {
         <div>
           <label className="block text-[12.5px] font-medium text-text mb-1.5">Link de divulgação</label>
           <div className="h-10 px-3 bg-surface-2 border border-dashed border-border rounded-lg text-[13px] font-mono text-text-muted flex items-center">
-            {BASE_URL}<span className="text-text">{previewSlug}</span>
+            <span className="text-text-muted">{appUrl}/r/</span><span className="text-text">{previewSlug}</span>
           </div>
         </div>
         <div className="flex items-start gap-2.5 p-3 bg-surface-2/50 border border-border rounded-lg">
@@ -1455,7 +1455,7 @@ export default function AffiliatesClient({ initialAffiliates, initialPayments, i
 }) {
   const { track } = useAnalytics()
 
-  const [affiliates, setAffiliates] = useState<Affiliate[]>(() => initialAffiliates.map(mapAffiliate))
+  const [affiliates, setAffiliates] = useState<Affiliate[]>(() => initialAffiliates.map(r => mapAffiliate(r, appUrl)))
   const [payments,   setPayments]   = useState<Payment[]>(()   => initialPayments.map(mapPayment))
   const [config,     setConfig]     = useState<Config>(initialConfig)
   const [tab,        setTab]        = useState('affiliates')
@@ -1502,7 +1502,7 @@ export default function AffiliatesClient({ initialAffiliates, initialPayments, i
       .select('id, name, email, slug, status, clicks, sales, commission, conversion_rate, payment_method, commission_pct, joined_at')
       .single()
     if (error || !row) { showToast('Erro ao adicionar afiliado.', 'error'); return }
-    setAffiliates((prev) => [mapAffiliate(row as unknown as RawAffiliate), ...prev])
+    setAffiliates((prev) => [mapAffiliate(row as unknown as RawAffiliate, appUrl), ...prev])
     track('affiliate_added', { commission_pct: data.commissionPct })
     showToast(`${data.name} adicionado ao programa.`)
   }
@@ -1699,6 +1699,7 @@ export default function AffiliatesClient({ initialAffiliates, initialPayments, i
         onClose={() => setAddOpen(false)}
         onAdd={handleAdd}
         defaultPercentage={config.percentage}
+        appUrl={appUrl}
       />
       <EditAffiliateModal
         affiliate={editingAffiliate}
