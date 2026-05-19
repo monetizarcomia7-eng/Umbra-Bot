@@ -13,6 +13,9 @@ import { TransactionsSection } from './TransactionsSection'
 import { WithdrawalsSection } from './WithdrawalsSection'
 import { InvoicesSection } from './InvoicesSection'
 import { WithdrawModal } from './WithdrawModal'
+import { cn } from '@/lib/utils'
+
+type Period = '7d' | '30d' | '90d' | 'all'
 
 const tabsDef = [
   { id: 'tx',        label: 'Transações', icon: 'arrow-left-right'   },
@@ -61,6 +64,14 @@ function buildLiveData(rows: RawTransaction[], rawWithdrawals: RawWithdrawal[]):
   }
 }
 
+function periodSince(period: Period): Date | null {
+  if (period === 'all') return null
+  const days = period === '7d' ? 7 : period === '30d' ? 30 : 90
+  return new Date(Date.now() - days * 86_400_000)
+}
+
+const PERIOD_LABEL: Record<Period, string> = { '7d': '7d', '30d': '30d', '90d': '90d', 'all': 'Tudo' }
+
 export function FinanceDashboard({
   initialTransactions,
   initialWithdrawals,
@@ -69,12 +80,17 @@ export function FinanceDashboard({
   initialWithdrawals:  RawWithdrawal[]
 }) {
   const [tab,       setTab]       = useState('tx')
+  const [period,    setPeriod]    = useState<Period>('30d')
   const [modalOpen, setModalOpen] = useState(false)
   const { track } = useAnalytics()
 
   const m = initialTransactions.length > 0
     ? buildLiveData(initialTransactions, initialWithdrawals)
     : financeMock
+
+  const since = periodSince(period)
+  const filteredTxs = since ? m.transactions.filter((t) => new Date(t.dt) >= since) : m.transactions
+  const filteredWds = since ? m.withdrawals.filter((w)  => new Date(w.date) >= since) : m.withdrawals
 
   const openInvCount = m.invoices.filter((i) => i.status !== 'paid').length
 
@@ -83,15 +99,15 @@ export function FinanceDashboard({
     if (tab === 'tx') {
       exportCSV(`transacoes_${today}.csv`,
         ['ID', 'Data', 'Tipo', 'Descrição', 'Valor (R$)', 'Status'],
-        m.transactions.map((t) => [t.id, t.dt, txTypeMap[t.type]?.label ?? t.type, t.desc, t.value, txStatusMap[t.status]?.label ?? t.status]),
+        filteredTxs.map((t) => [t.id, t.dt, txTypeMap[t.type]?.label ?? t.type, t.desc, t.value, txStatusMap[t.status]?.label ?? t.status]),
       )
-      track('csv_exported', { section: 'financeiro_transacoes', rows: m.transactions.length })
+      track('csv_exported', { section: 'financeiro_transacoes', rows: filteredTxs.length })
     } else if (tab === 'withdraws') {
       exportCSV(`saques_${today}.csv`,
         ['ID', 'Solicitado em', 'Conta', 'Valor (R$)', 'Status', 'Concluído'],
-        m.withdrawals.map((w) => [w.id, w.date, w.account, w.amount, wdStatusMap[w.status]?.label ?? w.status, w.concluded ?? '']),
+        filteredWds.map((w) => [w.id, w.date, w.account, w.amount, wdStatusMap[w.status]?.label ?? w.status, w.concluded ?? '']),
       )
-      track('csv_exported', { section: 'financeiro_saques', rows: m.withdrawals.length })
+      track('csv_exported', { section: 'financeiro_saques', rows: filteredWds.length })
     } else {
       exportCSV(`faturas_${today}.csv`,
         ['ID', 'Período', 'Vencimento', 'Valor (R$)', 'Status'],
@@ -128,30 +144,50 @@ export function FinanceDashboard({
           }
         />
         <SummaryCard label="A liberar"                  value={m.summary.aLiberar}            delta={m.summary.deltas.liberar}   icon="clock"       />
-        <SummaryCard label="Total recebido no período"  value={m.summary.totalRecebido}        delta={m.summary.deltas.total}     icon="trending-up" />
+        <SummaryCard label="Total recebido (histórico)" value={m.summary.totalRecebido}        delta={m.summary.deltas.total}     icon="trending-up" />
         <SummaryCard label="Comissões da plataforma"    value={m.summary.comissoesPlataforma}  delta={m.summary.deltas.comissoes} icon="percent"     />
       </div>
 
-      <Tabs
-        className="mb-4"
-        tabs={[
-          { ...tabsDef[0], count: m.transactions.length },
-          { ...tabsDef[1], count: m.withdrawals.length  },
-          { ...tabsDef[2], count: openInvCount > 0 ? openInvCount : undefined },
-        ]}
-        active={tab}
-        onChange={setTab}
-      />
+      {/* Tabs + seletor de período lado a lado */}
+      <div className="flex items-end justify-between border-b border-border mb-4">
+        <Tabs
+          className="border-b-0"
+          tabs={[
+            { ...tabsDef[0], count: filteredTxs.length },
+            { ...tabsDef[1], count: filteredWds.length  },
+            { ...tabsDef[2], count: openInvCount > 0 ? openInvCount : undefined },
+          ]}
+          active={tab}
+          onChange={setTab}
+        />
+        {tab !== 'invoices' && (
+          <div className="mb-1.5 flex gap-0.5 bg-surface-2 p-0.5 rounded-lg">
+            {(['7d', '30d', '90d', 'all'] as const).map((p) => (
+              <button
+                key={p}
+                onClick={() => setPeriod(p)}
+                className={cn(
+                  'px-2.5 h-7 text-[11px] font-medium rounded-md tnum transition-colors',
+                  period === p
+                    ? 'bg-surface text-text border border-border'
+                    : 'text-text-muted hover:text-text',
+                )}
+              >
+                {PERIOD_LABEL[p]}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
 
-      {tab === 'tx'        && <TransactionsSection data={m.transactions} />}
-      {tab === 'withdraws' && <WithdrawalsSection  data={m.withdrawals} onNew={() => setModalOpen(true)} />}
+      {tab === 'tx'        && <TransactionsSection data={filteredTxs} />}
+      {tab === 'withdraws' && <WithdrawalsSection  data={filteredWds} onNew={() => setModalOpen(true)} />}
       {tab === 'invoices'  && <InvoicesSection     data={m.invoices} />}
 
       <WithdrawModal
         open={modalOpen}
         onClose={() => setModalOpen(false)}
         saldoDisponivel={m.summary.saldoDisponivel}
-        contas={m.contas}
       />
     </DashboardLayout>
   )

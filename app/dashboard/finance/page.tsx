@@ -10,12 +10,12 @@ export default async function FinancePage() {
       .from('transactions')
       .select('id, amount, net, fee, status, product_name, customer_name, gateway, created_at')
       .order('created_at', { ascending: false })
-      .limit(200),
+      .limit(500),
     supabase
       .from('withdrawals')
       .select('id, amount, account_id, account_label, status, created_at, concluded_at')
       .order('created_at', { ascending: false })
-      .limit(100),
+      .limit(200),
   ])
 
   return (

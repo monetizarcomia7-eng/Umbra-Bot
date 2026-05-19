@@ -31,7 +31,7 @@ interface KpiItem {
   Icon: React.ElementType
 }
 
-interface RealKpi { revenue: number; sales: number; botsActive: number }
+interface RealKpi { revenue: number; sales: number; botsActive: number; revenueD: string; salesD: string }
 interface RealFlow { id: number; name: string; sales: number; conv: number; color: string }
 
 const ONBOARDING_STEPS = [
@@ -265,8 +265,15 @@ function DashboardPageInner() {
     setChartLoading(true)
 
     const days = period === '7d' ? 7 : period === '30d' ? 30 : 90
-    const since = new Date(Date.now() - days * 86_400_000).toISOString()
+    const since    = new Date(Date.now() - days * 86_400_000).toISOString()
+    const prevSince = new Date(Date.now() - 2 * days * 86_400_000).toISOString()
     const supabase = createClient()
+
+    function computeDelta(curr: number, prev: number): string {
+      if (prev === 0) return ''
+      const pct = ((curr - prev) / prev) * 100
+      return `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`
+    }
 
     Promise.all([
       supabase
@@ -275,13 +282,27 @@ function DashboardPageInner() {
         .eq('status', 'approved')
         .gte('created_at', since),
       supabase.from('bots').select('id', { count: 'exact', head: true }).eq('status', 'active'),
-    ]).then(([txRes, botsRes]) => {
-      const txs = txRes.data ?? []
+      supabase
+        .from('transactions')
+        .select('net, amount')
+        .eq('status', 'approved')
+        .gte('created_at', prevSince)
+        .lt('created_at', since),
+    ]).then(([txRes, botsRes, prevTxRes]) => {
+      const txs     = txRes.data ?? []
+      const prevTxs = prevTxRes.data ?? []
+
+      const revenue     = txs.reduce((s, t) => s + Number(t.net ?? t.amount ?? 0), 0)
+      const prevRevenue = prevTxs.reduce((s, t) => s + Number(t.net ?? t.amount ?? 0), 0)
+      const sales       = txs.length
+      const prevSales   = prevTxs.length
 
       const kpi: RealKpi = {
-        revenue:    txs.reduce((s, t) => s + Number(t.net ?? t.amount ?? 0), 0),
-        sales:      txs.length,
+        revenue,
+        sales,
         botsActive: botsRes.count ?? 0,
+        revenueD:   computeDelta(revenue, prevRevenue),
+        salesD:     computeDelta(sales, prevSales),
       }
       setRealKpi(kpi)
       setKpiLoading(false)
@@ -316,10 +337,10 @@ function DashboardPageInner() {
   }, [botsCount, period])
 
   const displayKpis: KpiItem[] = realKpi ? [
-    { id: 'revenue',    label: `Receita (${period})`,  value: fmtBRL(realKpi.revenue),               delta: '', trend: 'up', Icon: TrendingUp  },
-    { id: 'sales',      label: 'Novas vendas',          value: realKpi.sales.toLocaleString('pt-BR'), delta: '', trend: 'up', Icon: ShoppingBag },
-    { id: 'conversion', label: 'Taxa de conversão',     value: '—',                                   delta: '', trend: 'up', Icon: Target      },
-    { id: 'bots',       label: 'Bots ativos',           value: String(realKpi.botsActive),            delta: '', trend: 'up', Icon: Bot         },
+    { id: 'revenue',    label: `Receita (${period})`,  value: fmtBRL(realKpi.revenue),               delta: realKpi.revenueD, trend: realKpi.revenueD.startsWith('-') ? 'down' : 'up', Icon: TrendingUp  },
+    { id: 'sales',      label: 'Novas vendas',          value: realKpi.sales.toLocaleString('pt-BR'), delta: realKpi.salesD,   trend: realKpi.salesD.startsWith('-')   ? 'down' : 'up', Icon: ShoppingBag },
+    { id: 'conversion', label: 'Taxa de conversão',     value: '—',                                   delta: '',               trend: 'up',                                              Icon: Target      },
+    { id: 'bots',       label: 'Bots ativos',           value: String(realKpi.botsActive),            delta: '',               trend: 'up',                                              Icon: Bot         },
   ] : []
 
   const maxSales = realFlows.length > 0 ? Math.max(...realFlows.map((f) => f.sales)) : 1

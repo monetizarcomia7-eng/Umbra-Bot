@@ -1,9 +1,9 @@
 'use client'
 
-import React, { useState, useEffect, useMemo } from 'react'
-import { AlertCircle, AlertTriangle, Info, Check } from 'lucide-react'
+import React, { useState, useEffect, useCallback, useMemo } from 'react'
+import { AlertCircle, AlertTriangle, Info, Check, Plus, Trash2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import type { Conta } from './types'
+import type { BankAccount } from './types'
 import { fmtBRLdec } from './formatters'
 import { Icon, Modal, Btn, Spinner } from './atoms'
 
@@ -47,37 +47,121 @@ function CurrencyInput({ valueCents, onChange, error }: {
   )
 }
 
-export function WithdrawModal({ open, onClose, saldoDisponivel, contas }: {
-  open: boolean; onClose: () => void; saldoDisponivel: number; contas: Conta[]
+const KIND_LABEL: Record<string, string> = { pix: 'Pix', conta: 'Conta corrente', ted: 'TED' }
+const KIND_ICON:  Record<string, string> = { pix: 'zap', conta: 'landmark', ted: 'landmark' }
+
+export function WithdrawModal({ open, onClose, saldoDisponivel }: {
+  open: boolean; onClose: () => void; saldoDisponivel: number
 }) {
   const [step,       setStep]       = useState<'form' | 'confirm' | 'success'>('form')
   const [valorCents, setValorCents] = useState(0)
-  const [contaId,    setContaId]    = useState(contas[0].id)
+  const [accountId,  setAccountId]  = useState<string>('')
   const [loading,    setLoading]    = useState(false)
+  const [apiError,   setApiError]   = useState<string | null>(null)
+
+  // Contas bancárias
+  const [accounts,        setAccounts]        = useState<BankAccount[]>([])
+  const [accountsLoading, setAccountsLoading] = useState(false)
+  const [deletingId,      setDeletingId]      = useState<string | null>(null)
+
+  // Formulário de nova conta
+  const [showAddForm, setShowAddForm] = useState(false)
+  const [newLabel,    setNewLabel]    = useState('')
+  const [newPixKey,   setNewPixKey]   = useState('')
+  const [newKind,     setNewKind]     = useState<'pix' | 'conta' | 'ted'>('pix')
+  const [addLoading,  setAddLoading]  = useState(false)
+  const [addError,    setAddError]    = useState<string | null>(null)
+
+  const fetchAccounts = useCallback(async () => {
+    setAccountsLoading(true)
+    try {
+      const res = await fetch('/api/bank-accounts')
+      if (res.ok) {
+        const data: BankAccount[] = await res.json()
+        setAccounts(data)
+        setAccountId((prev) => prev || data[0]?.id || '')
+      }
+    } finally {
+      setAccountsLoading(false)
+    }
+  }, [])
 
   useEffect(() => {
-    if (open) { setStep('form'); setValorCents(0); setContaId(contas[0].id); setLoading(false); setApiError(null) }
-  }, [open, contas])
+    if (!open) return
+    setStep('form')
+    setValorCents(0)
+    setLoading(false)
+    setApiError(null)
+    setShowAddForm(false)
+    setNewLabel('')
+    setNewPixKey('')
+    setNewKind('pix')
+    setAddError(null)
+    fetchAccounts()
+  }, [open, fetchAccounts])
 
-  const valor = valorCents / 100
-  const conta = contas.find((c) => c.id === contaId)!
-  const error = valor <= 0 ? null : valor > saldoDisponivel
+  async function handleAddAccount() {
+    if (!newLabel.trim() || !newPixKey.trim()) {
+      setAddError('Preencha todos os campos.')
+      return
+    }
+    setAddLoading(true)
+    setAddError(null)
+    try {
+      const res = await fetch('/api/bank-accounts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ label: newLabel.trim(), pix_key: newPixKey.trim(), kind: newKind }),
+      })
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}))
+        setAddError(json.error ?? 'Erro ao salvar conta.')
+        return
+      }
+      const created: BankAccount = await res.json()
+      setAccounts((prev) => [...prev, created])
+      setAccountId(created.id)
+      setShowAddForm(false)
+      setNewLabel('')
+      setNewPixKey('')
+      setNewKind('pix')
+    } finally {
+      setAddLoading(false)
+    }
+  }
+
+  async function handleDeleteAccount(id: string) {
+    setDeletingId(id)
+    try {
+      await fetch(`/api/bank-accounts/${id}`, { method: 'DELETE' })
+      const remaining = accounts.filter((a) => a.id !== id)
+      setAccounts(remaining)
+      if (accountId === id) setAccountId(remaining[0]?.id ?? '')
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
+  const valor   = valorCents / 100
+  const account = accounts.find((a) => a.id === accountId)
+
+  const amountError = valor <= 0 ? null : valor > saldoDisponivel
     ? `Valor acima do saldo disponível (${fmtBRLdec(saldoDisponivel)}).`
     : null
-  const canContinue = valor > 0 && !error
+
+  const canContinue = valor > 0 && !amountError && !!account
 
   function handleQuick(pct: number) { setValorCents(Math.floor(saldoDisponivel * pct * 100)) }
 
-  const [apiError, setApiError] = useState<string | null>(null)
-
   async function handleConfirm() {
+    if (!account) return
     setLoading(true)
     setApiError(null)
     try {
       const res = await fetch('/api/withdrawals', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ amount: valor, account_id: contaId, account_label: conta.label }),
+        body: JSON.stringify({ amount: valor, account_id: account.id, account_label: account.label }),
       })
       if (!res.ok) {
         const json = await res.json().catch(() => ({}))
@@ -119,7 +203,7 @@ export function WithdrawModal({ open, onClose, saldoDisponivel, contas }: {
     >
       {step === 'form' && (
         <div className="space-y-4">
-          <CurrencyInput valueCents={valorCents} onChange={setValorCents} error={error} />
+          <CurrencyInput valueCents={valorCents} onChange={setValorCents} error={amountError} />
 
           <div className="flex gap-1.5">
             {[{ label: '25%', pct: 0.25 }, { label: '50%', pct: 0.50 }, { label: '75%', pct: 0.75 }, { label: 'Tudo', pct: 1 }].map((q) => (
@@ -135,27 +219,133 @@ export function WithdrawModal({ open, onClose, saldoDisponivel, contas }: {
 
           <div>
             <label className="block text-[12.5px] font-medium text-text mb-1.5">Conta de destino</label>
-            <div className="space-y-2">
-              {contas.map((c) => (
-                <label
-                  key={c.id}
-                  className={cn(
-                    'flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors',
-                    contaId === c.id ? 'border-primary bg-primary-soft' : 'border-border bg-surface hover:bg-surface-2',
-                  )}
+
+            {accountsLoading ? (
+              <div className="flex items-center gap-2 py-4 text-[12.5px] text-text-muted">
+                <Spinner /> Carregando contas…
+              </div>
+            ) : accounts.length === 0 && !showAddForm ? (
+              <div className="flex flex-col items-center gap-2 py-5 border border-dashed border-border rounded-lg text-center">
+                <Icon name="landmark" size={20} className="text-text-muted" />
+                <p className="text-[12.5px] text-text-muted">Nenhuma conta cadastrada.</p>
+                <button
+                  onClick={() => setShowAddForm(true)}
+                  className="text-[12.5px] font-medium text-primary hover:underline"
                 >
-                  <input type="radio" name="conta" checked={contaId === c.id} onChange={() => setContaId(c.id)} className="sr-only" />
-                  <span className={cn('w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0', contaId === c.id ? 'border-primary' : 'border-border-strong')}>
-                    {contaId === c.id && <span className="w-2 h-2 rounded-full bg-primary" />}
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-[12.5px] font-medium text-text truncate">{c.label}</div>
-                    <div className="text-[11px] text-text-muted">{c.bank} · {c.kind}</div>
+                  + Adicionar conta
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {accounts.map((acc) => (
+                  <label
+                    key={acc.id}
+                    className={cn(
+                      'flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors group',
+                      accountId === acc.id ? 'border-primary bg-primary-soft' : 'border-border bg-surface hover:bg-surface-2',
+                    )}
+                  >
+                    <input type="radio" name="conta" checked={accountId === acc.id} onChange={() => setAccountId(acc.id)} className="sr-only" />
+                    <span className={cn(
+                      'w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0',
+                      accountId === acc.id ? 'border-primary' : 'border-border-strong',
+                    )}>
+                      {accountId === acc.id && <span className="w-2 h-2 rounded-full bg-primary" />}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[12.5px] font-medium text-text truncate">{acc.label}</div>
+                      <div className="text-[11px] text-text-muted truncate">{acc.pix_key} · {KIND_LABEL[acc.kind] ?? acc.kind}</div>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <Icon name={KIND_ICON[acc.kind] ?? 'landmark'} size={15} className="text-text-muted" />
+                      <button
+                        type="button"
+                        onClick={(e) => { e.preventDefault(); handleDeleteAccount(acc.id) }}
+                        className="opacity-0 group-hover:opacity-100 transition-opacity text-text-muted hover:text-danger p-0.5 rounded"
+                        disabled={deletingId === acc.id}
+                        title="Remover conta"
+                      >
+                        {deletingId === acc.id ? <Spinner /> : <Trash2 size={13} />}
+                      </button>
+                    </div>
+                  </label>
+                ))}
+
+                {!showAddForm && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAddForm(true)}
+                    className="flex items-center gap-2 w-full p-3 rounded-lg border border-dashed border-border text-[12.5px] text-text-muted hover:text-text hover:border-border-strong transition-colors"
+                  >
+                    <Plus size={14} /> Adicionar conta
+                  </button>
+                )}
+              </div>
+            )}
+
+            {showAddForm && (
+              <div className="mt-2 border border-border rounded-lg p-3 space-y-3 bg-surface-2/50">
+                <div className="text-[12.5px] font-semibold text-text">Nova conta</div>
+
+                <div>
+                  <label className="block text-[11.5px] text-text-muted mb-1">Apelido</label>
+                  <input
+                    type="text"
+                    placeholder="Ex: Nubank pessoal"
+                    value={newLabel}
+                    onChange={(e) => setNewLabel(e.target.value)}
+                    className="w-full h-9 px-3 rounded-md border border-border bg-surface text-[13px] text-text focus:outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/20"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11.5px] text-text-muted mb-1">Tipo</label>
+                  <div className="flex gap-1.5">
+                    {(['pix', 'conta', 'ted'] as const).map((k) => (
+                      <button
+                        key={k}
+                        type="button"
+                        onClick={() => setNewKind(k)}
+                        className={cn(
+                          'flex-1 h-8 text-[12px] font-medium rounded-md border transition-colors',
+                          newKind === k
+                            ? 'border-primary bg-primary-soft text-primary'
+                            : 'border-border bg-surface text-text-muted hover:text-text',
+                        )}
+                      >
+                        {KIND_LABEL[k]}
+                      </button>
+                    ))}
                   </div>
-                  <Icon name={c.id === 'pix' ? 'zap' : 'landmark'} size={15} className="text-text-muted" />
-                </label>
-              ))}
-            </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11.5px] text-text-muted mb-1">
+                    {newKind === 'pix' ? 'Chave Pix' : 'Dados bancários'}
+                  </label>
+                  <input
+                    type="text"
+                    placeholder={newKind === 'pix' ? 'CPF, e-mail, telefone ou chave aleatória' : 'Banco, agência e conta'}
+                    value={newPixKey}
+                    onChange={(e) => setNewPixKey(e.target.value)}
+                    className="w-full h-9 px-3 rounded-md border border-border bg-surface text-[13px] text-text focus:outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/20"
+                  />
+                </div>
+
+                {addError && (
+                  <div className="flex items-center gap-1 text-[11.5px] text-danger">
+                    <AlertCircle size={12} /> {addError}
+                  </div>
+                )}
+
+                <div className="flex gap-2 justify-end pt-1">
+                  <Btn variant="secondary" onClick={() => { setShowAddForm(false); setAddError(null) }}>Cancelar</Btn>
+                  <Btn variant="primary" onClick={handleAddAccount} disabled={addLoading}>
+                    {addLoading ? <><Spinner /> Salvando…</> : 'Salvar conta'}
+                  </Btn>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="flex items-start gap-2 bg-surface-2/50 border border-border rounded-lg p-3">
@@ -167,7 +357,7 @@ export function WithdrawModal({ open, onClose, saldoDisponivel, contas }: {
         </div>
       )}
 
-      {step === 'confirm' && (
+      {step === 'confirm' && account && (
         <div className="space-y-4">
           <div className="bg-surface-2/50 border border-border rounded-lg p-4">
             <div className="text-[11px] uppercase tracking-wider font-semibold text-text-subtle">Valor a sacar</div>
@@ -179,11 +369,11 @@ export function WithdrawModal({ open, onClose, saldoDisponivel, contas }: {
             <div className="text-[11px] uppercase tracking-wider font-semibold text-text-subtle">Destino</div>
             <div className="flex items-center gap-2.5">
               <span className="w-8 h-8 rounded-md bg-surface-2 text-text-muted flex items-center justify-center">
-                <Icon name={conta.id === 'pix' ? 'zap' : 'landmark'} size={15} />
+                <Icon name={KIND_ICON[account.kind] ?? 'landmark'} size={15} />
               </span>
               <div className="min-w-0">
-                <div className="text-[12.5px] font-medium text-text truncate">{conta.label}</div>
-                <div className="text-[11px] text-text-muted">{conta.bank} · {conta.kind}</div>
+                <div className="text-[12.5px] font-medium text-text truncate">{account.label}</div>
+                <div className="text-[11px] text-text-muted truncate">{account.pix_key} · {KIND_LABEL[account.kind] ?? account.kind}</div>
               </div>
             </div>
           </div>
@@ -212,7 +402,7 @@ export function WithdrawModal({ open, onClose, saldoDisponivel, contas }: {
           <h3 className="text-[16px] font-semibold text-text">Saque solicitado</h3>
           <p className="text-[12.5px] text-text-muted mt-1.5 max-w-xs mx-auto">
             <span className="text-text font-medium tnum">{fmtBRLdec(valor)}</span> serão transferidos para{' '}
-            <span className="text-text">{conta.label}</span> em até 1 dia útil.
+            <span className="text-text">{account?.label}</span> em até 1 dia útil.
           </p>
         </div>
       )}

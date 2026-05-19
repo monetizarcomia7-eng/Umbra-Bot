@@ -23,6 +23,14 @@ export interface Invoice {
 
 export interface Conta { id: string; label: string; bank: string; kind: string }
 
+export interface BankAccount {
+  id: string
+  label: string
+  pix_key: string
+  kind: 'pix' | 'conta' | 'ted'
+  created_at: string
+}
+
 export interface FinanceSummary {
   saldoDisponivel: number; aLiberar: number; totalRecebido: number
   comissoesPlataforma: number; deltas: Record<string, number>
