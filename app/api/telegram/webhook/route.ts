@@ -32,7 +32,7 @@ export async function POST(request: NextRequest) {
   // Fetch bot to verify secret and get token
   const { data: bot, error: botError } = await supabase
     .from('bots')
-    .select('id, user_id, token, webhook_secret, name')
+    .select('id, user_id, token, webhook_secret, name, username')
     .eq('id', botId)
     .single()
 
@@ -86,9 +86,10 @@ export async function POST(request: NextRequest) {
     user_id:     bot.user_id,
     bot_id:      bot.id,
     contact_id:  contact?.id ?? null,
-    type:        'message',
-    title:       `Mensagem de ${firstName}`,
-    description: msg.text?.slice(0, 200) ?? '',
+    type:        'lead',
+    bot:         bot.username ? `@${bot.username}` : bot.name,
+    title:       `Novo lead`,
+    description: `${firstName} iniciou conversa`,
   })
 
   // Handle /start command

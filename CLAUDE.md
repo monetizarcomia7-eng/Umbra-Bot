@@ -46,7 +46,8 @@ umbra-bot/
 │   │   ├── admin/
 │   │   │   └── migrate-tokens/route.ts  # POST: re-encripta tokens legados (ADMIN_MIGRATION_SECRET)
 │   │   ├── cron/
-│   │   │   └── process-withdrawals/route.ts  # GET: processa saques pendentes (CRON_SECRET, horário)
+│   │   │   ├── process-withdrawals/route.ts  # GET: processa saques pendentes (CRON_SECRET, horário)
+│   │   │   └── cleanup-activity/route.ts     # GET: deleta activity_events com >90 dias (CRON_SECRET)
 │   │   ├── push/
 │   │   │   ├── subscribe/route.ts
 │   │   │   └── notify/route.ts
@@ -65,7 +66,9 @@ umbra-bot/
 │       │   └── DashboardClient.tsx  # Client Component — KPIs reais + deltas + gráfico + top produtos
 │       ├── bots/                 # Gerenciar bots (mock)
 │       ├── finance/              # Financeiro — Server Component + módulo finance/
-│       ├── activity/             # Feed de eventos (mock)
+│       ├── activity/             # Feed de eventos — dados reais do Supabase
+│       │   ├── page.tsx          # Server Component: busca 25 eventos + bots em paralelo (SSR)
+│       │   └── ActivityClient.tsx # Client Component: Realtime, filtros, mock condicional, CSV export
 │       ├── customers/            # Clientes + CSV export com analytics (mock)
 │       ├── analytics/            # Análises — dados reais do Supabase (arquitetura modular)
 │       │   ├── page.tsx          # Server Component: filtros SQL, bots/flows no Promise.all principal, paralelismo total
@@ -138,8 +141,8 @@ umbra-bot/
 │   └── DashboardProvider.tsx     # Contexto global: user, alerts, botsCount, logout — 1 fetch
 ├── public/
 │   └── sw.js                     # Service Worker para Web Push
-├── supabase/migrations/          # 46 migrações SQL (000 a 045)
-├── vercel.json                   # Cron job: /api/cron/process-withdrawals todo dia às 06:00 UTC (Hobby: 1x/dia)
+├── supabase/migrations/          # 51 migrações SQL (000 a 050)
+├── vercel.json                   # 2 Cron jobs: process-withdrawals (06:00 UTC) + cleanup-activity (02:00 UTC)
 ├── sentry.*.config.ts            # Sentry (client com Replay / server com tracePropagation)
 ├── instrumentation.ts            # Next.js hook para Sentry server
 ├── middleware.ts                 # Auth guard + security headers + CSP (unsafe-eval só em dev)
@@ -271,7 +274,18 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Financeiro — rate limit P7: saques 3/dia (era 5/hora) + captura requester_ip | ✅ Implementado |
 | Financeiro — saldo fresco P8: WithdrawModal busca GET /api/finance/balance ao abrir | ✅ Implementado |
 | Financeiro — transactions.net corrigido de GENERATED→coluna normal (mig 046) | ✅ Implementado |
-| CSV export (Financeiro + Clientes) + evento csv_exported | ✅ Funcional |
+| Atividade — Server Component + Client Component (SSR + Realtime) | ✅ Funcional |
+| Atividade — dados reais do banco (activity_events) + fallback mock | ✅ Funcional |
+| Atividade — Supabase Realtime (INSERT em tempo real) | ✅ Funcional |
+| Atividade — filtro por categoria + dropdown de bots real | ✅ Funcional |
+| Atividade — Export CSV (ActivityClient) + evento csv_exported | ✅ Funcional |
+| Atividade — links "Ver X" por tipo de evento (next/link) | ✅ Funcional |
+| Atividade — botão "Configurar alertas" (redireciona /dashboard/alerts) | ✅ Funcional |
+| Atividade — paginação "Carregar mais" (offset via Supabase) | ✅ Funcional |
+| Atividade — TTL: Vercel Cron cleanup-activity (02:00 UTC) + pg_cron opcional (mig 050) | ✅ Implementado |
+| Atividade — webhook Telegram: type='lead' correto + bot.username no campo bot | ✅ Corrigido |
+| Atividade — migração 049: bot_id FK + contact_id FK + índices + CHECK corrigido | ✅ Aplicado |
+| CSV export (Financeiro + Clientes + Atividade) + evento csv_exported | ✅ Funcional |
 | Atalhos de teclado | ✅ Funcional |
 | Busca global (14 tabelas, race-condition safe, sem any) | ✅ Funcional |
 | Notificações reais (tabela alerts) | ✅ Funcional |
@@ -315,7 +329,7 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | `onboarding_step_completed` | `OnboardingWizard` — cada transição de passo |
 | `onboarding_completed` | `OnboardingWizard` — ao finalizar |
 | `pix_payment_created` | `app/api/payments/pix/route.ts` |
-| `csv_exported` | `FinanceDashboard`, `customers/page.tsx` e `AnalyticsClient.tsx` — inclui campo `period` |
+| `csv_exported` | `FinanceDashboard`, `customers/page.tsx`, `AnalyticsClient.tsx` e `ActivityClient.tsx` — inclui campo `period` ou `section` |
 | `avatar_updated` | `dashboard/profile/page.tsx` |
 | `broadcast_sent` | disponível no EventMap |
 | `flow_created` | disponível no EventMap |
@@ -327,6 +341,8 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | `bank_account_deleted` | `WithdrawModal.tsx` — ao remover conta bancária |
 | `finance_tab_changed` | `FinanceDashboard.tsx` — ao trocar entre Transações / Saques / Faturas |
 | `finance_period_changed` | `FinanceDashboard.tsx` — ao mudar período (7d / 30d / 90d / Tudo) |
+| `activity_filter_changed` | `ActivityClient.tsx` — ao mudar categoria ou bot no filtro (inclui category + bot_filtered) |
+| `activity_live_toggled` | `ActivityClient.tsx` — ao ligar/desligar modo ao vivo (inclui live: boolean) |
 
 ---
 
@@ -860,7 +876,7 @@ Para produção completa, ver `.env.example` — todas as variáveis estão docu
 Variáveis adicionais documentadas (além do básico):
 - `MERCADOPAGO_ACCESS_TOKEN` / `MERCADOPAGO_WEBHOOK_SECRET`
 - `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN`
-- `CRON_SECRET` — protege `GET /api/cron/process-withdrawals`
+- `CRON_SECRET` — protege `GET /api/cron/process-withdrawals` e `GET /api/cron/cleanup-activity`
 - `ADMIN_MIGRATION_SECRET` — protege `POST /api/admin/migrate-tokens`
 - `ADMIN_EMAIL` — protege `GET /api/migrations`
 - `NEXT_PUBLIC_VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_EMAIL`
@@ -885,3 +901,121 @@ Variáveis adicionais documentadas (além do básico):
 - Tokens de bot: sempre usar `encryptToken()` ao salvar e `decryptToken()` ao usar
 - `sendTelegramMessage()` centralizado em `lib/telegram.ts` — não duplicar em route handlers
 - `useDashboard()` só pode ser chamado dentro de filhos de `DashboardLayout` — nunca no componente que renderiza o próprio `DashboardLayout`
+
+---
+
+## 15. MÓDULO DE ATIVIDADE
+
+### Arquivos
+
+```
+app/dashboard/activity/
+  ├── page.tsx            # Server Component — busca initialEvents (25 rows) + bots em paralelo
+  └── ActivityClient.tsx  # Client Component — feed Realtime, filtros, export, mock gate
+```
+
+### Fluxo de dados
+
+```
+ActivityPage (Server Component)
+  ├── Promise.all em paralelo:
+  │     ├── activity_events: id, type, title, description, bot, bot_id, amount, created_at
+  │     │   order: created_at desc, limit 25
+  │     └── bots: id, name, username  (para resolver bot_id → @username)
+  └── passa como props:
+        initialEvents: RawActivityEvent[]
+        bots: BotOption[]
+
+ActivityClient (Client Component)
+  ├── useRealData = initialEvents.length > 0
+  │     true  → rows = initialEvents.map(mapRaw)  (dados reais, sem mock)
+  │     false → rows = MOCK_EVENTS                (fallback visual enquanto banco vazio)
+  ├── now state: Date.now() — tick a cada 30s (timestamp relativo correto)
+  ├── live state: boolean — ativa canal Realtime
+  ├── botMap: Map<uuid, string> — resolve bot_id → '@username' | 'nome' em O(1)
+  ├── Supabase Realtime:
+  │     canal 'activity-feed', event INSERT, tabela activity_events
+  │     payload tipado: (payload: { new: Record<string, unknown> })
+  │     cast: payload.new as unknown as RawActivityEvent  (required — TypeScript strict)
+  │     insere no topo de rows (prepend)
+  │     só ativo quando live=true
+  ├── Filtros:
+  │     category: 'all' | 'sales' | 'leads' | 'payments' | 'bots' | 'system'
+  │     botId: 'all' | uuid
+  │     categoryGroups: mapa de category → string[] de tipos
+  ├── Paginação "Carregar mais":
+  │     PAGE_SIZE = 25
+  │     dbOffset state: avança +25 a cada clique
+  │     GET activity_events .range(offset, offset+24) acumula em rows
+  │     hasMore: false quando retorna < PAGE_SIZE
+  ├── Mock live timer (só quando !useRealData):
+  │     useEffect com setInterval — insere eventos mock aleatórios a cada 4–8s
+  │     desativado automaticamente quando há dados reais
+  ├── Export CSV:
+  │     campos: Data | Tipo | Título | Descrição | Bot | Valor (R$)
+  │     nome do arquivo: atividade_YYYY-MM-DD.csv
+  │     track('csv_exported', { section: 'activity', rows })
+  ├── "Configurar alertas": router.push('/dashboard/alerts')
+  └── Links "Ver X": next/link → /dashboard/finance | /customers | /bots | /webhooks | etc.
+```
+
+### Tipos de evento e mapeamento
+
+| type | label | category | link destino |
+|---|---|---|---|
+| `sale` | Venda realizada | sales | /dashboard/finance |
+| `lead` | Novo lead | leads | /dashboard/customers |
+| `payment` | Pagamento recebido | payments | /dashboard/finance |
+| `refund` | Reembolso | payments | /dashboard/finance |
+| `reconnect` | Bot reconectado | bots | /dashboard/bots |
+| `disconnect` | Bot desconectado | bots | /dashboard/bots |
+| `limit` | Limite atingido | system | /dashboard/alerts |
+| `newBot` | Novo bot | bots | /dashboard/bots |
+| `webhookFailed` | Webhook falhou | system | /dashboard/webhooks |
+| `flowPublished` | Fluxo publicado | system | /dashboard/flows |
+| `cancellation` | Cancelamento | payments | /dashboard/finance |
+| `failure` | Falha | system | /dashboard/alerts |
+
+### CHECK constraint — migração 049
+
+O CHECK da tabela `activity_events` foi corrigido para incluir todos os 12 tipos acima.
+Motivo: PostgreSQL normaliza `IN (...)` para `ANY (ARRAY[...])` internamente — o DROP anterior
+usava `ilike '%type in%'` e nunca encontrava a constraint. Fix: `DROP CONSTRAINT IF EXISTS` pelo nome exato.
+
+```sql
+alter table public.activity_events drop constraint if exists activity_events_type_check;
+alter table public.activity_events add constraint activity_events_type_check
+  check (type in ('sale','lead','payment','refund','reconnect','disconnect',
+                  'limit','newBot','webhookFailed','flowPublished','cancellation','failure'));
+```
+
+### Webhook Telegram — correções (migração 049 + fix no route)
+
+- **Antes:** `type: 'message'` → inválido no CHECK → INSERT silenciosamente rejeitado
+- **Depois:** `type: 'lead'`, `title: 'Novo lead'`, `description: \`${firstName} iniciou conversa\``
+- **bot.username:** adicionado ao `.select('id, user_id, token, webhook_secret, name, username')`
+- **campo bot:** `bot.username ? \`@${bot.username}\` : bot.name` — usa @handle quando disponível
+
+### TTL — estratégia de retenção (90 dias)
+
+**Primária:** Vercel Cron → `GET /api/cron/cleanup-activity` (02:00 UTC, protegido por `CRON_SECRET`)
+- Deleta em lotes de 500 para evitar lock longo na tabela
+- Registra início/fim/contagem no `cron_log`
+- Cutoff: `now() - 90 days`
+
+**Secundária (opcional):** pg_cron → migração 050
+- Defensiva: só executa se o schema `cron` existir (pg_cron habilitado no Supabase)
+- Agendado para 03:00 UTC (1h depois do Vercel Cron)
+- Habilitar: Dashboard → Database → Extensions → pg_cron
+
+### botMap — resolução de nomes
+
+```typescript
+const botMap = useMemo(() => {
+  const m = new Map<string, string>()
+  bots.forEach(b => m.set(b.id, b.username ? `@${b.username}` : b.name))
+  return m
+}, [bots])
+// Uso: botMap.get(event.bot_id) ?? event.bot ?? 'Bot desconhecido'
+```
+O campo `bot` (string legada) serve de fallback para eventos inseridos antes da migração 049 que adicionou `bot_id` FK.

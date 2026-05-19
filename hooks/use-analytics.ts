@@ -25,6 +25,9 @@ type EventMap = {
     utm_filtered: boolean
   }
   analytics_cohort_error:    { error: string }
+  // Aba Atividade
+  activity_filter_changed:   { category: string; bot_filtered: boolean }
+  activity_live_toggled:     { live: boolean }
   // Aba Financeiro
   withdrawal_requested:      { amount: number; account_kind: string }
   bank_account_added:        { kind: 'pix' | 'conta' | 'ted' }
