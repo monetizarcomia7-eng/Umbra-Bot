@@ -1,19 +1,25 @@
 import { NextResponse, type NextRequest } from 'next/server'
+import { z } from 'zod'
 import { createClient } from '@/lib/supabase/server'
 import { rateLimit } from '@/lib/rate-limit'
 import { captureEvent } from '@/lib/analytics-server'
 import * as Sentry from '@sentry/nextjs'
 
-interface PixBody {
-  amount: number           // valor em reais (ex: 97.00)
-  product_name: string
-  customer_name: string
-  customer_email: string
-  customer_cpf: string     // CPF sem pontuação
-  customer_telegram_id?: string
-  bot_id?: string
-  description?: string
-}
+const pixSchema = z.object({
+  amount:               z.number({ error: 'Valor deve ser um número.' })
+                         .positive('Valor deve ser maior que zero.')
+                         .max(50_000, 'Valor máximo por transação: R$50.000.'),
+  product_name:         z.string().min(1, 'Nome do produto obrigatório.').max(200),
+  customer_name:        z.string().min(2, 'Nome do cliente obrigatório.').max(150),
+  customer_email:       z.string().email('E-mail inválido.'),
+  // Aceita CPF com ou sem formatação (000.000.000-00 ou 00000000000)
+  customer_cpf:         z.string()
+                         .transform((v) => v.replace(/\D/g, ''))
+                         .pipe(z.string().length(11, 'CPF deve ter 11 dígitos.')),
+  customer_telegram_id: z.string().max(50).optional(),
+  bot_id:               z.string().uuid('bot_id inválido.').optional(),
+  description:          z.string().max(200).optional(),
+})
 
 // POST /api/payments/pix
 // Creates a PIX payment via Mercado Pago and stores it in the transactions table.
@@ -21,33 +27,34 @@ export async function POST(request: NextRequest) {
   const supabase = await createClient()
 
   const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (!user) return NextResponse.json({ error: 'Não autorizado.' }, { status: 401 })
 
   // 10 PIX payments per user per hour
   const rl = await rateLimit(`pix:${user.id}`, 10, 60 * 60 * 1000)
   if (!rl.ok) {
     return NextResponse.json(
-      { error: 'muitas requisições, tente novamente mais tarde' },
+      { error: 'Muitas requisições. Tente novamente mais tarde.' },
       { status: 429, headers: { 'Retry-After': String(Math.ceil(rl.retryAfterMs / 1000)) } },
     )
   }
 
   const accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN
   if (!accessToken) {
-    return NextResponse.json({ error: 'gateway não configurado' }, { status: 500 })
+    return NextResponse.json({ error: 'Gateway não configurado.' }, { status: 500 })
   }
 
-  let body: PixBody
-  try { body = await request.json() } catch {
-    return NextResponse.json({ error: 'json inválido' }, { status: 400 })
+  let rawBody: unknown
+  try { rawBody = await request.json() } catch {
+    return NextResponse.json({ error: 'JSON inválido.' }, { status: 400 })
   }
 
-  const { amount, product_name, customer_name, customer_email, customer_cpf, customer_telegram_id, bot_id, description } = body
-
-  if (!amount || amount <= 0) return NextResponse.json({ error: 'valor inválido' }, { status: 400 })
-  if (!customer_name || !customer_email || !customer_cpf) {
-    return NextResponse.json({ error: 'dados do comprador incompletos' }, { status: 400 })
+  const parsed = pixSchema.safeParse(rawBody)
+  if (!parsed.success) {
+    const message = parsed.error.issues[0]?.message ?? 'Dados inválidos.'
+    return NextResponse.json({ error: message }, { status: 400 })
   }
+
+  const { amount, product_name, customer_name, customer_email, customer_cpf, customer_telegram_id, bot_id, description } = parsed.data
 
   // Create payment on Mercado Pago
   const mpRes = await fetch('https://api.mercadopago.com/v1/payments', {
@@ -83,6 +90,9 @@ export async function POST(request: NextRequest) {
 
   const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString() // 30 min
 
+  const fee = amount * 0.0399 + 0.4 // aproximação da taxa MP: 3,99% + R$0,40
+  const net = amount - fee
+
   // Persist transaction
   const { data: transaction, error: txError } = await supabase
     .from('transactions')
@@ -92,7 +102,8 @@ export async function POST(request: NextRequest) {
       gateway:               'mercadopago',
       gateway_payment_id:    String(mpData.id),
       amount,
-      fee:                   amount * 0.0399 + 0.4, // MP fee approximation
+      fee,
+      net,
       status:                'pending',
       pix_qr_code:           pixInfo?.qr_code_base64 ?? null,
       pix_copy_paste:        pixInfo?.qr_code ?? null,

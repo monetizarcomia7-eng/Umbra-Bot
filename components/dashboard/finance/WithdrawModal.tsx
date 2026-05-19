@@ -71,6 +71,7 @@ export function WithdrawModal({ open, onClose, saldoDisponivel }: {
   const [newKind,     setNewKind]     = useState<'pix' | 'conta' | 'ted'>('pix')
   const [addLoading,  setAddLoading]  = useState(false)
   const [addError,    setAddError]    = useState<string | null>(null)
+  const [addSuccess,  setAddSuccess]  = useState(false)
 
   const fetchAccounts = useCallback(async () => {
     setAccountsLoading(true)
@@ -97,8 +98,15 @@ export function WithdrawModal({ open, onClose, saldoDisponivel }: {
     setNewPixKey('')
     setNewKind('pix')
     setAddError(null)
+    setAddSuccess(false)
     fetchAccounts()
   }, [open, fetchAccounts])
+
+  useEffect(() => {
+    if (!addSuccess) return
+    const t = setTimeout(() => setAddSuccess(false), 3000)
+    return () => clearTimeout(t)
+  }, [addSuccess])
 
   async function handleAddAccount() {
     if (!newLabel.trim() || !newPixKey.trim()) {
@@ -125,6 +133,7 @@ export function WithdrawModal({ open, onClose, saldoDisponivel }: {
       setNewLabel('')
       setNewPixKey('')
       setNewKind('pix')
+      setAddSuccess(true)
     } finally {
       setAddLoading(false)
     }
@@ -280,6 +289,13 @@ export function WithdrawModal({ open, onClose, saldoDisponivel }: {
                     <Plus size={14} /> Adicionar conta
                   </button>
                 )}
+              </div>
+            )}
+
+            {addSuccess && (
+              <div className="flex items-center gap-2 text-[12px] text-success bg-success-soft border border-success/25 rounded-lg px-3 py-2 mt-2">
+                <Check size={13} className="shrink-0" />
+                Conta adicionada com sucesso!
               </div>
             )}
 

@@ -20,6 +20,13 @@ const GATEWAYS = [
   { id: 'stripe',      name: 'Stripe',       desc: 'Internacional, múltiplas moedas', color: '#635bff' },
 ]
 
+const GATEWAY_CREDENTIAL: Record<string, { label: string; placeholder: string; help: string }> = {
+  pushinpay:   { label: 'Token da API',          placeholder: 'Cole aqui o seu token PushinPay',   help: 'Encontre em Painel PushinPay → Configurações → API.' },
+  mercadopago: { label: 'Access Token',          placeholder: 'APP_USR-...',                        help: 'Gerado em Mercado Pago Developers → Credenciais de produção.' },
+  pagarme:     { label: 'Chave secreta (sk_live)', placeholder: 'sk_live_...',                     help: 'Encontre em Dashboard Pagar.me → Configurações → Chaves de API.' },
+  stripe:      { label: 'Secret Key',            placeholder: 'sk_live_...',                        help: 'Gerado em Stripe Dashboard → Developers → API keys.' },
+}
+
 function ProgressBar({ step }: { step: Step }) {
   const steps: Step[] = ['welcome', 'bot', 'gateway', 'done']
   const idx = steps.indexOf(step)
@@ -174,9 +181,12 @@ function BotStep({ userId, onNext, onSkip }: { userId: string; onNext: () => voi
 }
 
 function GatewayStep({ userId, onNext, onSkip }: { userId: string; onNext: () => void; onSkip: () => void }) {
-  const [selected, setSelected] = useState<string | null>(null)
-  const [loading,  setLoading]  = useState(false)
+  const [selected,   setSelected]   = useState<string | null>(null)
+  const [credential, setCredential] = useState('')
+  const [loading,    setLoading]    = useState(false)
   const { track } = useAnalytics()
+
+  const credMeta = selected ? GATEWAY_CREDENTIAL[selected] : null
 
   async function handleSave() {
     if (!selected) { onNext(); return }
@@ -187,8 +197,8 @@ function GatewayStep({ userId, onNext, onSkip }: { userId: string; onNext: () =>
         user_id: userId,
         provider: selected,
         name: GATEWAYS.find((g) => g.id === selected)?.name ?? selected,
-        status: 'pending',
-        credentials: {},
+        status: credential.trim() ? 'active' : 'pending',
+        credentials: credential.trim() ? { token: credential.trim() } : {},
       })
       track('gateway_connected', { gateway: selected })
     } catch {
@@ -212,11 +222,11 @@ function GatewayStep({ userId, onNext, onSkip }: { userId: string; onNext: () =>
         Qual gateway você usa para receber pagamentos?
       </p>
 
-      <div className="grid grid-cols-2 gap-2 mb-6">
+      <div className="grid grid-cols-2 gap-2 mb-4">
         {GATEWAYS.map((g) => (
           <button
             key={g.id}
-            onClick={() => setSelected(selected === g.id ? null : g.id)}
+            onClick={() => { setSelected(selected === g.id ? null : g.id); setCredential('') }}
             className="text-left p-3 rounded-xl transition-all"
             style={{
               border: selected === g.id ? `2px solid var(--primary, #7c3aed)` : '1px solid var(--border, #e2e8f0)',
@@ -232,6 +242,25 @@ function GatewayStep({ userId, onNext, onSkip }: { userId: string; onNext: () =>
           </button>
         ))}
       </div>
+
+      {credMeta && (
+        <div className="mb-6 space-y-1.5">
+          <label className="block text-sm font-medium" style={{ color: 'var(--text, #0f172a)' }}>
+            {credMeta.label}
+          </label>
+          <input
+            type="password"
+            value={credential}
+            onChange={(e) => setCredential(e.target.value)}
+            placeholder={credMeta.placeholder}
+            className="w-full px-4 py-2.5 rounded-xl text-sm font-mono outline-none"
+            style={{ border: '1px solid var(--border, #e2e8f0)', background: 'var(--surface, #fff)', color: 'var(--text, #0f172a)' }}
+            onFocus={(e) => { e.target.style.boxShadow = '0 0 0 3px rgba(124,58,237,0.15)'; e.target.style.borderColor = '#7c3aed' }}
+            onBlur={(e)  => { e.target.style.boxShadow = 'none'; e.target.style.borderColor = 'var(--border, #e2e8f0)' }}
+          />
+          <p className="text-xs" style={{ color: 'var(--text-subtle, #94a3b8)' }}>{credMeta.help}</p>
+        </div>
+      )}
 
       <button
         onClick={handleSave}

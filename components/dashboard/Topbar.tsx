@@ -70,6 +70,23 @@ interface SearchResult {
   href: string
 }
 
+const TYPE_COLOR: Record<SearchResultType, { bg: string; text: string }> = {
+  bot:         { bg: 'bg-violet-100',  text: 'text-violet-600'  },
+  contact:     { bg: 'bg-sky-100',     text: 'text-sky-600'     },
+  transaction: { bg: 'bg-emerald-100', text: 'text-emerald-600' },
+  flow:        { bg: 'bg-orange-100',  text: 'text-orange-600'  },
+  broadcast:   { bg: 'bg-blue-100',    text: 'text-blue-600'    },
+  redirect:    { bg: 'bg-cyan-100',    text: 'text-cyan-600'    },
+  campaign:    { bg: 'bg-pink-100',    text: 'text-pink-600'    },
+  affiliate:   { bg: 'bg-amber-100',   text: 'text-amber-600'   },
+  gateway:     { bg: 'bg-indigo-100',  text: 'text-indigo-600'  },
+  biolink:     { bg: 'bg-teal-100',    text: 'text-teal-600'    },
+  webhook:     { bg: 'bg-yellow-100',  text: 'text-yellow-600'  },
+  article:     { bg: 'bg-lime-100',    text: 'text-lime-600'    },
+  course:      { bg: 'bg-purple-100',  text: 'text-purple-600'  },
+  alert:       { bg: 'bg-red-100',     text: 'text-red-600'     },
+}
+
 const TYPE_META: Record<SearchResultType, { label: string; Icon: React.ElementType; href: string }> = {
   bot:         { label: 'Bots',            Icon: Bot,            href: '/dashboard/bots'         },
   contact:     { label: 'Clientes',        Icon: Users,          href: '/dashboard/customers'    },
@@ -114,7 +131,8 @@ function SearchDropdown({ results, loading, query, onClose }: {
       ) : (
         <div className="max-h-[360px] overflow-y-auto py-1">
           {grouped.map(({ type, items }) => {
-            const meta = TYPE_META[type]
+            const meta  = TYPE_META[type]
+            const color = TYPE_COLOR[type]
             return (
               <div key={type}>
                 <div className="flex items-center gap-2 px-3 py-1.5">
@@ -124,8 +142,8 @@ function SearchDropdown({ results, loading, query, onClose }: {
                 {items.map((r) => (
                   <Link key={r.id} href={r.href} onClick={onClose}
                     className="flex items-center gap-3 px-3 py-2 hover:bg-surface-2 transition-colors">
-                    <div className="w-7 h-7 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
-                      <meta.Icon size={13} className="text-primary" />
+                    <div className={cn('w-7 h-7 rounded-md flex items-center justify-center shrink-0', color.bg)}>
+                      <meta.Icon size={13} className={color.text} />
                     </div>
                     <div className="min-w-0">
                       <div className="text-[13px] font-medium text-text truncate">{r.title}</div>

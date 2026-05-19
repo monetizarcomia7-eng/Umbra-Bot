@@ -39,19 +39,48 @@ export async function POST(request: NextRequest) {
 
   const { amount, account_id, account_label } = parsed.data
 
-  // Calcula saldo disponível: soma do net de transações aprovadas
-  const { data: balanceRows, error: balanceError } = await supabase
-    .from('transactions')
-    .select('net, amount')
+  // Valida que a conta bancária pertence ao usuário autenticado
+  const { data: account, error: accountError } = await supabase
+    .from('bank_accounts')
+    .select('id')
+    .eq('id', account_id)
     .eq('user_id', user.id)
-    .eq('status', 'approved')
+    .single()
 
-  if (balanceError) {
-    Sentry.captureException(balanceError, { extra: { userId: user.id, context: 'withdrawals_balance_check' } })
-    return NextResponse.json({ error: 'Erro ao verificar saldo.' }, { status: 500 })
+  if (accountError || !account) {
+    return NextResponse.json({ error: 'Conta bancária inválida.' }, { status: 422 })
   }
 
-  const available = (balanceRows ?? []).reduce((sum, r) => sum + Number(r.net ?? r.amount), 0)
+  // Calcula saldo disponível em paralelo:
+  // totalApproved = soma do net das transações aprovadas
+  // totalWithdrawn = soma dos saques pendentes e completados (evita double-spend)
+  const [balanceResult, wdResult] = await Promise.all([
+    supabase
+      .from('transactions')
+      .select('net, amount, fee')
+      .eq('user_id', user.id)
+      .eq('status', 'approved'),
+    supabase
+      .from('withdrawals')
+      .select('amount')
+      .eq('user_id', user.id)
+      .in('status', ['pending', 'completed']),
+  ])
+
+  if (balanceResult.error) {
+    Sentry.captureException(balanceResult.error, { extra: { userId: user.id, context: 'withdrawals_balance_check' } })
+    return NextResponse.json({ error: 'Erro ao verificar saldo.' }, { status: 500 })
+  }
+  if (wdResult.error) {
+    Sentry.captureException(wdResult.error, { extra: { userId: user.id, context: 'withdrawals_wdcheck' } })
+    return NextResponse.json({ error: 'Erro ao verificar saques anteriores.' }, { status: 500 })
+  }
+
+  const totalApproved = (balanceResult.data ?? []).reduce(
+    (sum, r) => sum + Number(r.net ?? (Number(r.amount) - Number(r.fee ?? 0))), 0,
+  )
+  const totalWithdrawn = (wdResult.data ?? []).reduce((sum, w) => sum + Number(w.amount), 0)
+  const available = Math.max(0, totalApproved - totalWithdrawn)
 
   if (amount > available) {
     return NextResponse.json({ error: `Saldo insuficiente. Disponível: R$ ${available.toFixed(2)}.` }, { status: 422 })

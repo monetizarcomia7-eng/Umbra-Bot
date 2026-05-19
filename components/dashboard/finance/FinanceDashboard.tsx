@@ -53,8 +53,9 @@ function buildLiveData(rows: RawTransaction[], rawWithdrawals: RawWithdrawal[]):
   return {
     ...financeMock,
     summary: {
-      saldoDisponivel:     approved.reduce((s, r) => s + Number(r.net ?? r.amount), 0),
-      aLiberar:            pending.reduce((s, r) => s + Number(r.net ?? r.amount), 0),
+      // net = amount - fee (calculado no insert do PIX). Fallback: amount - fee inline.
+      saldoDisponivel:     approved.reduce((s, r) => s + Number(r.net ?? (Number(r.amount) - Number(r.fee ?? 0))), 0),
+      aLiberar:            pending.reduce((s, r) => s + Number(r.net ?? (Number(r.amount) - Number(r.fee ?? 0))), 0),
       totalRecebido:       approved.reduce((s, r) => s + Number(r.amount), 0),
       comissoesPlataforma: approved.reduce((s, r) => s + Number(r.fee ?? 0), 0),
       deltas: { saldo: 0, liberar: 0, total: 0, comissoes: 0 },
@@ -160,24 +161,22 @@ export function FinanceDashboard({
           active={tab}
           onChange={setTab}
         />
-        {tab !== 'invoices' && (
-          <div className="mb-1.5 flex gap-0.5 bg-surface-2 p-0.5 rounded-lg">
-            {(['7d', '30d', '90d', 'all'] as const).map((p) => (
-              <button
-                key={p}
-                onClick={() => setPeriod(p)}
-                className={cn(
-                  'px-2.5 h-7 text-[11px] font-medium rounded-md tnum transition-colors',
-                  period === p
-                    ? 'bg-surface text-text border border-border'
-                    : 'text-text-muted hover:text-text',
-                )}
-              >
-                {PERIOD_LABEL[p]}
-              </button>
-            ))}
-          </div>
-        )}
+        <div className="mb-1.5 flex gap-0.5 bg-surface-2 p-0.5 rounded-lg">
+          {(['7d', '30d', '90d', 'all'] as const).map((p) => (
+            <button
+              key={p}
+              onClick={() => setPeriod(p)}
+              className={cn(
+                'px-2.5 h-7 text-[11px] font-medium rounded-md tnum transition-colors',
+                period === p
+                  ? 'bg-surface text-text border border-border'
+                  : 'text-text-muted hover:text-text',
+              )}
+            >
+              {PERIOD_LABEL[p]}
+            </button>
+          ))}
+        </div>
       </div>
 
       {tab === 'tx'        && <TransactionsSection data={filteredTxs} />}

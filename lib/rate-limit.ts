@@ -41,15 +41,19 @@ async function rateLimitRedis(
   const client = getRedis()!
   const windowSec = Math.ceil(windowMs / 1000)
 
-  // INCR é atômico — seguro para múltiplas instâncias concorrentes
-  const count = await client.incr(key)
+  // Script Lua atômico: INCR + EXPIRE (só no primeiro) + TTL — 1 round-trip.
+  // Evita a race condition de 3 round-trips separados onde um INCR concorrente
+  // podia retornar 1 antes do EXPIRE ser chamado, deixando a chave sem TTL.
+  const result = (await client.eval(
+    `local c = redis.call('INCR', KEYS[1])
+     if c == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end
+     return {c, redis.call('TTL', KEYS[1])}`,
+    [key],
+    [windowSec],
+  )) as [number, number]
 
-  // Só define o TTL na primeira requisição da janela
-  if (count === 1) {
-    await client.expire(key, windowSec)
-  }
-
-  const ttl = await client.ttl(key)
+  const count  = result[0]
+  const ttl    = result[1]
   const resetAt = Date.now() + (ttl > 0 ? ttl * 1000 : windowMs)
 
   if (count > limit) {

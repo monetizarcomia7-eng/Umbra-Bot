@@ -53,7 +53,9 @@ umbra-bot/
 │   │   ├── broadcasts/send/route.ts
 │   │   └── migrations/route.ts   # Protegida por ADMIN_EMAIL
 │   └── dashboard/
-│       ├── page.tsx              # Overview — KPIs reais + deltas vs período anterior + gráfico + top produtos
+│       ├── page.tsx              # Server Component async — busca KPIs 30d no servidor, passa initialData ao DashboardClient
+│       ├── _components/
+│       │   └── DashboardClient.tsx  # Client Component — KPIs reais + deltas + gráfico + top produtos
 │       ├── bots/                 # Gerenciar bots (mock)
 │       ├── finance/              # Financeiro — Server Component + módulo finance/
 │       ├── activity/             # Feed de eventos (mock)
@@ -114,7 +116,7 @@ umbra-bot/
 ├── public/
 │   └── sw.js                     # Service Worker para Web Push
 ├── supabase/migrations/          # 27 migrações SQL (000 a 026)
-├── vercel.json                   # Cron job: /api/cron/process-withdrawals a cada hora
+├── vercel.json                   # Cron job: /api/cron/process-withdrawals todo dia às 06:00 UTC (Hobby: 1x/dia)
 ├── sentry.*.config.ts            # Sentry (client com Replay / server com tracePropagation)
 ├── instrumentation.ts            # Next.js hook para Sentry server
 ├── middleware.ts                 # Auth guard + security headers + CSP (unsafe-eval só em dev)
