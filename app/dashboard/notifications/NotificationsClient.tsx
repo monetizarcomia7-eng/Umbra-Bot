@@ -500,8 +500,10 @@ export function NotificationsClient({
       setSaved(true)
       setTimeout(() => setSaved(false), 2500)
     } catch (err) {
-      setError('Erro ao salvar. Tente novamente.')
-      setTimeout(() => setError(''), 3000)
+      console.error('[NotificationsClient] save error:', err)
+      const msg = err instanceof Error ? err.message : String(err)
+      setError(msg.length < 80 ? msg : 'Erro ao salvar. Tente novamente.')
+      setTimeout(() => setError(''), 5000)
     } finally {
       setSaving(false)
     }
