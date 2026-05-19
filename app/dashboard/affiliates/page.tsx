@@ -12,6 +12,10 @@ const DEFAULT_CONFIG: RawConfig = {
   recurringCommissions: false,
   autoPayment: false,
   minPayout: 100,
+  active: true,
+  programName: '',
+  programDescription: '',
+  benefits: [],
 }
 
 export default async function AffiliatesPage() {
@@ -53,6 +57,10 @@ export default async function AffiliatesPage() {
     recurringCommissions: Boolean(configRes.data.recurring_commissions),
     autoPayment:          Boolean(configRes.data.auto_payment),
     minPayout:            Number(configRes.data.min_payout),
+    active:               configRes.data.active !== false,
+    programName:          (configRes.data.program_name as string | null) ?? '',
+    programDescription:   (configRes.data.program_description as string | null) ?? '',
+    benefits:             (configRes.data.benefits as string[] | null) ?? [],
   } : DEFAULT_CONFIG
 
   const appUrl = process.env.APP_URL ?? 'https://umbra.bot'

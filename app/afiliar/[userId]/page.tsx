@@ -4,6 +4,10 @@ import { Check } from 'lucide-react'
 
 interface PublicProgram {
   found: boolean
+  active: boolean
+  program_name: string
+  program_description: string
+  benefits: string[]
   percentage: number
   cookie_window: number
   upsell_commissions: boolean
@@ -24,6 +28,20 @@ function ProgramNotFound() {
   )
 }
 
+function ProgramClosed({ name }: { name: string }) {
+  return (
+    <div className="min-h-screen bg-background flex flex-col items-center justify-center px-4 text-center">
+      <div className="text-[40px] mb-4">🔒</div>
+      <div className="text-[20px] font-semibold text-text mb-2">Programa fechado</div>
+      <div className="text-[14px] text-text-muted max-w-xs">
+        {name
+          ? <><strong className="text-text">{name}</strong> não está aceitando novas candidaturas no momento.</>
+          : 'Este programa de afiliados não está aceitando novas candidaturas no momento.'}
+      </div>
+    </div>
+  )
+}
+
 export default async function AfiliarPage({ params }: { params: Promise<{ userId: string }> }) {
   const { userId } = await params
 
@@ -34,15 +52,21 @@ export default async function AfiliarPage({ params }: { params: Promise<{ userId
 
   const p = program as PublicProgram | null
   if (!p || !p.found) return <ProgramNotFound />
+  if (!p.active) return <ProgramClosed name={p.program_name} />
 
-  const benefits: string[] = [
-    `Cookie de ${p.cookie_window} dias`,
-    'Pagamento via Pix',
-    ...(p.upsell_commissions ? ['Comissão em upsells'] : []),
-    ...(p.recurring_commissions ? ['Comissão em renovações'] : []),
-    'Relatórios de cliques e vendas em tempo real',
-    'Link exclusivo de divulgação',
-  ]
+  const programName = p.program_name || 'Programa de Afiliados'
+  const programDescription = p.program_description || 'Divulgue nossos produtos e ganhe comissão por cada venda confirmada.'
+
+  const benefits: string[] = p.benefits && p.benefits.length > 0
+    ? p.benefits
+    : [
+        `Cookie de ${p.cookie_window} dias`,
+        'Pagamento via Pix',
+        ...(p.upsell_commissions ? ['Comissão em upsells'] : []),
+        ...(p.recurring_commissions ? ['Comissão em renovações'] : []),
+        'Relatórios de cliques e vendas em tempo real',
+        'Link exclusivo de divulgação',
+      ]
 
   return (
     <div className="min-h-screen bg-background flex flex-col items-center justify-start pt-12 pb-16 px-4">
@@ -58,13 +82,20 @@ export default async function AfiliarPage({ params }: { params: Promise<{ userId
         {/* Commission hero */}
         <div className="bg-primary rounded-2xl px-6 py-8 text-center mb-4 shadow-lg">
           <div className="text-[13px] font-semibold text-primary-fg/70 uppercase tracking-wider mb-2">
-            Programa de Afiliados
+            {programName}
           </div>
           <div className="text-[64px] font-bold text-primary-fg leading-none tracking-tight">
             {p.percentage}%
           </div>
           <div className="text-[15px] text-primary-fg/80 mt-2">de comissão por venda confirmada</div>
         </div>
+
+        {/* Description */}
+        {programDescription && (
+          <div className="bg-surface border border-border rounded-2xl px-5 py-4 mb-4 text-[13px] text-text-muted leading-relaxed">
+            {programDescription}
+          </div>
+        )}
 
         {/* Benefits */}
         <div className="bg-surface border border-border rounded-2xl p-5 mb-4">

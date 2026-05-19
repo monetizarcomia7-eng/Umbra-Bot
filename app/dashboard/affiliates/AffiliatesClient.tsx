@@ -9,7 +9,7 @@ import {
   Search, CheckCircle2, UsersRound, UserPlus, ShoppingBag,
   Wallet, ExternalLink, MoreHorizontal, Check, Copy, X,
   Send, Zap, Link2, ChevronLeft, ChevronRight,
-  ChevronDown, Edit2, Pause, Play, Archive, Trash2, Loader2,
+  ChevronDown, Edit2, Pause, Play, Archive, Trash2, Loader2, Plus,
 } from 'lucide-react'
 
 /* ── Exported types (for page.tsx) ────────────────────────── */
@@ -49,6 +49,10 @@ export interface RawConfig {
   recurringCommissions: boolean
   autoPayment: boolean
   minPayout: number
+  active: boolean
+  programName: string
+  programDescription: string
+  benefits: string[]
 }
 
 export interface RawBot {
@@ -726,6 +730,40 @@ function ProgramConfigSection({ config, onSave }: {
         }
       >
         <div className="space-y-6 mt-1">
+          <Section title="Página pública" description="Aparece na URL que os candidatos acessam para se inscrever.">
+            <div className="space-y-3">
+              <ToggleRow
+                label="Aceitar novas candidaturas"
+                description="Quando desativado, a página exibe mensagem de programa fechado e o formulário fica oculto."
+                checked={local.active}
+                onChange={(v) => update({ active: v })}
+              />
+              <div>
+                <label className="block text-[12.5px] font-medium text-text mb-1.5">Nome do programa</label>
+                <input
+                  type="text"
+                  value={local.programName}
+                  onChange={(e) => update({ programName: e.target.value })}
+                  placeholder="Programa de Afiliados"
+                  maxLength={80}
+                  className="w-full h-10 px-3 bg-surface border border-border rounded-lg text-[13px] text-text placeholder:text-text-subtle focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50"
+                />
+              </div>
+              <div>
+                <label className="block text-[12.5px] font-medium text-text mb-1.5">Descrição</label>
+                <textarea
+                  value={local.programDescription}
+                  onChange={(e) => update({ programDescription: e.target.value })}
+                  placeholder="Divulgue nossos produtos e ganhe comissão por cada venda confirmada."
+                  rows={3}
+                  maxLength={300}
+                  className="w-full px-3 py-2 bg-surface border border-border rounded-lg text-[13px] text-text placeholder:text-text-subtle focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50 resize-none"
+                />
+                <div className="text-right text-[10.5px] text-text-subtle mt-0.5">{local.programDescription.length}/300</div>
+              </div>
+            </div>
+          </Section>
+
           <Section title="Comissão padrão" description="Percentual pago sobre o valor líquido de cada venda atribuída a um afiliado.">
             <div className="flex items-center gap-4">
               <input type="range" min={5} max={50} step={1} value={local.percentage}
@@ -779,6 +817,40 @@ function ProgramConfigSection({ config, onSave }: {
             </div>
           </Section>
 
+          <Section title="Benefícios" description="Lista exibida na página pública. Vazio = usa lista automática baseada nas suas configurações.">
+            <div className="space-y-2">
+              {local.benefits.map((b, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={b}
+                    onChange={(e) => {
+                      const arr = [...local.benefits]
+                      arr[i] = e.target.value
+                      update({ benefits: arr })
+                    }}
+                    placeholder={`Benefício ${i + 1}`}
+                    maxLength={100}
+                    className="flex-1 h-9 px-3 bg-surface border border-border rounded-lg text-[12.5px] text-text placeholder:text-text-subtle focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50"
+                  />
+                  <button
+                    onClick={() => update({ benefits: local.benefits.filter((_, j) => j !== i) })}
+                    className="w-8 h-8 flex items-center justify-center rounded-lg text-text-muted hover:text-danger hover:bg-danger-soft transition-colors shrink-0"
+                  >
+                    <X size={13} />
+                  </button>
+                </div>
+              ))}
+              <button
+                onClick={() => update({ benefits: [...local.benefits, ''] })}
+                disabled={local.benefits.length >= 8}
+                className="flex items-center gap-1.5 text-[12px] text-primary hover:opacity-80 font-medium disabled:opacity-40 disabled:pointer-events-none transition-opacity mt-1"
+              >
+                <Plus size={13} />Adicionar benefício
+              </button>
+            </div>
+          </Section>
+
           <Section title="Regras avançadas">
             <div className="space-y-3">
               <ToggleRow label="Comissão sobre upsells"
@@ -788,8 +860,22 @@ function ProgramConfigSection({ config, onSave }: {
                 description="Paga o afiliado em todas as renovações da assinatura."
                 checked={local.recurringCommissions} onChange={(v) => update({ recurringCommissions: v })} />
               <ToggleRow label="Pagamento automático"
-                description={`Quita comissões acima de ${fmtBRL(local.minPayout)} no dia 5 de cada mês.`}
+                description="Quita comissões automaticamente no dia 5 de cada mês."
                 checked={local.autoPayment} onChange={(v) => update({ autoPayment: v })} />
+              {local.autoPayment && (
+                <div className="flex items-center gap-2.5 pl-0 pb-1">
+                  <span className="text-[12px] text-text-muted">Valor mínimo:</span>
+                  <div className="relative">
+                    <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[11.5px] text-text-muted pointer-events-none">R$</span>
+                    <input
+                      type="number" min={10} max={10000} step={10}
+                      value={local.minPayout}
+                      onChange={(e) => update({ minPayout: Math.max(10, parseInt(e.target.value, 10) || 10) })}
+                      className="w-24 h-8 pl-8 pr-2 bg-surface border border-border rounded-lg text-[12.5px] text-right text-text focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50"
+                    />
+                  </div>
+                </div>
+              )}
             </div>
           </Section>
         </div>
@@ -798,6 +884,14 @@ function ProgramConfigSection({ config, onSave }: {
       <div className="space-y-4">
         <Card title="Como funciona" subtitle="Preview da configuração atual">
           <ul className="space-y-2.5 mt-1 text-[12px] text-text-muted leading-relaxed">
+            <li className="flex items-start gap-2">
+              {local.active
+                ? <Check size={12} className="text-success mt-0.5 shrink-0" />
+                : <X size={12} className="text-danger mt-0.5 shrink-0" />}
+              <span className={local.active ? '' : 'text-danger'}>
+                {local.active ? 'Programa aberto — aceita candidaturas.' : <><strong>Fechado</strong> — sem novas candidaturas.</>}
+              </span>
+            </li>
             <li className="flex items-start gap-2">
               <Check size={12} className="text-success mt-0.5 shrink-0" />
               <span>Afiliado recebe <strong className="text-text">{local.percentage}%</strong> do valor líquido de cada venda.</span>
@@ -811,7 +905,7 @@ function ProgramConfigSection({ config, onSave }: {
               ? <li className="flex items-start gap-2"><Check size={12} className="text-success mt-0.5 shrink-0" /><span>Renovações de assinatura também são remuneradas.</span></li>
               : <li className="flex items-start gap-2 opacity-60"><X size={12} className="mt-0.5 shrink-0" /><span>Sem comissão em renovações.</span></li>}
             {local.autoPayment
-              ? <li className="flex items-start gap-2"><Check size={12} className="text-success mt-0.5 shrink-0" /><span>Pagamentos automáticos no dia 5.</span></li>
+              ? <li className="flex items-start gap-2"><Check size={12} className="text-success mt-0.5 shrink-0" /><span>Pagamentos automáticos acima de <strong className="text-text">{fmtBRL(local.minPayout)}</strong> no dia 5.</span></li>
               : <li className="flex items-start gap-2 opacity-60"><X size={12} className="mt-0.5 shrink-0" /><span>Pagamento manual a cada ciclo.</span></li>}
           </ul>
         </Card>
@@ -1454,6 +1548,7 @@ export default function AffiliatesClient({ initialAffiliates, initialPayments, i
   // ── Save config
   async function handleSaveConfig(c: Config) {
     const supabase = createClient()
+    const cleanBenefits = c.benefits.map((b) => b.trim()).filter(Boolean)
     const { error } = await supabase.from('affiliate_config').upsert({
       user_id:               userId,
       percentage:            c.percentage,
@@ -1463,6 +1558,10 @@ export default function AffiliatesClient({ initialAffiliates, initialPayments, i
       recurring_commissions: c.recurringCommissions,
       auto_payment:          c.autoPayment,
       min_payout:            c.minPayout,
+      active:                c.active,
+      program_name:          c.programName.trim() || null,
+      program_description:   c.programDescription.trim() || null,
+      benefits:              cleanBenefits.length > 0 ? cleanBenefits : null,
     }, { onConflict: 'user_id' })
     if (error) { showToast('Erro ao salvar configuração.', 'error'); throw error }
     setConfig(c)
