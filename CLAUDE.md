@@ -60,7 +60,17 @@ umbra-bot/
 │   │   │   └── track/route.ts    # POST: registra eventos de funil (visited/cart_added/payment_initiated)
 │   │   │                         # Público (sem auth), CORS *, rate-limit 60/min por IP
 │   │   │                         # Usa RPC track_checkout_event (security definer, migração 041)
+│   │   ├── affiliates/
+│   │   │   └── apply/route.ts    # POST: candidatura pública ao programa de afiliados
+│   │   │                         # Público (sem auth), rate-limit 10/h por IP
+│   │   │                         # Usa RPC submit_affiliate_application (security definer, migração 054)
 │   │   └── migrations/route.ts   # Protegida por ADMIN_EMAIL
+│   ├── afiliar/
+│   │   └── [userId]/
+│   │       ├── page.tsx          # Página pública do programa de afiliados (sem auth)
+│   │       │                     # Server Component: chama get_public_affiliate_program (RPC anon)
+│   │       │                     # Se userId inválido ou programa não encontrado → ProgramNotFound
+│   │       └── ApplicationForm.tsx # Client Component: formulário de candidatura → POST /api/affiliates/apply
 │   └── dashboard/
 │       ├── page.tsx              # Server Component async — busca KPIs 30d no servidor, passa initialData ao DashboardClient
 │       ├── _components/
@@ -89,8 +99,8 @@ umbra-bot/
 │       │       └── CohortTable.tsx   # Coorte semanal S0–S5 com heatmap color-mix
 │       ├── alerts/               # Alertas (mock)
 │       ├── affiliates/           # Afiliados — dados reais do Supabase (SSR + Client)
-│       │   ├── page.tsx          # Server Component: SSR affiliates + payments + config em paralelo
-│       │   └── AffiliatesClient.tsx # Client Component: CRUD, pagamentos, configuração, PostHog
+│       │   ├── page.tsx          # Server Component: SSR affiliates + payments + config em paralelo; passa appUrl
+│       │   └── AffiliatesClient.tsx # Client Component: CRUD, pagamentos, config, pending, PostHog
 │       ├── flows/                # Fluxos de venda (placeholder)
 │       ├── redirects/            # Redirecionadores (mock)
 │       ├── remarketing/          # Remarketing (mock)
@@ -147,7 +157,7 @@ umbra-bot/
 │   └── DashboardProvider.tsx     # Contexto global: user, alerts, botsCount, logout — 1 fetch
 ├── public/
 │   └── sw.js                     # Service Worker para Web Push
-├── supabase/migrations/          # 53 migrações SQL (000 a 053)
+├── supabase/migrations/          # 54 migrações SQL (000 a 054)
 ├── vercel.json                   # 3 Cron jobs: process-withdrawals (06:00 UTC) + cleanup-activity (02:00 UTC) + check-bots (a cada 30 min)
 ├── sentry.*.config.ts            # Sentry (client com Replay / server com tracePropagation)
 ├── instrumentation.ts            # Next.js hook para Sentry server
@@ -333,7 +343,13 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Afiliados — 5 eventos PostHog: affiliate_added/status_changed/paid/config_saved/link_copied | ✅ Implementado |
 | Afiliados — NoDataState quando tabela vazia (sem mock) | ✅ Implementado |
 | Afiliados — KPIs reais computados dos dados (sem deltas hardcoded) | ✅ Implementado |
-| Afiliados — migração 053: user_id + RLS + affiliate_config | ✅ Migração criada |
+| Afiliados — migração 053: user_id + RLS + affiliate_config | ✅ Aplicada |
+| Afiliados — página pública /afiliar/[userId]: info do programa + formulário de candidatura | ✅ Implementado |
+| Afiliados — status 'pending' para candidaturas + Aprovar/Recusar no menu | ✅ Implementado |
+| Afiliados — botão "Página pública" funcional (link + split-button copiar URL) | ✅ Implementado |
+| Afiliados — badge de candidaturas pendentes na PageHeader | ✅ Implementado |
+| Afiliados — filtro "Pendentes" na tabela de afiliados | ✅ Implementado |
+| Afiliados — migração 054: status pending + RPCs get_public_affiliate_program + submit_affiliate_application | ✅ Aplicada |
 | Bots — CRUD real | ❌ Ainda mock |
 | Gateways — configuração real de credenciais | ❌ Ainda mock |
 | Clientes — Server Component SSR + dados reais (sem mock) | ✅ Funcional |
@@ -1258,14 +1274,16 @@ AffiliatesPage (Server Component)
         initialPayments: RawPayment[]
         initialConfig: RawConfig
         userId: string
+        appUrl: string  ← process.env.APP_URL ?? 'https://umbra.bot'
 
 AffiliatesClient (Client Component)
   ├── affiliates state: initialAffiliates.map(mapAffiliate)
   ├── payments state: initialPayments.map(mapPayment)
   ├── config state: initialConfig
   ├── KPIs computados dos dados reais:
-  │     totalAffiliates, activeAffiliates, totalClicks, totalSales,
-  │     totalCommission, pendingAmount (pagamentos pendentes)
+  │     activeCount, pendingApps (candidaturas pending),
+  │     totalSales, totalComm, pendingCount, pendingTotal
+  │     publicPageUrl = appUrl + '/afiliar/' + userId
   ├── handleAdd: INSERT em affiliates → usa UUID retornado do banco → prepend no state
   │     track('affiliate_added', { commission_pct })
   ├── handleEdit: UPDATE em affiliates → atualiza state inline
@@ -1277,10 +1295,18 @@ AffiliatesClient (Client Component)
   ├── handlePay: batch UPDATE affiliate_payments (status='paid', paid_at=now)
   │     await Promise.all de N updates → toast de erro/sucesso
   │     track('affiliate_paid', { count, total })
+  ├── Botão "Página pública": split-button = link + botão copiar URL
+  │     link aponta para publicPageUrl (appUrl/afiliar/userId)
+  │     botão copiar: navigator.clipboard.writeText + feedback "✓"
+  ├── Badge de candidaturas pendentes na PageHeader quando pendingApps > 0
+  │     clica no badge → muda tab para 'affiliates'
   ├── Tabela de afiliados:
   │     colunas: avatar+nome, status badge, comissão (R$), vendas, cliques,
-  │     conversão (%), link, menu MoreHorizontal (Edit/Pause/Archive/Delete)
-  ├── AffiliateActionsMenu: Edit | Pause/Ativar | Arquivar/Reativar | Apagar (confirmação modal)
+  │     conversão (%), link, menu MoreHorizontal
+  │     filtro de status: Todos | Ativos | Pausados | Arquivados | Pendentes
+  ├── AffiliateActionsMenu:
+  │     status 'pending': Aprovar (→ active) | Recusar (→ delete)
+  │     status outros: Edit | Pause/Ativar | Arquivar/Reativar | Apagar
   ├── CopyableLink: ícone de cópia + feedback visual "Copiado!"
   │     track('affiliate_link_copied', {})
   ├── AddAffiliateModal: nome, email, slug (auto-gerado), comissão
@@ -1334,6 +1360,60 @@ const DEFAULT_CONFIG: RawConfig = {
   autoPayment: false,
   minPayout: 100,
 }
+```
+
+### Status de afiliados
+
+| status | Label | Descrição |
+|---|---|---|
+| `active` | Ativo | Afiliado aprovado e divulgando |
+| `paused` | Pausado | Comissões suspensas temporariamente |
+| `archived` | Arquivado | Inativo, mantido no histórico |
+| `pending` | Pendente | Candidatura via página pública aguardando aprovação |
+
+Ações do menu por status:
+- **pending**: Aprovar (→ active) ou Recusar (DELETE)
+- **outros**: Editar, Pausar/Ativar, Arquivar/Reativar, Apagar
+
+### Página pública de candidaturas — `/afiliar/[userId]`
+
+```
+app/afiliar/[userId]/
+  ├── page.tsx          # Server Component público (sem auth no middleware)
+  │                     # Valida UUID → chama get_public_affiliate_program(userId)
+  │                     # found=false → ProgramNotFound (sem auth redirect)
+  │                     # Renderiza: hero com % comissão, lista de benefícios, ApplicationForm
+  └── ApplicationForm.tsx # Client Component — form nome + email
+                          # POST /api/affiliates/apply → { userId, name, email }
+                          # Estados: idle | loading | success | error | duplicate
+                          # Mensagens em português
+
+app/api/affiliates/apply/route.ts
+  ├── Público (sem auth), rate limit 10/h por IP (rateLimit de lib/rate-limit)
+  ├── Valida UUID userId + nome (2–120 chars) + e-mail
+  └── Chama RPC submit_affiliate_application(p_user_id, p_name, p_email)
+        → security definer, bypass RLS, grant to anon
+        → retorna { success: true } ou { success: false, error: 'already_applied' | 'invalid_program' }
+```
+
+### RPCs públicas — migração 054
+
+```sql
+-- Retorna info do programa (grant to anon — sem auth necessária)
+get_public_affiliate_program(p_user_id uuid) → json
+  { found, percentage, cookie_window, upsell_commissions, recurring_commissions }
+  -- LEFT JOIN affiliate_config: found=false quando usuário não configurou o programa
+  -- Usa DEFAULT quando não há config (percentage=30, cookie_window=30)
+
+-- Insere candidatura como pending (grant to anon — sem auth necessária)
+submit_affiliate_application(p_user_id, p_name, p_email) → json
+  -- Verifica que userId existe em auth.users
+  -- Rejeita e-mail duplicado para o mesmo user_id
+  -- Gera slug a partir do nome (regexp, sem unaccent)
+  -- Garante unicidade do slug com sufixo UUID se necessário
+  -- Busca commission_pct do affiliate_config (fallback: 30%)
+  -- INSERT com status='pending'
+  -- Retorna { success: true } ou { success: false, error: string }
 ```
 
 ### Eventos PostHog do módulo
