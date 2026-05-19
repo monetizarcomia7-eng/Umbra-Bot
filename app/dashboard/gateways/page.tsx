@@ -362,9 +362,9 @@ function PixTestModal({ open, onClose, g }: { open: boolean; onClose: () => void
     return () => { clearInterval(t); clearTimeout(r) }
   }, [state])
 
-  if (!g) return null
-
   const formatted = useMemo(() => (amount / 100).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }), [amount])
+
+  if (!g) return null
   function handleAmount(e: React.ChangeEvent<HTMLInputElement>) { const d = e.target.value.replace(/\D/g, ''); setAmount(parseInt(d || '0', 10)) }
 
   const footer = state === 'form' ? (
