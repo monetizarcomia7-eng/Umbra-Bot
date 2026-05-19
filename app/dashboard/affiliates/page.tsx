@@ -16,6 +16,7 @@ const DEFAULT_CONFIG: RawConfig = {
   programName: '',
   programDescription: '',
   benefits: [],
+  redirectUrl: '',
 }
 
 export default async function AffiliatesPage() {
@@ -61,6 +62,7 @@ export default async function AffiliatesPage() {
     programName:          (configRes.data.program_name as string | null) ?? '',
     programDescription:   (configRes.data.program_description as string | null) ?? '',
     benefits:             (configRes.data.benefits as string[] | null) ?? [],
+    redirectUrl:          (configRes.data.redirect_url as string | null) ?? '',
   } : DEFAULT_CONFIG
 
   const appUrl = process.env.APP_URL ?? 'https://umbra.bot'

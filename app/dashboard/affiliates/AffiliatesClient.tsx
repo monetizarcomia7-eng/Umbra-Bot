@@ -53,6 +53,7 @@ export interface RawConfig {
   programName: string
   programDescription: string
   benefits: string[]
+  redirectUrl: string
 }
 
 export interface RawBot {
@@ -760,6 +761,19 @@ function ProgramConfigSection({ config, onSave }: {
                   className="w-full px-3 py-2 bg-surface border border-border rounded-lg text-[13px] text-text placeholder:text-text-subtle focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50 resize-none"
                 />
                 <div className="text-right text-[10.5px] text-text-subtle mt-0.5">{local.programDescription.length}/300</div>
+              </div>
+              <div>
+                <label className="block text-[12.5px] font-medium text-text mb-1.5">URL de destino do link de afiliado</label>
+                <input
+                  type="url"
+                  value={local.redirectUrl}
+                  onChange={(e) => update({ redirectUrl: e.target.value })}
+                  placeholder="https://seu-checkout.com/produto"
+                  className="w-full h-10 px-3 bg-surface border border-border rounded-lg text-[13px] text-text placeholder:text-text-subtle focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50"
+                />
+                <div className="text-[11px] text-text-muted mt-1">
+                  Para onde o visitante é redirecionado ao clicar no link <span className="font-mono">umbra.bot/r/slug</span>. Deixe vazio para redirecionar à página inicial.
+                </div>
               </div>
             </div>
           </Section>
@@ -1562,6 +1576,7 @@ export default function AffiliatesClient({ initialAffiliates, initialPayments, i
       program_name:          c.programName.trim() || null,
       program_description:   c.programDescription.trim() || null,
       benefits:              cleanBenefits.length > 0 ? cleanBenefits : null,
+      redirect_url:          c.redirectUrl.trim() || null,
     }, { onConflict: 'user_id' })
     if (error) { showToast('Erro ao salvar configuração.', 'error'); throw error }
     setConfig(c)
