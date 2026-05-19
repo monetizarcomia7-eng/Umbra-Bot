@@ -34,23 +34,33 @@ function BreakdownRow({ label, value, sign, emphasize }: {
 
 function TransactionDetail({ tx }: { tx: Transaction }) {
   const d = tx.detail!
+  const hasPlatformFee = d.platformFee > 0
+  const hasUtm = !!(d.utmSource || d.utmCampaign)
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4 max-w-3xl">
       <div className="space-y-2">
         <div className="text-[10px] uppercase tracking-wider font-semibold text-text-subtle">Cliente & origem</div>
         <DetailRow label="Cliente" value={d.customer} />
-        <DetailRow label="E-mail"  value={d.email} />
+        {d.email !== '—' && <DetailRow label="E-mail"  value={d.email} />}
         <DetailRow label="Produto" value={d.product} />
-        <DetailRow label="Bot"     value={<span className="tnum">{d.bot}</span>} />
-        <DetailRow label="Fluxo"   value={d.flow} />
+        {d.bot  !== '—' && <DetailRow label="Bot"   value={<span className="tnum">{d.bot}</span>} />}
+        {d.flow !== '—' && <DetailRow label="Fluxo" value={d.flow} />}
+        {hasUtm && (
+          <>
+            {d.utmSource   && <DetailRow label="Origem (UTM)"   value={d.utmSource} />}
+            {d.utmCampaign && <DetailRow label="Campanha (UTM)" value={d.utmCampaign} />}
+          </>
+        )}
       </div>
       <div className="space-y-2">
         <div className="text-[10px] uppercase tracking-wider font-semibold text-text-subtle">Pagamento & repasse</div>
         <DetailRow label="Gateway" value={`${d.gateway} · ${d.method}`} />
         <div className="border-t border-border pt-2 space-y-1.5">
-          <BreakdownRow label="Valor bruto"                                                              value={d.gross}       sign="+" />
-          <BreakdownRow label={`Taxa do gateway (${fmtPct((d.gatewayFee  / d.gross) * 100)})`}          value={d.gatewayFee}  sign="−" />
-          <BreakdownRow label={`Comissão Umbra Bot (${fmtPct((d.platformFee / d.gross) * 100)})`}       value={d.platformFee} sign="−" />
+          <BreakdownRow label="Valor bruto"                                                                    value={d.gross}       sign="+" />
+          <BreakdownRow label={`Taxa do gateway (${fmtPct(d.gross > 0 ? (d.gatewayFee / d.gross) * 100 : 0)})`} value={d.gatewayFee}  sign="−" />
+          {hasPlatformFee && (
+            <BreakdownRow label={`Comissão Umbra Bot (${fmtPct(d.gross > 0 ? (d.platformFee / d.gross) * 100 : 0)})`} value={d.platformFee} sign="−" />
+          )}
           <div className="h-px bg-border my-1" />
           <BreakdownRow label="Valor líquido" value={d.net} sign="+" emphasize />
         </div>

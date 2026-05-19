@@ -7,7 +7,10 @@ import { DashboardLayout } from '@/components/dashboard/Layout'
 import { PageHeader } from '@/components/dashboard/PageHeader'
 import { exportCSV } from '@/lib/csv'
 import { useAnalytics } from '@/hooks/use-analytics'
-import type { FinanceData, RawTransaction, RawWithdrawal, Transaction, Withdrawal } from './types'
+import type {
+  FinanceData, RawTransaction, RawWithdrawal, RawFinanceBot, RawFinanceFlow, RawInvoice,
+  Transaction, Withdrawal, Invoice, TxDetail,
+} from './types'
 import { financeMock } from './mock-data'
 import { txTypeMap, txStatusMap, wdStatusMap, invStatusMap } from './constants'
 import { SummaryCard, Tabs, Btn } from './atoms'
@@ -28,22 +31,57 @@ const tabsDef = [
 const netOf = (r: RawTransaction) =>
   Number(r.net ?? (Number(r.amount) - Number(r.fee ?? 0)))
 
+const GATEWAY_LABEL: Record<string, string> = {
+  mercadopago: 'Mercado Pago',
+  pushinpay:   'Pushinpay',
+  pagarme:     'Pagar.me',
+  stripe:      'Stripe',
+}
+
 function buildLiveData(
-  rows: RawTransaction[],
+  rows:          RawTransaction[],
   rawWithdrawals: RawWithdrawal[],
-  period: Period,
+  period:        Period,
+  bots:          RawFinanceBot[],
+  flows:         RawFinanceFlow[],
+  rawInvoices:   RawInvoice[],
 ): FinanceData {
+  const botMap  = new Map(bots.map((b)  => [b.id, b.username ? `@${b.username}` : b.name]))
+  const flowMap = new Map(flows.map((f) => [f.id, f.name]))
+
   const txRows: Transaction[] = rows.map((row) => {
     const isRefund = row.status === 'refunded' || row.status === 'cancelled'
+    const gross    = Number(row.amount)
+    const fee      = Number(row.fee ?? 0)
+    const net      = netOf(row)
+
+    // Popula detalhe para todas as vendas aprovadas com dados reais do banco
+    const detail: TxDetail | undefined = (!isRefund && row.status === 'approved') ? {
+      customer:    row.customer_name  || '—',
+      email:       row.customer_email || '—',
+      product:     row.product_name   || '—',
+      gateway:     GATEWAY_LABEL[row.gateway ?? ''] ?? (row.gateway || '—'),
+      method:      'Pix',
+      gross,
+      gatewayFee:  fee,
+      platformFee: 0,
+      net,
+      bot:         row.bot_id  ? (botMap.get(row.bot_id)  ?? '—') : '—',
+      flow:        row.flow_id ? (flowMap.get(row.flow_id) ?? '—') : '—',
+      utmSource:   row.utm_source   ?? undefined,
+      utmCampaign: row.utm_campaign ?? undefined,
+    } : undefined
+
     return {
       id:     String(row.id),
       dt:     String(row.created_at),
       type:   isRefund ? 'refund' : 'sale',
       desc:   String(row.product_name || 'Venda'),
-      value:  isRefund ? -Math.abs(Number(row.amount)) : netOf(row),
+      value:  isRefund ? -Math.abs(gross) : net,
       status: row.status === 'approved' ? 'available'
             : row.status === 'pending'  ? 'pending'
             : 'completed',
+      detail,
     }
   })
 
@@ -106,6 +144,17 @@ function buildLiveData(
     }
   }
 
+  // Faturas: dados reais se existirem; mock para demonstração enquanto billing não está ativo
+  const invoices: Invoice[] = rawInvoices.length > 0
+    ? rawInvoices.map((inv) => ({
+        id:     inv.id,
+        period: inv.period,
+        value:  Number(inv.value),
+        due:    inv.due_date,
+        status: inv.status,
+      }))
+    : financeMock.invoices
+
   return {
     ...financeMock,
     summary: {
@@ -117,6 +166,7 @@ function buildLiveData(
     },
     transactions: txRows,
     withdrawals:  wdRows,
+    invoices,
   }
 }
 
@@ -131,10 +181,16 @@ const PERIOD_LABEL: Record<Period, string> = { '7d': '7d', '30d': '30d', '90d': 
 export function FinanceDashboard({
   initialTransactions,
   initialWithdrawals,
+  initialBots,
+  initialFlows,
+  initialInvoices,
   limitReached,
 }: {
   initialTransactions: RawTransaction[]
   initialWithdrawals:  RawWithdrawal[]
+  initialBots:         RawFinanceBot[]
+  initialFlows:        RawFinanceFlow[]
+  initialInvoices:     RawInvoice[]
   limitReached:        boolean
 }) {
   const router = useRouter()
@@ -144,8 +200,11 @@ export function FinanceDashboard({
   const { track } = useAnalytics()
 
   const m = useMemo(
-    () => buildLiveData(initialTransactions, initialWithdrawals, period),
-    [initialTransactions, initialWithdrawals, period],
+    () => buildLiveData(
+      initialTransactions, initialWithdrawals, period,
+      initialBots, initialFlows, initialInvoices,
+    ),
+    [initialTransactions, initialWithdrawals, period, initialBots, initialFlows, initialInvoices],
   )
 
   const since       = periodSince(period)
@@ -232,7 +291,7 @@ export function FinanceDashboard({
         <SummaryCard label="Comissões da plataforma"    value={m.summary.comissoesPlataforma}  delta={m.summary.deltas.comissoes} icon="percent"     />
       </div>
 
-      {/* Tabs + seletor de período lado a lado */}
+      {/* Tabs + seletor de período */}
       <div className="flex items-end justify-between border-b border-border mb-4">
         <Tabs
           className="border-b-0"

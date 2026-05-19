@@ -1,11 +1,11 @@
 -- ============================================================
 -- Umbra Bot — SQL PENDENTE (rodar no Supabase SQL Editor)
--- Migrações 037 a 042 — Analytics + SEGURANÇA flows RLS
+-- Migrações 037 a 043 — Analytics + SEGURANÇA flows RLS + Invoices
 --
 -- CRÍTICO: migração 040 fecha a vulnerabilidade de privacidade
 -- na tabela flows (RLS usando (true) → auth.uid() = user_id).
 --
--- Ordem de execução: 037 → 038 → 039 → 040 → 041
+-- Ordem de execução: 037 → 038 → 039 → 040 → 041 → 042 → 043
 -- Todos os comandos são idempotentes (if not exists / or replace).
 -- ============================================================
 
@@ -305,3 +305,39 @@ $$;
 grant execute
   on function public.analytics_filter_options(uuid)
   to authenticated;
+
+
+-- ────────────────────────────────────────────────────────────
+-- MIGRATION 043 — Tabela: invoices (faturas da plataforma)
+--
+-- Tabela pronta para o módulo de billing. Enquanto não há
+-- cobrança automática, fica vazia e o Financeiro usa dados
+-- de demonstração como fallback.
+-- ────────────────────────────────────────────────────────────
+
+create table if not exists public.invoices (
+  id            uuid          primary key default gen_random_uuid(),
+  user_id       uuid          not null references auth.users(id) on delete cascade,
+  period        text          not null,
+  period_start  date          not null,
+  period_end    date          not null,
+  value         numeric(10,2) not null default 0,
+  due_date      date          not null,
+  status        text          not null default 'pending'
+                  check (status in ('paid', 'pending', 'overdue')),
+  paid_at       timestamptz,
+  notes         text,
+  created_at    timestamptz   not null default now()
+);
+
+create index if not exists invoices_user_id_idx      on public.invoices (user_id);
+create index if not exists invoices_status_idx       on public.invoices (status);
+create index if not exists invoices_period_start_idx on public.invoices (user_id, period_start desc);
+
+alter table public.invoices enable row level security;
+
+drop policy if exists "invoices_owner" on public.invoices;
+create policy "invoices_owner" on public.invoices
+  for all
+  using  (auth.uid() = user_id)
+  with check (auth.uid() = user_id);

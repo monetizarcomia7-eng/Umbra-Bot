@@ -10,7 +10,7 @@ export function WithdrawalsSection({ data, onNew }: { data: Withdrawal[]; onNew:
   return (
     <Card
       title="Histórico de saques"
-      subtitle="Saques solicitados nos últimos 90 dias"
+      subtitle="Saques solicitados no período selecionado"
       action={<Btn variant="secondary" size="sm" iconName="arrow-up-from-line" onClick={onNew}>Solicitar saque</Btn>}
       noPadding
     >
