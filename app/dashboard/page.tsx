@@ -219,30 +219,28 @@ function EmptyState() {
   )
 }
 
-/* ── Page ────────────────────────────────────────────────────────────── */
+/* ── Page inner (runs inside DashboardProvider) ──────────────────────── */
 
 const fmtBRL = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 2 }).format(v)
 
-export default function DashboardPage() {
+function DashboardPageInner() {
   const { user, userLoaded, botsCount, refreshBotsCount } = useDashboard()
   const [period, setPeriod] = useState<Period>('30d')
   const [showWizard, setShowWizard] = useState(false)
 
-  const [kpiLoading,   setKpiLoading]   = useState(true)
-  const [chartLoading, setChartLoading] = useState(true)
+  const [kpiLoading,    setKpiLoading]    = useState(true)
+  const [chartLoading,  setChartLoading]  = useState(true)
   const [realKpi,       setRealKpi]       = useState<RealKpi | null>(null)
   const [realChartData, setRealChartData] = useState<ChartPoint[]>([])
   const [realFlows,     setRealFlows]     = useState<RealFlow[]>([])
 
-  // Decide whether to show onboarding wizard (once, per user)
   useEffect(() => {
     if (!userLoaded || botsCount === null || !user.id) return
     const seen = localStorage.getItem(`umbra_onboarding_seen_${user.id}`)
     if (botsCount === 0 && !seen) setShowWizard(true)
   }, [userLoaded, botsCount, user.id])
 
-  // Fetch real KPIs whenever period or botsCount changes
   useEffect(() => {
     if (botsCount === null || botsCount === 0) {
       setKpiLoading(false)
@@ -302,40 +300,38 @@ export default function DashboardPage() {
   }, [botsCount, period])
 
   const displayKpis: KpiItem[] = realKpi ? [
-    { id: 'revenue',    label: `Receita (${period})`,  value: fmtBRL(realKpi.revenue),               delta: '', trend: 'up',   Icon: TrendingUp  },
-    { id: 'sales',      label: 'Novas vendas',          value: realKpi.sales.toLocaleString('pt-BR'), delta: '', trend: 'up',   Icon: ShoppingBag },
-    { id: 'conversion', label: 'Taxa de conversão',     value: '—',                                   delta: '', trend: 'up',   Icon: Target      },
-    { id: 'bots',       label: 'Bots ativos',           value: String(realKpi.botsActive),            delta: '', trend: 'up',   Icon: Bot         },
+    { id: 'revenue',    label: `Receita (${period})`,  value: fmtBRL(realKpi.revenue),               delta: '', trend: 'up', Icon: TrendingUp  },
+    { id: 'sales',      label: 'Novas vendas',          value: realKpi.sales.toLocaleString('pt-BR'), delta: '', trend: 'up', Icon: ShoppingBag },
+    { id: 'conversion', label: 'Taxa de conversão',     value: '—',                                   delta: '', trend: 'up', Icon: Target      },
+    { id: 'bots',       label: 'Bots ativos',           value: String(realKpi.botsActive),            delta: '', trend: 'up', Icon: Bot         },
   ] : []
 
   const maxSales = realFlows.length > 0 ? Math.max(...realFlows.map((f) => f.sales)) : 1
 
-  // Loading: context not yet resolved
   if (!userLoaded || botsCount === null) {
     return (
-      <DashboardLayout>
+      <>
         <PageHeader title="Dashboard" subtitle="Visão geral da sua operação em tempo real." />
         <div className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
             {[1, 2, 3, 4].map((i) => <KpiSkeleton key={i} />)}
           </div>
         </div>
-      </DashboardLayout>
+      </>
     )
   }
 
-  // No bots yet — show empty state (wizard handled separately)
   if (botsCount === 0 && !showWizard) {
     return (
-      <DashboardLayout>
+      <>
         <PageHeader title="Dashboard" subtitle="Visão geral da sua operação em tempo real." />
         <EmptyState />
-      </DashboardLayout>
+      </>
     )
   }
 
   return (
-    <DashboardLayout>
+    <>
       {showWizard && user.id && (
         <OnboardingWizard
           userId={user.id}
@@ -359,7 +355,6 @@ export default function DashboardPage() {
       />
 
       <div className="space-y-4">
-        {/* KPI cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
           {kpiLoading
             ? [1, 2, 3, 4].map((i) => <KpiSkeleton key={i} />)
@@ -367,7 +362,6 @@ export default function DashboardPage() {
           }
         </div>
 
-        {/* Chart + top produtos */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
           <div className="lg:col-span-2 bg-surface border border-border rounded-xl p-5">
             <div className="flex items-center justify-between mb-4">
@@ -427,6 +421,14 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
+    </>
+  )
+}
+
+export default function DashboardPage() {
+  return (
+    <DashboardLayout>
+      <DashboardPageInner />
     </DashboardLayout>
   )
 }
