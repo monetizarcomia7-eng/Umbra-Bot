@@ -60,7 +60,18 @@ umbra-bot/
 │       ├── finance/              # Financeiro — Server Component + módulo finance/
 │       ├── activity/             # Feed de eventos (mock)
 │       ├── customers/            # Clientes + CSV export com analytics (mock)
-│       ├── analytics/            # Análises (mock)
+│       ├── analytics/            # Análises — dados reais do Supabase (arquitetura modular)
+│       │   ├── page.tsx          # Server Component: filtros via searchParams, SQL server-side, 2 batches paralelos
+│       │   ├── AnalyticsClient.tsx # Client Component fino (~130 linhas): useTransition + router.replace
+│       │   ├── _types.ts         # Tipos compartilhados: Period, Filters, AnalyticsSummary, etc.
+│       │   ├── _utils.ts         # Formatadores (fmtBRL, fmtNum, fmtPct) + getDateRange + PERIOD_LABELS
+│       │   ├── _server.ts        # Funções de computação Node.js-only: computeFunnel, computeByBot, etc.
+│       │   └── _components/      # 5 componentes isolados
+│       │       ├── FilterBar.tsx     # Barra com 5 selects + toggle Comparar + Limpar
+│       │       ├── FunnelChart.tsx   # Funil 4 etapas + conv. total + deltas de período
+│       │       ├── BarListCard.tsx   # Genérico <T>: bot | produto | fluxo | UTM
+│       │       ├── StatusCard.tsx    # Pizza Recharts — distribuição por status
+│       │       └── CohortTable.tsx   # Coorte semanal S0–S5 com heatmap color-mix
 │       ├── alerts/               # Alertas (mock)
 │       ├── affiliates/           # Afiliados (mock)
 │       ├── flows/                # Fluxos de venda (placeholder)
@@ -115,7 +126,7 @@ umbra-bot/
 │   └── DashboardProvider.tsx     # Contexto global: user, alerts, botsCount, logout — 1 fetch
 ├── public/
 │   └── sw.js                     # Service Worker para Web Push
-├── supabase/migrations/          # 27 migrações SQL (000 a 026)
+├── supabase/migrations/          # 40 migrações SQL (000 a 039)
 ├── vercel.json                   # Cron job: /api/cron/process-withdrawals todo dia às 06:00 UTC (Hobby: 1x/dia)
 ├── sentry.*.config.ts            # Sentry (client com Replay / server com tracePropagation)
 ├── instrumentation.ts            # Next.js hook para Sentry server
@@ -158,7 +169,7 @@ Browser
         └── middleware.ts        ← auth guard + security headers + CSP
 
 Next.js API Routes
-  ├── Supabase (PostgreSQL + RLS)  ← banco real, 27 tabelas
+  ├── Supabase (PostgreSQL + RLS)  ← banco real, 29 tabelas
   ├── Upstash Redis                ← rate limiting distribuído
   ├── Mercado Pago                 ← PIX payments
   ├── Telegram Bot API             ← webhooks
@@ -207,6 +218,7 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Dashboard top produtos reais (agrupado por product_name) | ✅ Funcional |
 | Seletor de período no Dashboard (7d/30d/90d) + cache useRef | ✅ Funcional |
 | DashboardProvider (contexto global, 1 fetch para user+alerts+bots) | ✅ Funcional |
+| Análises — módulo modular: filtros SQL server-side, coorte via RPC, cliente fino | ✅ Funcional |
 | Financeiro com dados reais do banco (Server Component) | ✅ Funcional |
 | Financeiro — módulo componentizado (10 arquivos) | ✅ Completo |
 | Financeiro — seletor de período (7d/30d/90d/Tudo) | ✅ Funcional |
@@ -234,7 +246,7 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Sentry (client Replay + server tracePropagation + captureException) | ✅ Configurado |
 | PostHog (14 eventos rastreados) | ✅ Configurado |
 | Vercel Analytics + Speed Insights | ✅ Ativo |
-| Schema do banco (27 tabelas) | ✅ Migrações SQL criadas e aplicadas |
+| Schema do banco (29 tabelas) | ✅ Migrações SQL criadas e aplicadas |
 | RLS em todas as tabelas | ✅ Configurado |
 | Content-Security-Policy (CSP sem unsafe-eval em produção) | ✅ Configurado no middleware |
 | Sistema de planos/billing | ❌ Não iniciado |
@@ -376,7 +388,169 @@ Delta calculado: `((atual - anterior) / anterior) * 100`, formatado como `+12.4%
 
 ---
 
-## 12. VARIÁVEIS DE AMBIENTE
+## 12. MÓDULO DE ANÁLISES
+
+### Arquivos
+
+```
+app/dashboard/analytics/
+  ├── page.tsx            # Server Component — filtros SQL + 2 batches paralelos + RPC coorte
+  ├── AnalyticsClient.tsx # Client Component fino (~130 linhas) — só UI + navegação URL
+  ├── _types.ts           # Period, Filters, AnalyticsSummary, BotStat, FlowStat, CohortRow, etc.
+  ├── _utils.ts           # fmtBRL, fmtNum, fmtPct, getDateRange, PERIOD_LABELS
+  ├── _server.ts          # computeFunnel, computeByBot, computeByProduct, computeByFlow,
+  │                       # computeByUtm, computeStatusBreakdown, computeExportRows,
+  │                       # transformCohortRpc — rodas no Node.js, zero custo no browser
+  └── _components/
+      ├── FilterBar.tsx   # 5 selects + toggle Comparar + Limpar — desabilita ao navegar (isPending)
+      ├── FunnelChart.tsx # 4 etapas + % entre etapas + conv. total + deltas vs. anterior
+      ├── BarListCard.tsx # Genérico <T> — bot | produto | fluxo | UTM (barra horizontal)
+      ├── StatusCard.tsx  # PieChart Recharts (donut) — status dos pagamentos
+      └── CohortTable.tsx # Tabela semanal S0–S5 com heatmap color-mix(oklab)
+```
+
+### Fluxo de dados
+
+```
+URL: /dashboard/analytics?period=30d&botId=xxx&compare=1
+
+AnalyticsPage (Server Component)
+  ├── Lê searchParams: period | botId | productName | flowId | utmSource | compare
+  ├── Aplica filtros SQL diretamente nas queries (gte/lte data, eq por bot/produto/fluxo/UTM)
+  ├── mainBatch (Promise.all — dispara em paralelo):
+  │     ├── transactions  → bot_id, flow_id, status, amount, net, fee,
+  │     │                   product_name, utm_source, utm_campaign, created_at
+  │     ├── contacts      → bot_id (filtrado por período + bot)
+  │     ├── checkout_events → event_type, bot_id, flow_id (filtrado)
+  │     ├── bots          → id, name, username
+  │     ├── flows         → id, name, executions, conversion (limit 50)
+  │     ├── RPC analytics_cohort_weekly(p_user_id, p_cohorts=6, p_weeks=6)  ← migração 039
+  │     ├── transactions distinct product_name (limit 200, all-time) — opções do dropdown
+  │     └── transactions distinct utm_source   (limit 200, all-time) — opções do dropdown
+  ├── prevBatch (Promise.all — só se compare=true && period!='all', dispara em paralelo):
+  │     ├── transactions  (período anterior, mesmos filtros de bot/produto/fluxo/UTM)
+  │     ├── contacts      (período anterior)
+  │     └── checkout_events (período anterior)
+  ├── Computa server-side via _server.ts:
+  │     computeFunnel | computeByBot | computeByProduct | computeByFlow |
+  │     computeByUtm | computeStatusBreakdown | computeExportRows | transformCohortRpc
+  └── Passa AnalyticsSummary (objeto serializado) para <AnalyticsClient summary={...} />
+
+AnalyticsClient (Client Component — ~130 linhas)
+  ├── Recebe summary: AnalyticsSummary — nenhuma computação client-side
+  ├── useTransition + router.replace → atualiza URL ao mudar filtro (sem reload)
+  ├── FilterBar: isPending=true desabilita interação durante navegação
+  └── Renderiza: FunnelChart | BarListCard×4 | StatusCard | CohortTable
+```
+
+### AnalyticsSummary — contrato Server → Client
+
+```ts
+interface AnalyticsSummary {
+  filters: Filters               // estado atual dos filtros (lido da URL)
+  funnel: FunnelStage[]          // 4 etapas do funil
+  byBot: BotStat[]               // top 5 bots por receita
+  byProduct: ProductStat[]       // top 5 produtos por receita
+  byFlow: FlowStat[]             // top 5 fluxos (isReal=true: dados reais; false: executions estático)
+  byUtm: UtmStat[]               // top 6 origens UTM por receita
+  statusBreakdown: StatusData[]  // distribuição por status (approved/pending/etc.)
+  cohortRows: CohortRow[]        // resultado da RPC analytics_cohort_weekly
+  botOptions: BotOption[]        // opções para o dropdown de bots
+  productOptions: string[]       // opções para o dropdown de produtos
+  flowOptions: FlowOption[]      // opções para o dropdown de fluxos
+  utmOptions: string[]           // opções para o dropdown de origens
+  exportRows: ExportRow[]        // linhas aprovadas prontas para CSV
+  error: string | null
+  limitReached: boolean
+  queryLimit: number             // 5000
+}
+```
+
+### Funil de conversão — fontes de dados
+
+| Etapa | Fonte | Populado por |
+|---|---|---|
+| Visitou | `checkout_events` where `event_type = 'visited'` | Páginas de checkout (a implementar) |
+| Iniciou conversa | tabela `contacts` (created_at no período) | Webhook Telegram `/start` (já existe) |
+| Adicionou ao carrinho | `checkout_events` where `event_type = 'cart_added'` | Rota PIX ao gerar cobrança (a implementar) |
+| Comprou | `transactions` where `status = 'approved'` | Webhook Mercado Pago (já existe) |
+
+### Coorte semanal (S0–S5) — migração 039
+
+- Função SQL `analytics_cohort_weekly(p_user_id, p_cohorts=6, p_weeks=6)` em `supabase/migrations/..._analytics_cohort_fn.sql`
+- Algoritmo: CTEs no PostgreSQL — approved → first_week → cohort_sizes (array_agg) → cross join generate_series → LEFT JOIN por semana target
+- Retorna ≤36 linhas (6 coortes × 6 semanas) em vez de enviar milhares de registros ao browser
+- `retention_pct = NULL` → célula vazia (semana ainda não decorrida)
+- `transformCohortRpc(rows, nWeeks)` em `_server.ts` converte as linhas da RPC em `CohortRow[]`
+- Células renderizadas com `color-mix(in oklab, var(--primary) %, transparent)` para heatmap
+
+### "Por fluxo de venda" — lógica de fallback
+
+1. Agrupa `curTxs` aprovadas com `flow_id !== null` → `isReal: true`, exibe receita em BRL
+2. Se nenhuma transaction tem `flow_id` (dados pré-migração 037) → usa `flows.executions`, `isReal: false`, exibe contagem
+3. O subtítulo e o formato (BRL vs número) mudam automaticamente via prop `format` do `BarListCard`
+
+### Novas colunas em `transactions` (migração 037)
+
+```sql
+utm_source   text  -- ex: 'instagram', 'google', 'whatsapp'
+utm_medium   text  -- ex: 'cpc', 'social', 'email'
+utm_campaign text  -- ex: 'lancamento-junho'
+utm_content  text  -- ex: 'banner-topo'
+flow_id      uuid  -- FK → flows(id) on delete set null
+```
+
+### Tabela `checkout_events` (migração 038)
+
+```sql
+id, user_id, bot_id, flow_id, contact_id, transaction_id,
+event_type  check in ('visited','conversation_started','cart_added','payment_initiated','paid'),
+product_name, utm_source, utm_medium, utm_campaign, metadata jsonb, created_at
+RLS: auth.uid() = user_id
+Índice composto: (user_id, event_type, created_at desc)
+```
+
+### Função SQL `analytics_cohort_weekly` (migração 039)
+
+```sql
+create or replace function public.analytics_cohort_weekly(
+  p_user_id uuid, p_cohorts int default 6, p_weeks int default 6
+)
+returns table (cohort_date date, cohort_label text, cohort_size bigint, week_index int, retention_pct int)
+language plpgsql stable security invoker
+-- CTEs: approved → first_week → cohort_sizes → all_purchase_weeks → cohort_week_offsets
+-- Identifica cliente por coalesce(customer_telegram_id, customer_email)
+-- Usa generate_series(0, p_weeks-1) para gerar offsets de semana
+-- LEFT JOIN + array_agg para checar se cliente voltou na semana target
+```
+
+### Limites e proteções
+
+- `QUERY_LIMIT = 5000` — aplicado em todas as queries de transactions/contacts/events
+- `limitReached = true` quando alguma query atinge 5000 → banner de aviso no cliente
+- `error` propagado do servidor → banner de erro vermelho no cliente
+- `checkoutEvents` falha silenciosamente se migração 038 não aplicada (`data ?? []`)
+- `cohortRes` falha silenciosamente se migração 039 não aplicada (`data ?? []`)
+- Casts `as unknown as Tipo[]` necessários porque novas colunas não estão nos tipos gerados pelo Supabase
+
+### Navegação por URL (filtros)
+
+```
+/dashboard/analytics                    ← filtros padrão (30d, tudo)
+/dashboard/analytics?period=7d          ← últimos 7 dias
+/dashboard/analytics?botId=abc&compare=1 ← bot específico + comparar anterior
+```
+- `handleFilterChange(patch)` monta `URLSearchParams` e chama `router.replace(..., { scroll: false })`
+- `useTransition` → `isPending=true` durante a navegação → `FilterBar` fica `opacity-60 pointer-events-none`
+- Parâmetros omitidos na URL = valor padrão (period=30d, botId=all, etc.)
+
+### CSV exportado (campos)
+
+`Data | Produto | Valor bruto (R$) | Taxa (R$) | Valor líquido (R$) | Bot | Fluxo | Origem (UTM) | Campanha (UTM)`
+
+---
+
+## 13. VARIÁVEIS DE AMBIENTE
 
 Obrigatórias para funcionamento básico:
 ```
@@ -400,7 +574,7 @@ Variáveis adicionais documentadas (além do básico):
 
 ---
 
-## 13. CONVENÇÕES
+## 14. CONVENÇÕES
 
 - Path alias `@/*` → raiz do projeto
 - Tailwind v4 com design tokens via CSS variables em `globals.css`
