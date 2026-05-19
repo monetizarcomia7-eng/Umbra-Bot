@@ -26,7 +26,7 @@ type EventMap = {
   }
   analytics_cohort_error:    { error: string }
   // Aba Atividade
-  activity_filter_changed:   { category: string; bot_filtered: boolean }
+  activity_filter_changed:   { category: string; bot_filtered: boolean; period?: string; search?: string }
   activity_live_toggled:     { live: boolean }
   // Aba Financeiro
   withdrawal_requested:      { amount: number; account_kind: string }

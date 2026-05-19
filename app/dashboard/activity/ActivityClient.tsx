@@ -11,7 +11,7 @@ import { cn } from '@/lib/utils'
 import {
   ShoppingBag, UserPlus, CheckCircle2, Wifi, XCircle, Undo2, WifiOff,
   Gauge, Bot, Webhook, GitBranch, UserX, Filter, Bell, Download,
-  X, ArrowUpRight, SearchX, Check, ChevronDown,
+  X, ArrowUpRight, SearchX, Check, ChevronDown, Search, Calendar,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
@@ -70,6 +70,8 @@ const iconMap: Record<string, LucideIcon> = {
   'search-x':       SearchX,
   'check':          Check,
   'chevron-down':   ChevronDown,
+  'search':         Search,
+  'calendar':       Calendar,
 }
 
 function Icon({ name, size = 16, className }: { name: string; size?: number; className?: string }) {
@@ -129,6 +131,29 @@ const categoryGroups: Record<string, string[] | 'critical' | null> = {
   'Apenas críticos':     'critical',
 }
 
+const PERIOD_OPTIONS = [
+  { value: 'all',   label: 'Todo o período' },
+  { value: 'today', label: 'Hoje'            },
+  { value: '7d',    label: 'Últimos 7 dias'  },
+  { value: '30d',   label: 'Últimos 30 dias' },
+]
+
+function getPeriodCutoff(period: string, now: number): number | null {
+  if (period === 'today') {
+    const d = new Date(now)
+    d.setHours(0, 0, 0, 0)
+    return d.getTime()
+  }
+  if (period === '7d')  return now - 7  * 24 * 60 * 60 * 1000
+  if (period === '30d') return now - 30 * 24 * 60 * 60 * 1000
+  return null
+}
+
+const LS = {
+  get: (k: string, def: string) => (typeof window !== 'undefined' ? (localStorage.getItem(k) ?? def) : def),
+  set: (k: string, v: string)   => { if (typeof window !== 'undefined') localStorage.setItem(k, v) },
+  del: (k: string)               => { if (typeof window !== 'undefined') localStorage.removeItem(k) },
+}
 
 /* ── Map raw DB row → ActivityEvent ──────────────────────── */
 
@@ -349,12 +374,16 @@ function DayGroup({ dayKey: key, events, now, newIds, botMap }: {
 function FilterBar({
   category, onCategoryChange,
   botId, onBotChange,
+  period, onPeriodChange,
+  search, onSearchChange,
   bots,
   live, onLiveToggle,
   eventsPerHour, onClear, hasFilters,
 }: {
   category: string; onCategoryChange: (v: string) => void
   botId: string; onBotChange: (v: string) => void
+  period: string; onPeriodChange: (v: string) => void
+  search: string; onSearchChange: (v: string) => void
   bots: BotOption[]
   live: boolean; onLiveToggle: () => void
   eventsPerHour: number; onClear: () => void; hasFilters: boolean
@@ -362,30 +391,36 @@ function FilterBar({
   const categoryOptions = Object.keys(categoryGroups).map((k) => ({ value: k, label: k }))
   const botOptions = [
     { value: 'all', label: 'Todos os bots' },
-    ...bots.map((b) => ({
-      value: b.id,
-      label: b.username ? `@${b.username}` : b.name,
-    })),
+    ...bots.map((b) => ({ value: b.id, label: b.username ? `@${b.username}` : b.name })),
   ]
 
   return (
     <div className="flex flex-wrap items-center gap-2 mb-4">
-      <Dropdown
-        icon="filter"
-        label="Categoria"
-        value={category}
-        options={categoryOptions}
-        onChange={onCategoryChange}
-        width={220}
-      />
-      <Dropdown
-        icon="bot"
-        label="Bot"
-        value={botId}
-        options={botOptions}
-        onChange={onBotChange}
-        width={220}
-      />
+      {/* Busca por texto */}
+      <div className="relative h-9" style={{ minWidth: 200 }}>
+        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none">
+          <Search size={13} />
+        </span>
+        <input
+          type="text"
+          placeholder="Buscar eventos…"
+          value={search}
+          onChange={(e) => onSearchChange(e.target.value)}
+          className="h-full w-full bg-surface border border-border rounded-lg text-[12.5px] text-text pl-8 pr-7 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50 placeholder:text-text-muted"
+        />
+        {search && (
+          <button
+            onClick={() => onSearchChange('')}
+            className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text"
+          >
+            <X size={12} />
+          </button>
+        )}
+      </div>
+
+      <Dropdown icon="filter" label="Categoria" value={category} options={categoryOptions} onChange={onCategoryChange} width={200} />
+      <Dropdown icon="bot"    label="Bot"       value={botId}    options={botOptions}       onChange={onBotChange}    width={190} />
+      <Dropdown icon="calendar" label="Período" value={period}   options={PERIOD_OPTIONS}   onChange={onPeriodChange} width={170} />
 
       {hasFilters && (
         <button
@@ -605,8 +640,10 @@ export default function ActivityClient({
   const [extras, setExtras] = useState<ActivityEvent[]>([])
   const [now, setNow] = useState(() => Date.now())
   const [live, setLive] = useState(true)
-  const [category, setCategory] = useState('Todas as categorias')
-  const [botId, setBotId] = useState('all')
+  const [category, setCategory] = useState(() => LS.get('umbra_act_category', 'Todas as categorias'))
+  const [botId,    setBotId]    = useState(() => LS.get('umbra_act_bot',      'all'))
+  const [period,   setPeriod]   = useState(() => LS.get('umbra_act_period',   'all'))
+  const [search,   setSearch]   = useState(() => LS.get('umbra_act_search',   ''))
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
   const [dbOffset, setDbOffset] = useState(initialEvents.length)
   const [hasMore, setHasMore] = useState(initialEvents.length >= PAGE_SIZE)
@@ -615,8 +652,10 @@ export default function ActivityClient({
   const sentinelRef = useRef<HTMLDivElement>(null)
   const initialNewIds = useRef(new Set<string>())
   const liveRef = useRef(live)
+  const periodRef = useRef(period)
 
   useEffect(() => { liveRef.current = live }, [live])
+  useEffect(() => { periodRef.current = period }, [period])
 
   // Tick now a cada 30s usando Date.now() real (sem incremento de valor fixo)
   useEffect(() => {
@@ -646,17 +685,20 @@ export default function ActivityClient({
   }, [])
 
 
-  // Carrega mais eventos do banco com offset
+  // Carrega mais eventos do banco com offset (respeita filtro de período)
   const loadMore = useCallback(async () => {
     if (isLoadingMore || !hasMore) return
     setIsLoadingMore(true)
     try {
       const supabase = createClient()
-      const { data } = await supabase
+      const cutoff = getPeriodCutoff(periodRef.current, Date.now())
+      let query = supabase
         .from('activity_events')
         .select('id, type, title, description, bot, bot_id, amount, created_at')
         .order('created_at', { ascending: false })
         .range(dbOffset, dbOffset + PAGE_SIZE - 1)
+      if (cutoff !== null) query = query.gte('created_at', new Date(cutoff).toISOString())
+      const { data } = await query
 
       if (data && data.length > 0) {
         setRows((prev) => [...prev, ...(data as unknown as RawActivityEvent[]).map(mapRaw)])
@@ -682,20 +724,26 @@ export default function ActivityClient({
   // Todos os eventos: realtime (extras) + banco/mock (rows)
   const allEvents = useMemo(() => [...extras, ...rows], [extras, rows])
 
-  // Filtro por categoria + bot
-  const filtered = useMemo(() => allEvents.filter((e) => {
-    const cat = categoryGroups[category]
-    if (cat === 'critical') {
-      if (eventTypes[e.type]?.severity !== 'danger') return false
-    } else if (Array.isArray(cat)) {
-      if (!cat.includes(e.type)) return false
-    }
-    if (botId !== 'all' && e.bot_id !== botId) return false
-    return true
-  }), [allEvents, category, botId])
+  // Filtro por período + categoria + bot + busca de texto
+  const filtered = useMemo(() => {
+    const cutoff = getPeriodCutoff(period, now)
+    const q = search.trim().toLowerCase()
+    return allEvents.filter((e) => {
+      if (cutoff !== null && e.dt < cutoff) return false
+      const cat = categoryGroups[category]
+      if (cat === 'critical') {
+        if (eventTypes[e.type]?.severity !== 'danger') return false
+      } else if (Array.isArray(cat)) {
+        if (!cat.includes(e.type)) return false
+      }
+      if (botId !== 'all' && e.bot_id !== botId) return false
+      if (q && !e.title.toLowerCase().includes(q) && !e.desc.toLowerCase().includes(q)) return false
+      return true
+    })
+  }, [allEvents, category, botId, period, search, now])
 
   // Resetar visível ao mudar filtros
-  useEffect(() => { setVisibleCount(PAGE_SIZE) }, [category, botId])
+  useEffect(() => { setVisibleCount(PAGE_SIZE) }, [category, botId, period, search])
 
   const visible = filtered.slice(0, visibleCount)
 
@@ -730,18 +778,32 @@ export default function ActivityClient({
     [allEvents, now],
   )
 
-  const hasFilters = category !== 'Todas as categorias' || botId !== 'all'
-  const onClear = () => { setCategory('Todas as categorias'); setBotId('all') }
+  const hasFilters = category !== 'Todas as categorias' || botId !== 'all' || period !== 'all' || search !== ''
+  const onClear = () => {
+    setCategory('Todas as categorias'); LS.del('umbra_act_category')
+    setBotId('all');                    LS.del('umbra_act_bot')
+    setPeriod('all');                   LS.del('umbra_act_period')
+    setSearch('');                      LS.del('umbra_act_search')
+  }
 
-  // Handlers com PostHog
+  // Handlers com PostHog + localStorage
   const handleCategoryChange = (v: string) => {
-    setCategory(v)
+    setCategory(v); LS.set('umbra_act_category', v)
     track('activity_filter_changed', { category: v, bot_filtered: botId !== 'all' })
   }
 
   const handleBotChange = (v: string) => {
-    setBotId(v)
+    setBotId(v); LS.set('umbra_act_bot', v)
     track('activity_filter_changed', { category, bot_filtered: v !== 'all' })
+  }
+
+  const handlePeriodChange = (v: string) => {
+    setPeriod(v); LS.set('umbra_act_period', v)
+    track('activity_filter_changed', { category, bot_filtered: botId !== 'all', period: v })
+  }
+
+  const handleSearchChange = (v: string) => {
+    setSearch(v); LS.set('umbra_act_search', v)
   }
 
   const handleLiveToggle = () => {
@@ -796,6 +858,10 @@ export default function ActivityClient({
             onCategoryChange={handleCategoryChange}
             botId={botId}
             onBotChange={handleBotChange}
+            period={period}
+            onPeriodChange={handlePeriodChange}
+            search={search}
+            onSearchChange={handleSearchChange}
             bots={bots}
             live={live}
             onLiveToggle={handleLiveToggle}
