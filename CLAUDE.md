@@ -23,6 +23,7 @@ umbra-bot/
 │   ├── globals.css               # Design tokens (light/dark), Tailwind v4
 │   ├── actions/
 │   │   └── bots.ts               # Server Action: salva bot com token criptografado (AES-256-GCM)
+│   │                             # userId lido do servidor via supabase.auth.getUser() — sem IDOR
 │   ├── (auth)/
 │   │   ├── login/page.tsx        # Login com email + Google OAuth
 │   │   ├── register/page.tsx     # Registro com email + Google OAuth
@@ -38,14 +39,21 @@ umbra-bot/
 │   │   │   ├── pix/route.ts      # Cria pagamento PIX (Mercado Pago) + Sentry + analytics
 │   │   │   └── mercadopago-webhook/route.ts # Confirma pagamento (valida secret em prod)
 │   │   ├── withdrawals/
-│   │   │   └── route.ts          # POST: solicita saque (auth + rate limit 5/h + valida saldo)
+│   │   │   └── route.ts          # POST: solicita saque (auth + zod + rate limit 5/h + Sentry)
+│   │   ├── bank-accounts/
+│   │   │   ├── route.ts          # GET: lista contas; POST: cria conta (zod + Sentry)
+│   │   │   └── [id]/route.ts     # DELETE: remove conta (verifica user_id)
+│   │   ├── admin/
+│   │   │   └── migrate-tokens/route.ts  # POST: re-encripta tokens legados (ADMIN_MIGRATION_SECRET)
+│   │   ├── cron/
+│   │   │   └── process-withdrawals/route.ts  # GET: processa saques pendentes (CRON_SECRET, horário)
 │   │   ├── push/
 │   │   │   ├── subscribe/route.ts
 │   │   │   └── notify/route.ts
 │   │   ├── broadcasts/send/route.ts
 │   │   └── migrations/route.ts   # Protegida por ADMIN_EMAIL
 │   └── dashboard/
-│       ├── page.tsx              # Overview — KPIs reais + gráfico real + top produtos reais
+│       ├── page.tsx              # Overview — KPIs reais + deltas vs período anterior + gráfico + top produtos
 │       ├── bots/                 # Gerenciar bots (mock)
 │       ├── finance/              # Financeiro — Server Component + módulo finance/
 │       ├── activity/             # Feed de eventos (mock)
@@ -76,16 +84,16 @@ umbra-bot/
 │       ├── PageHeader.tsx
 │       ├── Button.tsx
 │       └── finance/              # Módulo completo do Financeiro (10 arquivos)
-│           ├── types.ts          # Interfaces: Transaction, Withdrawal, Invoice, Conta, etc.
-│           ├── formatters.ts     # fmtBRL, fmtDate, fmtDateTime, fmtTime, fmtPct
+│           ├── types.ts          # Transaction, Withdrawal, Invoice, BankAccount, RawTransaction, RawWithdrawal
+│           ├── formatters.ts     # fmtBRL, fmtBRLdec, fmtDate, fmtDateTime, fmtTime, fmtPct
 │           ├── constants.ts      # txTypeMap, txStatusMap, wdStatusMap, invStatusMap, filtros
-│           ├── mock-data.ts      # financeMock (saques e faturas mock enquanto tabelas não existem)
+│           ├── mock-data.ts      # financeMock (faturas mock; contas bancárias agora são reais)
 │           ├── atoms.tsx         # Icon, Badge, Card, Tabs, Modal, Dropdown, Btn, Spinner, etc.
-│           ├── FinanceDashboard.tsx  # Componente raiz do financeiro (client)
+│           ├── FinanceDashboard.tsx  # Componente raiz (client) — seletor de período 7d/30d/90d/Tudo
 │           ├── TransactionsSection.tsx # Tabela com filtros, paginação e detalhe expandível
-│           ├── WithdrawalsSection.tsx  # Tabela de saques
+│           ├── WithdrawalsSection.tsx  # Tabela de saques (filtrada pelo período selecionado)
 │           ├── InvoicesSection.tsx     # Tabela de faturas
-│           └── WithdrawModal.tsx       # Modal multi-step (form→confirm→success) com API real
+│           └── WithdrawModal.tsx       # Modal multi-step: self-fetch de bank_accounts, add/delete inline
 ├── hooks/
 │   ├── use-analytics.ts          # PostHog events tipados (14 eventos)
 │   ├── use-keyboard-shortcuts.ts # ⌘K, b, f, c, a, ?
@@ -93,6 +101,7 @@ umbra-bot/
 ├── lib/
 │   ├── utils.ts                  # cn()
 │   ├── crypto.ts                 # encryptToken / decryptToken — AES-256-GCM para tokens de bot
+│   ├── telegram.ts               # sendTelegramMessage() — centralizado (usado em 2 webhooks)
 │   ├── rate-limit.ts             # Redis (Upstash) + fallback memória
 │   ├── analytics-server.ts       # PostHog server-side capture
 │   ├── csv.ts                    # exportCSV()
@@ -104,10 +113,11 @@ umbra-bot/
 │   └── DashboardProvider.tsx     # Contexto global: user, alerts, botsCount, logout — 1 fetch
 ├── public/
 │   └── sw.js                     # Service Worker para Web Push
-├── supabase/migrations/          # 26 migrações SQL (000 a 025)
+├── supabase/migrations/          # 27 migrações SQL (000 a 026)
+├── vercel.json                   # Cron job: /api/cron/process-withdrawals a cada hora
 ├── sentry.*.config.ts            # Sentry (client com Replay / server com tracePropagation)
 ├── instrumentation.ts            # Next.js hook para Sentry server
-├── middleware.ts                 # Auth guard + security headers + CSP
+├── middleware.ts                 # Auth guard + security headers + CSP (unsafe-eval só em dev)
 └── .env.example                  # Todas as variáveis documentadas
 ```
 
@@ -126,6 +136,7 @@ umbra-bot/
 | Gráficos | Recharts | 3.x |
 | Ícones | Lucide React | — |
 | Tema | next-themes | — |
+| Validação | Zod v4 | 4.x |
 | Rate limit | @upstash/redis (prod) / Map in-memory (dev) | — |
 | Monitoring | Sentry + PostHog + Vercel Analytics | — |
 | Pagamentos | Mercado Pago (PIX) | — |
@@ -141,11 +152,11 @@ Browser
         ├── app/(auth)/          ← login, registro, forgot-password (Supabase Auth + Google OAuth)
         ├── app/auth/            ← callback OAuth, reset-password
         ├── app/dashboard/       ← 24 páginas (várias com dados reais)
-        ├── app/api/             ← 9 route handlers implementados
+        ├── app/api/             ← 12 route handlers implementados
         └── middleware.ts        ← auth guard + security headers + CSP
 
 Next.js API Routes
-  ├── Supabase (PostgreSQL + RLS)  ← banco real, 26 tabelas
+  ├── Supabase (PostgreSQL + RLS)  ← banco real, 27 tabelas
   ├── Upstash Redis                ← rate limiting distribuído
   ├── Mercado Pago                 ← PIX payments
   ├── Telegram Bot API             ← webhooks
@@ -189,14 +200,18 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Upload de avatar + evento avatar_updated | ✅ Funcional (Supabase Storage) |
 | Onboarding wizard (4 passos, aparece só 1x por usuário) | ✅ Funcional |
 | Dashboard KPIs reais (receita, vendas, bots ativos) | ✅ Funcional |
+| Dashboard KPI deltas (variação % vs período anterior) | ✅ Funcional |
 | Dashboard gráfico real (receita por dia do banco) | ✅ Funcional |
 | Dashboard top produtos reais (agrupado por product_name) | ✅ Funcional |
-| Seletor de período no Dashboard (7d/30d/90d) | ✅ Funcional |
+| Seletor de período no Dashboard (7d/30d/90d) + cache useRef | ✅ Funcional |
 | DashboardProvider (contexto global, 1 fetch para user+alerts+bots) | ✅ Funcional |
 | Financeiro com dados reais do banco (Server Component) | ✅ Funcional |
 | Financeiro — módulo componentizado (10 arquivos) | ✅ Completo |
-| Financeiro — filtros, paginação, exportação CSV | ✅ Funcional |
+| Financeiro — seletor de período (7d/30d/90d/Tudo) | ✅ Funcional |
+| Financeiro — filtros, paginação, exportação CSV (filtrada por período) | ✅ Funcional |
 | Modal de saque com API real (/api/withdrawals) | ✅ Funcional |
+| Contas bancárias reais no modal de saque (bank_accounts) | ✅ Funcional |
+| CRUD de contas bancárias (GET/POST/DELETE /api/bank-accounts) | ✅ Implementado |
 | CSV export (Financeiro + Clientes) + evento csv_exported | ✅ Funcional |
 | Atalhos de teclado | ✅ Funcional |
 | Busca global (14 tabelas, race-condition safe, sem any) | ✅ Funcional |
@@ -209,16 +224,17 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Webhook Telegram (descriptografa token) | ✅ Implementado (não testado em prod) |
 | PIX via Mercado Pago + Sentry + analytics | ✅ Implementado |
 | Webhook MP (valida secret em prod, descriptografa token) | ✅ Implementado |
-| Tabela withdrawals + API /api/withdrawals | ✅ Implementado |
+| Tabela withdrawals + API /api/withdrawals (zod + Sentry) | ✅ Implementado |
+| Cron job para processar saques pendentes (vercel.json, horário) | ✅ Implementado |
 | Broadcasts (disparador em massa) | ✅ Implementado |
 | Web Push (VAPID) | ✅ Implementado |
 | Rate limiting (Upstash Redis + fallback) | ✅ Funcional |
 | Sentry (client Replay + server tracePropagation + captureException) | ✅ Configurado |
 | PostHog (14 eventos rastreados) | ✅ Configurado |
 | Vercel Analytics + Speed Insights | ✅ Ativo |
-| Schema do banco (26 tabelas) | ✅ Migrações SQL criadas e aplicadas |
+| Schema do banco (27 tabelas) | ✅ Migrações SQL criadas e aplicadas |
 | RLS em todas as tabelas | ✅ Configurado |
-| Content-Security-Policy (CSP) | ✅ Configurado no middleware |
+| Content-Security-Policy (CSP sem unsafe-eval em produção) | ✅ Configurado no middleware |
 | Sistema de planos/billing | ❌ Não iniciado |
 | Editor de fluxos de venda | ❌ Não iniciado |
 | Afiliados (funcional) | ❌ Não iniciado |
@@ -280,7 +296,8 @@ DashboardLayout (components/dashboard/Layout.tsx)
 - Algoritmo: AES-256-GCM, chave 32 bytes via `BOT_TOKEN_ENCRYPTION_KEY` (64-char hex)
 - Formato no banco: `enc:<iv_hex>:<tag_hex>:<ciphertext_hex>`
 - Backward compatible: se o valor não começa com `enc:`, retorna como está (tokens legados)
-- Gerar chave: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
+- Gerar chave: `openssl rand -hex 32`
+- Migração de tokens legados: `POST /api/admin/migrate-tokens` (protegida por `ADMIN_MIGRATION_SECRET`)
 
 ### Webhook Mercado Pago
 
@@ -289,35 +306,102 @@ DashboardLayout (components/dashboard/Layout.tsx)
 
 ### CSP (Content-Security-Policy)
 
-Configurado em `middleware.ts`. Cobre: `default-src 'self'`, scripts, styles, imagens, fontes, conexões (Supabase, PostHog, Mercado Pago, Telegram, Vercel).
+- Configurado em `middleware.ts` via `buildCsp()`
+- `unsafe-eval` incluído **apenas em dev** (Next.js HMR) — removido em produção
+- Cobre: `default-src 'self'`, scripts, styles, imagens, fontes, conexões (Supabase, PostHog, Mercado Pago, Telegram, Vercel)
+
+### IDOR prevention
+
+- `saveBotAction` lê `userId` do servidor via `supabase.auth.getUser()` — nunca do cliente
+- APIs de bank-accounts validam `user_id` em todas as operações (select + delete com `.eq('user_id', user.id)`)
 
 ---
 
-## 10. VARIÁVEIS DE AMBIENTE
+## 10. MÓDULO FINANCEIRO
+
+### Fluxo de dados
+
+```
+FinancePage (Server Component)
+  └── busca transactions (limit 500) + withdrawals (limit 200) em paralelo
+  └── passa como initialTransactions / initialWithdrawals
+
+FinanceDashboard (Client Component)
+  ├── period state: '7d' | '30d' | '90d' | 'all'  (default: '30d')
+  ├── filteredTxs = transactions filtradas por period (client-side)
+  ├── filteredWds = withdrawals filtradas por period (client-side)
+  ├── summary cards = sempre ALL-TIME (saldo correto independente do período)
+  └── CSV export usa dados filtrados pelo período ativo
+
+WithdrawModal (Client Component — sem props de contas)
+  ├── self-fetch de GET /api/bank-accounts ao abrir
+  ├── permite adicionar nova conta inline (label + tipo + chave)
+  ├── permite deletar conta com botão hover (DELETE /api/bank-accounts/[id])
+  └── POST /api/withdrawals com account_id e account_label reais
+```
+
+### Tabela bank_accounts
+
+```sql
+-- migration 026
+id, user_id, label, pix_key, kind ('pix'|'conta'|'ted'), created_at
+RLS: usuário vê/gerencia apenas as próprias contas
+```
+
+---
+
+## 11. DASHBOARD KPIs — DELTAS
+
+O dashboard (`app/dashboard/page.tsx`) faz 3 queries em paralelo ao mudar o período:
+
+1. Transactions aprovadas do **período atual** (ex: últimos 30d)
+2. Contagem de bots ativos
+3. Transactions aprovadas do **período anterior** (ex: 30–60d atrás)
+
+Delta calculado: `((atual - anterior) / anterior) * 100`, formatado como `+12.4%` ou `-5.2%`.
+- Receita e Vendas mostram o badge colorido
+- Taxa de conversão e Bots ativos ficam sem delta (dados insuficientes para comparação)
+- Resultados cacheados por período via `useRef` — não re-fetcha ao alternar 7d/30d/90d
+
+---
+
+## 12. VARIÁVEIS DE AMBIENTE
 
 Obrigatórias para funcionamento básico:
 ```
 NEXT_PUBLIC_SUPABASE_URL
 NEXT_PUBLIC_SUPABASE_ANON_KEY
 APP_URL
-BOT_TOKEN_ENCRYPTION_KEY   # 64-char hex — gerar: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+BOT_TOKEN_ENCRYPTION_KEY   # 64-char hex — gerar: openssl rand -hex 32
 ```
 
 Para produção completa, ver `.env.example` — todas as variáveis estão documentadas lá.
 
+Variáveis adicionais documentadas (além do básico):
+- `MERCADOPAGO_ACCESS_TOKEN` / `MERCADOPAGO_WEBHOOK_SECRET`
+- `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN`
+- `CRON_SECRET` — protege `GET /api/cron/process-withdrawals`
+- `ADMIN_MIGRATION_SECRET` — protege `POST /api/admin/migrate-tokens`
+- `ADMIN_EMAIL` — protege `GET /api/migrations`
+- `NEXT_PUBLIC_VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_EMAIL`
+- `NEXT_PUBLIC_SENTRY_DSN` / `SENTRY_ORG` / `SENTRY_PROJECT` / `SENTRY_AUTH_TOKEN`
+- `NEXT_PUBLIC_POSTHOG_KEY` / `NEXT_PUBLIC_POSTHOG_HOST`
+
 ---
 
-## 11. CONVENÇÕES
+## 13. CONVENÇÕES
 
 - Path alias `@/*` → raiz do projeto
 - Tailwind v4 com design tokens via CSS variables em `globals.css`
 - Tema: `data-theme` attribute, gerenciado por `next-themes`
-- `cn()` em `lib/utils.ts` para class merging
+- `cn()` em `lib/utils.ts` para class merging (usa `tailwind-merge` + `clsx`)
 - ESLint habilitado no build (`ignoreDuringBuilds: false`)
 - TypeScript strict (`ignoreBuildErrors: false`)
+- **Zod v4**: usar `error:` (não `invalid_type_error:`) e `.issues` (não `.errors`) em `ZodError`
 - Rate limit: usar sempre `await rateLimit(key, limit, windowMs)` — função é assíncrona
 - Analytics server-side: `await captureEvent(userId, eventName, props)` de `lib/analytics-server`
 - Analytics client-side: `const { track } = useAnalytics()` de `hooks/use-analytics`
 - Sentry server: `Sentry.captureException(err, { extra: {...} })` nos paths de erro críticos
 - Tokens de bot: sempre usar `encryptToken()` ao salvar e `decryptToken()` ao usar
+- `sendTelegramMessage()` centralizado em `lib/telegram.ts` — não duplicar em route handlers
 - `useDashboard()` só pode ser chamado dentro de filhos de `DashboardLayout` — nunca no componente que renderiza o próprio `DashboardLayout`
