@@ -373,6 +373,7 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Afiliados — PIX route: lê cookie umbra_aff, valida IDOR, salva affiliate_id na transação | ✅ Implementado |
 | Afiliados — Webhook MP: credita sales++ e commission via RPC credit_affiliate_sale ao aprovar pagamento | ✅ Implementado |
 | Afiliados — migração 058: transactions.affiliate_id + RPC credit_affiliate_sale (security definer, anon) | ✅ Implementada |
+| Afiliados — link de afiliado: BASE_URL removido, url derivada de appUrl (sem https:// duplicado) | ✅ Corrigido |
 | Bots — CRUD real | ❌ Ainda mock |
 | Gateways — configuração real de credenciais | ❌ Ainda mock |
 | Clientes — Server Component SSR + dados reais (sem mock) | ✅ Funcional |
@@ -1342,7 +1343,11 @@ AffiliatesClient (Client Component)
   │     ao confirmar: chama handleApprove(id, JSON.stringify({ bots, products }))
   │     salva seleção em affiliates.notes como JSON
   ├── CopyableLink: ícone de cópia + feedback visual "Copiado!"
+  │     url = `${appUrl}/r/${slug}` — URL completa com protocolo (sem prefixo manual)
+  │     navigator.clipboard.writeText(url) — não adiciona https:// (já está na url)
   │     track('affiliate_link_copied', {})
+  ├── mapAffiliate(row, appUrl): recebe appUrl como 2º parâmetro — sem BASE_URL hardcoded
+  │     url: `${appUrl}/r/${row.slug}` — correto para qualquer domínio
   ├── AddAffiliateModal: nome, email, slug (auto-gerado), comissão
   ├── EditAffiliateModal: editar nome, email, slug, comissão, método de pagamento
   ├── DeleteConfirmModal: confirmação antes de deletar
