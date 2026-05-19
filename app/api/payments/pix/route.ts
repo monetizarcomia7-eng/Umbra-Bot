@@ -6,6 +6,8 @@ import { captureEvent } from '@/lib/analytics-server'
 import { getMercadoPagoToken } from '@/lib/gateway'
 import * as Sentry from '@sentry/nextjs'
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 const pixSchema = z.object({
   amount:               z.number({ error: 'Valor deve ser um número.' })
                          .positive('Valor deve ser maior que zero.')
@@ -67,6 +69,21 @@ export async function POST(request: NextRequest) {
     customer_telegram_id, bot_id, flow_id, description,
     utm_source, utm_medium, utm_campaign, utm_content,
   } = parsed.data
+
+  // Lê cookie de atribuição de afiliado (setado por /r/[slug])
+  let affiliateId: string | null = null
+  const affCookie = request.cookies.get('umbra_aff')?.value ?? null
+  if (affCookie && UUID_RE.test(affCookie)) {
+    // Valida que o afiliado pertence ao programa do mesmo user_id (previne IDOR)
+    const { data: aff } = await supabase
+      .from('affiliates')
+      .select('id')
+      .eq('id', affCookie)
+      .eq('user_id', user.id)
+      .eq('status', 'active')
+      .maybeSingle()
+    if (aff) affiliateId = aff.id
+  }
 
   // Create payment on Mercado Pago
   const mpRes = await fetch('https://api.mercadopago.com/v1/payments', {
@@ -131,6 +148,7 @@ export async function POST(request: NextRequest) {
       utm_medium:            utm_medium ?? null,
       utm_campaign:          utm_campaign ?? null,
       utm_content:           utm_content ?? null,
+      affiliate_id:          affiliateId,
     })
     .select('id')
     .single()

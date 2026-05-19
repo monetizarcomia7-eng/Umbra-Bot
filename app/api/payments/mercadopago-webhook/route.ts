@@ -66,7 +66,7 @@ export async function POST(request: NextRequest) {
   // Find our transaction by gateway_payment_id
   const { data: tx } = await supabase
     .from('transactions')
-    .select('id, user_id, bot_id, flow_id, customer_telegram_id, customer_name, amount, product_name, status')
+    .select('id, user_id, bot_id, flow_id, customer_telegram_id, customer_name, amount, net, product_name, status, affiliate_id')
     .eq('gateway_payment_id', String(paymentId))
     .eq('gateway', 'mercadopago')
     .single()
@@ -106,7 +106,27 @@ export async function POST(request: NextRequest) {
       if (error) Sentry.captureException(error, { extra: { txId: tx.id, context: 'mp_webhook_paid_event' } })
     })
 
-    // 2. Log de atividade
+    // 2. Credita comissão ao afiliado (se a transação veio de um link de afiliado)
+    const affId = (tx as { affiliate_id?: string | null }).affiliate_id ?? null
+    if (affId) {
+      const { data: aff } = await supabase
+        .from('affiliates')
+        .select('commission_pct')
+        .eq('id', affId)
+        .maybeSingle()
+
+      if (aff) {
+        const commission = Number(tx.net ?? tx.amount) * Number(aff.commission_pct) / 100
+        await supabase.rpc('credit_affiliate_sale', {
+          p_affiliate_id: affId,
+          p_commission:   Math.round(commission * 100) / 100,
+        }).then(({ error }) => {
+          if (error) Sentry.captureException(error, { extra: { txId: tx.id, affId, context: 'mp_webhook_affiliate_commission' } })
+        })
+      }
+    }
+
+    // 4. Log de atividade
     const { error: activityError } = await supabase.from('activity_events').insert({
       user_id:     tx.user_id,
       bot_id:      tx.bot_id,
@@ -119,7 +139,7 @@ export async function POST(request: NextRequest) {
       Sentry.captureException(activityError, { extra: { txId: tx.id, context: 'mp_webhook_activity' } })
     }
 
-    // 3. Alerta para o operador no dashboard
+    // 5. Alerta para o operador no dashboard
     await supabase.from('alerts').insert({
       user_id:     tx.user_id,
       type:        'sale',
@@ -130,7 +150,7 @@ export async function POST(request: NextRequest) {
       if (error) Sentry.captureException(error, { extra: { txId: tx.id, context: 'mp_webhook_alert' } })
     })
 
-    // 4. Mensagem de confirmação para o comprador via Telegram
+    // 6. Mensagem de confirmação para o comprador via Telegram
     if (tx.customer_telegram_id && tx.bot_id) {
       const { data: bot } = await supabase
         .from('bots')
