@@ -135,7 +135,10 @@ umbra-bot/
 │       ├── biolink/              # Bio Link (mock)
 │       ├── webhooks/             # Webhooks (mock)
 │       ├── profile/              # Perfil + avatar upload (funcional + analytics)
-│       ├── notifications/        # Notificações (mock)
+│       ├── notifications/        # Notificações — Server Component SSR + Client Component
+│       │   ├── page.tsx          # Server Component: SSR prefs + firstBot em paralelo; passa userId + userEmail
+│       │   └── NotificationsClient.tsx # Client Component: salva via upsert ON CONFLICT user_id;
+│       │                               # email e Telegram reais (user.email + bot.username do banco)
 │       ├── guide/                # Guia da plataforma (mock)
 │       └── academy/              # Academia (mock)
 ├── components/
@@ -373,6 +376,10 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Schema do banco (28 tabelas — inclui invoices, migration 043) | ✅ Migrações SQL criadas e aplicadas no Supabase |
 | RLS em todas as tabelas | ✅ Configurado (flows corrigida na migração 040) |
 | Content-Security-Policy (CSP sem unsafe-eval em produção) | ✅ Configurado no middleware |
+| Notificações — Server Component SSR + Client Component (dados reais do banco) | ✅ Funcional |
+| Notificações — save() persiste via upsert ON CONFLICT user_id (migração 060) | ✅ Implementado |
+| Notificações — email e bot Telegram reais (user.email + bots.username do banco) | ✅ Implementado |
+| Notificações — RLS corrigida: política por usuário em vez de open (migração 060) | ✅ Corrigido |
 | Sistema de planos/billing | ❌ Não iniciado |
 | Editor de fluxos de venda | ❌ Não iniciado |
 | Afiliados — Server Component SSR + Client Component (dados reais) | ✅ Funcional |
