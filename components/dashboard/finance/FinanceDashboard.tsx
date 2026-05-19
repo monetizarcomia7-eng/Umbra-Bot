@@ -11,7 +11,7 @@ import type {
   RawTransaction, RawWithdrawal, RawFinanceBot, RawFinanceFlow, RawInvoice,
   RawFinanceSummary, Transaction, Withdrawal, Invoice, TxDetail, FinanceSummary,
 } from './types'
-import { financeMock } from './mock-data'
+
 import { txTypeMap, txStatusMap, wdStatusMap, invStatusMap } from './constants'
 import { SummaryCard, Tabs, Btn, Spinner } from './atoms'
 import { TransactionsSection } from './TransactionsSection'
@@ -129,7 +129,7 @@ function mapRawRows(
         due:    inv.due_date,
         status: inv.status,
       }))
-    : financeMock.invoices
+    : []
 
   return { txRows, wdRows, invoices }
 }

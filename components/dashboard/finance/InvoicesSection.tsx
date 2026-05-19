@@ -1,7 +1,7 @@
 'use client'
 
 import React from 'react'
-import { Download } from 'lucide-react'
+import { Download, FileText } from 'lucide-react'
 import type { Invoice } from './types'
 import { invStatusMap } from './constants'
 import { fmtDate, fmtBRLdec } from './formatters'
@@ -10,6 +10,21 @@ import { Badge, Card, Btn } from './atoms'
 export function InvoicesSection({ data }: { data: Invoice[] }) {
   const totalOpen = data.filter((i) => i.status !== 'paid').reduce((s, i) => s + i.value, 0)
   const openCount = data.filter((i) => i.status !== 'paid').length
+
+  if (data.length === 0) {
+    return (
+      <Card
+        title="Faturas da plataforma"
+        subtitle="Assinatura + variável por uso"
+        noPadding
+      >
+        <div className="flex flex-col items-center justify-center gap-3 py-14 text-text-muted border-t border-border">
+          <FileText size={32} className="opacity-30" />
+          <p className="text-[13px]">Nenhuma fatura gerada ainda.</p>
+        </div>
+      </Card>
+    )
+  }
 
   return (
     <Card
