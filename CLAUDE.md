@@ -51,6 +51,10 @@ umbra-bot/
 │   │   │   ├── subscribe/route.ts
 │   │   │   └── notify/route.ts
 │   │   ├── broadcasts/send/route.ts
+│   │   ├── checkout/
+│   │   │   └── track/route.ts    # POST: registra eventos de funil (visited/cart_added/payment_initiated)
+│   │   │                         # Público (sem auth), CORS *, rate-limit 60/min por IP
+│   │   │                         # Usa RPC track_checkout_event (security definer, migração 041)
 │   │   └── migrations/route.ts   # Protegida por ADMIN_EMAIL
 │   └── dashboard/
 │       ├── page.tsx              # Server Component async — busca KPIs 30d no servidor, passa initialData ao DashboardClient
@@ -126,7 +130,7 @@ umbra-bot/
 │   └── DashboardProvider.tsx     # Contexto global: user, alerts, botsCount, logout — 1 fetch
 ├── public/
 │   └── sw.js                     # Service Worker para Web Push
-├── supabase/migrations/          # 41 migrações SQL (000 a 040)
+├── supabase/migrations/          # 42 migrações SQL (000 a 041)
 ├── vercel.json                   # Cron job: /api/cron/process-withdrawals todo dia às 06:00 UTC (Hobby: 1x/dia)
 ├── sentry.*.config.ts            # Sentry (client com Replay / server com tracePropagation)
 ├── instrumentation.ts            # Next.js hook para Sentry server
@@ -221,7 +225,8 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Análises — módulo modular: filtros SQL server-side, coorte via RPC, cliente fino | ✅ Funcional |
 | Análises — checkout_events populado (cart_added via PIX, paid via MP, conversation_started via TG) | ✅ Implementado |
 | Análises — transactions gravando UTM + flow_id (aceitos no POST /api/payments/pix) | ✅ Implementado |
-| Análises — flows com user_id + RLS correta (migração 040) | ✅ Implementado |
+| Análises — flows com user_id + RLS correta (migração 021 + 040) | ✅ Implementado |
+| Análises — endpoint público POST /api/checkout/track para evento visited (migração 041) | ✅ Implementado |
 | Financeiro com dados reais do banco (Server Component) | ✅ Funcional |
 | Financeiro — módulo componentizado (10 arquivos) | ✅ Completo |
 | Financeiro — seletor de período (7d/30d/90d/Tudo) | ✅ Funcional |
@@ -480,6 +485,21 @@ interface AnalyticsSummary {
 
 **Evento `conversation_started` no funil:** o webhook Telegram (`app/api/telegram/webhook/route.ts`) insere em `checkout_events` a cada `/start` recebido. É fire-and-forget (não bloqueia o 200).
 
+**Evento `visited` no funil:** páginas de checkout públicas devem chamar `POST /api/checkout/track` com `event_type: 'visited'`. O endpoint usa RPC com security definer (migração 041) para bypassar RLS sem expor user_id ao caller. Exemplo de uso:
+```js
+fetch('/api/checkout/track', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    bot_id: '<uuid do bot>',
+    event_type: 'visited',
+    product_name: 'Meu Produto',
+    utm_source: 'instagram',
+    utm_campaign: 'lancamento-junho',
+  }),
+})
+```
+
 ### Coorte semanal (S0–S5) — migração 039
 
 - Função SQL `analytics_cohort_weekly(p_user_id, p_cohorts=6, p_weeks=6)` em `supabase/migrations/..._analytics_cohort_fn.sql`
@@ -545,6 +565,25 @@ language plpgsql stable security invoker
 - `checkoutEvents` falha silenciosamente se migração 038 não aplicada (`data ?? []`)
 - `cohortRes` error → propagado no banner de erro principal (usuário sabe que a função SQL está faltando)
 - Casts `as unknown as Tipo[]` necessários porque novas colunas não estão nos tipos gerados pelo Supabase
+
+### Função SQL `track_checkout_event` (migração 041)
+
+```sql
+create or replace function public.track_checkout_event(
+  p_bot_id uuid, p_event_type text,
+  p_product_name text default '', p_flow_id uuid default null,
+  p_utm_source text default null, p_utm_medium text default null, p_utm_campaign text default null
+)
+returns void language plpgsql security definer set search_path = public
+-- Resolve user_id via bots (não aceita user_id externo)
+-- Allowlist: visited | cart_added | payment_initiated (conversation_started e paid são server-side)
+-- Bot inexistente → return silencioso
+-- grant execute to anon, authenticated
+```
+
+- Chamada via `POST /api/checkout/track` (sem auth, CORS *, rate-limit 60/min por IP)
+- Permite que qualquer página de checkout popule o evento **"Visitou"** do funil
+- `security definer` + postgres owner → BYPASSRLS → INSERT direto em `checkout_events`
 
 ### PIX route — campos UTM e flow_id (migração 037)
 
