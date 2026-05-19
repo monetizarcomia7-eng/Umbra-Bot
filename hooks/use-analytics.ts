@@ -46,6 +46,11 @@ type EventMap = {
   affiliate_paid:            { count: number; total: number }
   affiliate_config_saved:    { percentage: number; attribution: string; cookie_window: number }
   affiliate_link_copied:     Record<string, never>
+  // Aba Alertas Importantes
+  alert_resolved:            { alert_type: string; severity: string }
+  alert_reopened:            { alert_type: string }
+  all_alerts_resolved:       { count: number }
+  alert_action_clicked:      { alert_type: string; action: string }
 }
 
 export function useAnalytics() {

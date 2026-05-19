@@ -61,26 +61,52 @@ export async function GET(request: Request) {
       const displayName = bot.username ? `@${bot.username}` : (bot.name as string)
 
       if (!isOk && lastType !== 'disconnect') {
-        await supabase.from('activity_events').insert({
-          user_id:     bot.user_id,
-          bot_id:      bot.id,
-          type:        'disconnect',
-          bot:         displayName,
-          title:       'Bot desconectado',
-          description: info.last_error_message
-            ? `${displayName}: ${info.last_error_message}`
-            : `${displayName} perdeu conexão com a API do Telegram`,
-        })
+        const errDesc = info.last_error_message
+          ? `${displayName}: ${info.last_error_message}`
+          : `${displayName} perdeu conexão com a API do Telegram`
+
+        await Promise.all([
+          supabase.from('activity_events').insert({
+            user_id:     bot.user_id,
+            bot_id:      bot.id,
+            type:        'disconnect',
+            bot:         displayName,
+            title:       'Bot desconectado',
+            description: errDesc,
+          }),
+          // Cria alerta crítico de bot offline na aba Alertas
+          supabase.from('alerts').insert({
+            user_id:     bot.user_id,
+            type:        'bot_offline',
+            severity:    'critical',
+            title:       `${displayName} foi desconectado`,
+            description: errDesc,
+            context:     [{ icon: 'bot', label: displayName }],
+          }),
+        ])
         disconnected++
       } else if (isOk && lastType === 'disconnect') {
-        await supabase.from('activity_events').insert({
-          user_id:     bot.user_id,
-          bot_id:      bot.id,
-          type:        'reconnect',
-          bot:         displayName,
-          title:       'Bot reconectado',
-          description: `${displayName} voltou a operar normalmente`,
-        })
+        await Promise.all([
+          supabase.from('activity_events').insert({
+            user_id:     bot.user_id,
+            bot_id:      bot.id,
+            type:        'reconnect',
+            bot:         displayName,
+            title:       'Bot reconectado',
+            description: `${displayName} voltou a operar normalmente`,
+          }),
+          // Auto-resolve alertas de bot_offline pendentes para este bot
+          supabase.from('alerts')
+            .update({
+              resolved:    true,
+              resolved_at: new Date().toISOString(),
+              resolved_by: 'sistema (auto)',
+            })
+            .eq('user_id', bot.user_id)
+            .eq('type',     'bot_offline')
+            .eq('resolved', false)
+            .ilike('title', `%${displayName}%`),
+        ])
         reconnected++
       }
     } catch (err) {

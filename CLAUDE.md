@@ -40,6 +40,7 @@ umbra-bot/
 │   │   │   │                     # Lê cookie 'umbra_aff' → valida afiliado (.eq user_id, IDOR-safe) → salva affiliate_id
 │   │   │   └── mercadopago-webhook/route.ts # Confirma pagamento (valida secret em prod)
 │   │   │                                    # Aprovado: credita comissão via RPC credit_affiliate_sale (mig 058)
+│   │   │                                    # Aprovado: insere alert type='sale' com context [{circle-dollar-sign, valor}, {users, cliente}]
 │   │   ├── withdrawals/
 │   │   │   └── route.ts          # POST: solicita saque (auth + zod + rate limit 3/dia + IP + Sentry)
 │   │   ├── bank-accounts/
@@ -51,6 +52,8 @@ umbra-bot/
 │   │   │   ├── process-withdrawals/route.ts  # GET: processa saques pendentes (CRON_SECRET, horário)
 │   │   │   ├── cleanup-activity/route.ts     # GET: deleta activity_events com >90 dias (CRON_SECRET)
 │   │   │   └── check-bots/route.ts           # GET: verifica conectividade de todos os bots a cada 30 min
+│   │   │                                     # disconnect → insere activity_event + alert critical (bot_offline)
+│   │   │                                     # reconnect  → insere activity_event + auto-resolve alert (resolved_by='sistema (auto)')
 │   │   ├── push/
 │   │   │   ├── subscribe/route.ts
 │   │   │   └── notify/route.ts
@@ -107,7 +110,12 @@ umbra-bot/
 │       │       ├── BarListCard.tsx   # Genérico <T>: bot | produto | fluxo | UTM
 │       │       ├── StatusCard.tsx    # Pizza Recharts — distribuição por status
 │       │       └── CohortTable.tsx   # Coorte semanal S0–S5 com heatmap color-mix
-│       ├── alerts/               # Alertas (mock)
+│       ├── alerts/               # Alertas Importantes — dados reais do Supabase (SSR + Realtime)
+│       │   ├── page.tsx          # Server Component: SSR 50 alertas + userName do auth — sem mock, sem flash
+│       │   └── AlertsClient.tsx  # Client Component: Realtime INSERT+UPDATE filtrado por user_id,
+│       │                         # filtros severidade+status+tipo, resolução individual/bulk (1 query),
+│       │                         # now=Date.now() real, ações navegam por URL, "..." apaga alerta,
+│       │                         # paginação "Carregar mais" (offset 50), 4 eventos PostHog
 │       ├── affiliates/           # Afiliados — dados reais do Supabase (SSR + Client)
 │       │   ├── page.tsx          # Server Component: SSR affiliates (+ notes) + payments + config + bots em paralelo
 │       │   │                     # passa appUrl + bots ao Client; DEFAULT_CONFIG inclui active/programName/etc.
@@ -150,7 +158,7 @@ umbra-bot/
 │           └── WithdrawModal.tsx       # Modal multi-step: self-fetch de bank_accounts, add/delete inline
 │                                       # maskPixKey: oculta meio da chave PIX para privacidade
 ├── hooks/
-│   ├── use-analytics.ts          # PostHog events tipados (24 eventos: inclui finance + analytics + affiliates)
+│   ├── use-analytics.ts          # PostHog events tipados (28 eventos: inclui finance + analytics + affiliates + alerts)
 │   ├── use-keyboard-shortcuts.ts # ⌘K, b, f, c, a, ?
 │   └── use-mobile.ts
 ├── lib/
@@ -320,6 +328,19 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Atividade — contador de não-lidos no botão "Ao vivo" (zerado ao rolar para o topo) | ✅ Implementado |
 | Atividade — cron check-bots: detecta disconnect/reconnect via getWebhookInfo a cada 30 min | ✅ Implementado |
 | Atividade — NoDataState: estado vazio visual quando activity_events está vazio | ✅ Implementado |
+| Alertas — Server Component SSR + Client Component (dados reais, sem mock, sem flash) | ✅ Funcional |
+| Alertas — Realtime INSERT + UPDATE filtrado por user_id no canal | ✅ Implementado |
+| Alertas — now=Date.now() real (corrigido timestamp hardcoded de ontem) | ✅ Corrigido |
+| Alertas — resolveAll() com 1 query .in('id', ids) em vez de N paralelas | ✅ Corrigido |
+| Alertas — botões de ação navegam pela URL correta por tipo (gateways/bots/webhooks/finance/…) | ✅ Implementado |
+| Alertas — "Configurar alertas" navega para /dashboard/notifications | ✅ Corrigido |
+| Alertas — "..." apaga alerta (DELETE + remoção do state) | ✅ Implementado |
+| Alertas — resolved_by usa nome real do usuário (vindo do auth no servidor) | ✅ Corrigido |
+| Alertas — filtro por Tipo (Gateway/Bot/Integração/Plano/Pagamento/Domínio/Venda) | ✅ Implementado |
+| Alertas — paginação "Carregar mais" (offset 50, query .range()) | ✅ Implementado |
+| Alertas — 4 eventos PostHog: alert_resolved, alert_reopened, all_alerts_resolved, alert_action_clicked | ✅ Implementado |
+| Alertas — cron check-bots cria alert critical (bot_offline) + auto-resolve ao reconectar | ✅ Implementado |
+| Alertas — alertas de venda (type='sale') incluem context chips: valor BRL + nome do cliente | ✅ Implementado |
 | CSV export (Financeiro + Clientes + Atividade) + evento csv_exported | ✅ Funcional |
 | Atalhos de teclado | ✅ Funcional |
 | Busca global (14 tabelas, race-condition safe, sem any) | ✅ Funcional |
@@ -338,7 +359,7 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Web Push (VAPID) | ✅ Implementado |
 | Rate limiting (Upstash Redis + fallback) | ✅ Funcional |
 | Sentry (client Replay + server tracePropagation + captureException) | ✅ Configurado |
-| PostHog (19 eventos rastreados) | ✅ Configurado |
+| PostHog (28 eventos rastreados) | ✅ Configurado |
 | Vercel Analytics + Speed Insights | ✅ Ativo |
 | Schema do banco (28 tabelas — inclui invoices, migration 043) | ✅ Migrações SQL criadas e aplicadas no Supabase |
 | RLS em todas as tabelas | ✅ Configurado (flows corrigida na migração 040) |
@@ -432,6 +453,10 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | `affiliate_paid` | `AffiliatesClient.tsx` — ao marcar pagamentos como pagos (inclui count + total) |
 | `affiliate_config_saved` | `AffiliatesClient.tsx` — ao salvar configuração do programa (inclui percentage, attribution, cookie_window) |
 | `affiliate_link_copied` | `AffiliatesClient.tsx` — ao copiar link de afiliado |
+| `alert_resolved` | `AlertsClient.tsx` — ao marcar alerta individual como resolvido (inclui alert_type + severity) |
+| `alert_reopened` | `AlertsClient.tsx` — ao reabrir alerta resolvido (inclui alert_type) |
+| `all_alerts_resolved` | `AlertsClient.tsx` — ao resolver todos os ativos de uma vez (inclui count) |
+| `alert_action_clicked` | `AlertsClient.tsx` — ao clicar no botão de ação do alerta (inclui alert_type + action) |
 
 ---
 

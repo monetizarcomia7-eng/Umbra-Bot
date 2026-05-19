@@ -139,13 +139,17 @@ export async function POST(request: NextRequest) {
       Sentry.captureException(activityError, { extra: { txId: tx.id, context: 'mp_webhook_activity' } })
     }
 
-    // 5. Alerta para o operador no dashboard
+    // 5. Alerta para o operador no dashboard (com context chips)
     await supabase.from('alerts').insert({
       user_id:     tx.user_id,
       type:        'sale',
       severity:    'info',
       title:       `Nova venda: ${tx.product_name}`,
-      description: `${tx.customer_name} · ${amountFmt}`,
+      description: `${tx.customer_name ?? 'Cliente'} · ${amountFmt}`,
+      context: [
+        { icon: 'circle-dollar-sign', label: amountFmt },
+        { icon: 'users',              label: tx.customer_name ?? 'Cliente' },
+      ],
     }).then(({ error }) => {
       if (error) Sentry.captureException(error, { extra: { txId: tx.id, context: 'mp_webhook_alert' } })
     })
