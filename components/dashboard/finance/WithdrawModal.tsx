@@ -248,9 +248,12 @@ export function WithdrawModal({ open, onClose, onSuccess, saldoDisponivel }: {
           </div>
 
           <div>
-            <label className="block text-[12.5px] font-medium text-text mb-1.5">Conta de destino</label>
+            <label className="flex items-center gap-1.5 text-[12.5px] font-medium text-text mb-1.5">
+              Conta de destino
+              {accountsLoading && accounts.length > 0 && <Spinner />}
+            </label>
 
-            {accountsLoading ? (
+            {accountsLoading && accounts.length === 0 ? (
               <div className="flex items-center gap-2 py-4 text-[12.5px] text-text-muted">
                 <Spinner /> Carregando contas…
               </div>
