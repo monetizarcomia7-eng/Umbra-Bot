@@ -341,6 +341,7 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Clientes — RPCs: contacts_summary, contacts_bulk_add_tag, contacts_filter_options | ✅ Implementado |
 | Clientes — 5 eventos PostHog: filter_changed, profile_opened, tag_added, added, imported | ✅ Implementado |
 | Clientes — ordenação clicável em todas as colunas (persiste em localStorage) | ✅ Implementado |
+| Clientes — apagar cliente com confirmação inline no painel lateral (DELETE → contacts) | ✅ Implementado |
 | Testes (unit/e2e) | ❌ Não iniciado |
 | CI/CD | ❌ Não iniciado |
 
@@ -1157,8 +1158,10 @@ CustomersClient (Client Component)
   │     lazy load via activity_events WHERE contact_id = customer.id
   │     só executa ao abrir o painel — sem dados pré-carregados
   ├── AddCustomerModal: INSERT em contacts com user_id do auth
-  └── ImportCSVModal: FileReader + parseCSV + batch INSERT (lotes 50)
-        Colunas CSV: Nome*, Username, E-mail, Telefone, Origem, Tags (sep. ;)
+  ├── ImportCSVModal: FileReader + parseCSV + batch INSERT (lotes 50)
+  │     Colunas CSV: Nome*, Username, E-mail, Telefone, Origem, Tags (sep. ;)
+  └── deleteCustomer(id): DELETE em contacts → remove do estado local + atualiza contadores
+        ProfilePanel footer: botão "Apagar cliente" → confirmação inline → fecha painel
 ```
 
 ### Schema contacts — colunas relevantes (migration 052)
