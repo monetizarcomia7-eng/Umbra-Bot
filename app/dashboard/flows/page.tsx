@@ -1078,7 +1078,9 @@ export default function FlowsPage() {
     setFlows(arr => arr.map(f => f.id === updated.id ? { ...updated, updatedAt: Date.now() } : f))
     try {
       const supabase = createClient()
-      await supabase.from('flows').upsert({ id: updated.id, name: updated.name, bot: updated.bot, bot_color: updated.botColor, status: updated.status, executions: updated.executions, conversion: updated.conversion, description: updated.description, nodes: updated.nodes, edges: updated.edges })
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+      await supabase.from('flows').upsert({ id: updated.id, user_id: user.id, name: updated.name, bot: updated.bot, bot_color: updated.botColor, status: updated.status, executions: updated.executions, conversion: updated.conversion, description: updated.description, nodes: updated.nodes, edges: updated.edges })
     } catch (_) {}
   }
 
