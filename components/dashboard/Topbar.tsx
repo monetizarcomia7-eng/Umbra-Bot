@@ -2,7 +2,12 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import Link from 'next/link'
-import { Search, Bell, Sun, Moon, ChevronDown, Settings, HelpCircle, LogOut, User, Menu, Bot, Users, ArrowLeftRight, Loader2 } from 'lucide-react'
+import {
+  Search, Bell, Sun, Moon, ChevronDown, Settings, HelpCircle, LogOut, User, Menu,
+  Bot, Users, ArrowLeftRight, Loader2,
+  GitBranch, Send, ExternalLink, Megaphone, UserPlus, CreditCard,
+  Zap, BookOpen, GraduationCap, AlertTriangle, Link2,
+} from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { useRouter } from 'next/navigation'
 import { cn } from '@/lib/utils'
@@ -77,18 +82,34 @@ function MenuItem({
   )
 }
 
+type SearchResultType =
+  | 'bot' | 'contact' | 'transaction' | 'flow' | 'broadcast'
+  | 'redirect' | 'campaign' | 'affiliate' | 'gateway' | 'biolink'
+  | 'webhook' | 'article' | 'course' | 'alert'
+
 interface SearchResult {
   id: string
-  type: 'bot' | 'contact' | 'transaction'
+  type: SearchResultType
   title: string
   subtitle: string
   href: string
 }
 
-const TYPE_META = {
-  bot:         { label: 'Bots',        Icon: Bot,             href: '/dashboard/bots'      },
-  contact:     { label: 'Clientes',    Icon: Users,           href: '/dashboard/customers' },
-  transaction: { label: 'Transações',  Icon: ArrowLeftRight,  href: '/dashboard/finance'   },
+const TYPE_META: Record<SearchResultType, { label: string; Icon: React.ElementType; href: string }> = {
+  bot:         { label: 'Bots',            Icon: Bot,            href: '/dashboard/bots'         },
+  contact:     { label: 'Clientes',        Icon: Users,          href: '/dashboard/customers'    },
+  transaction: { label: 'Transações',      Icon: ArrowLeftRight, href: '/dashboard/finance'      },
+  flow:        { label: 'Fluxos de venda', Icon: GitBranch,      href: '/dashboard/flows'        },
+  broadcast:   { label: 'Disparos',        Icon: Send,           href: '/dashboard/broadcasts'   },
+  redirect:    { label: 'Redirecionadores',Icon: ExternalLink,   href: '/dashboard/redirects'    },
+  campaign:    { label: 'Remarketing',     Icon: Megaphone,      href: '/dashboard/remarketing'  },
+  affiliate:   { label: 'Afiliados',       Icon: UserPlus,       href: '/dashboard/affiliates'   },
+  gateway:     { label: 'Gateways',        Icon: CreditCard,     href: '/dashboard/gateways'     },
+  biolink:     { label: 'Bio Links',       Icon: Link2,          href: '/dashboard/biolink'      },
+  webhook:     { label: 'Webhooks',        Icon: Zap,            href: '/dashboard/webhooks'     },
+  article:     { label: 'Artigos / Guia',  Icon: BookOpen,       href: '/dashboard/guide'        },
+  course:      { label: 'Cursos',          Icon: GraduationCap,  href: '/dashboard/academy'      },
+  alert:       { label: 'Alertas',         Icon: AlertTriangle,  href: '/dashboard/alerts'       },
 }
 
 function SearchDropdown({ results, loading, query, onClose }: {
@@ -246,33 +267,62 @@ export function Topbar({ onMobileMenu }: TopbarProps) {
     if (q.trim().length < 2) { setSearchResults([]); setSearchLoading(false); return }
     setSearchLoading(true)
     const supabase = createClient()
-    const term = `%${q.trim()}%`
+    const t = q.trim()
+    const w = `%${t}%`
 
-    const [botsRes, contactsRes, txRes] = await Promise.all([
-      supabase.from('bots').select('id, name, username, status').ilike('name', term).limit(4),
-      supabase.from('contacts').select('id, name, username, email').or(`name.ilike.${term},email.ilike.${term}`).limit(4),
-      supabase.from('transactions').select('id, product_name, customer_name, amount, status').ilike('product_name', term).limit(4),
+    const [
+      botsR, contactsR, txR, flowsR, broadcastsR,
+      redirectsR, campaignsR, affiliatesR, gatewaysR,
+      biolinksR, webhooksR, articlesR, coursesR, alertsR,
+    ] = await Promise.allSettled([
+      supabase.from('bots').select('id,name,username,status').ilike('name', w).limit(2),
+      supabase.from('contacts').select('id,name,email').or(`name.ilike.${w},email.ilike.${w}`).limit(2),
+      supabase.from('transactions').select('id,product_name,customer_name,amount').or(`product_name.ilike.${w},customer_name.ilike.${w}`).limit(2),
+      supabase.from('flows').select('id,name,description,status').ilike('name', w).limit(2),
+      supabase.from('broadcasts').select('id,title,bot,status').ilike('title', w).limit(2),
+      supabase.from('redirects').select('id,slug,destination_label,status').or(`slug.ilike.${w},destination_label.ilike.${w}`).limit(2),
+      supabase.from('remarketing_campaigns').select('id,name,description,status').ilike('name', w).limit(2),
+      supabase.from('affiliates').select('id,name,email,status').or(`name.ilike.${w},email.ilike.${w}`).limit(2),
+      supabase.from('gateways').select('id,name,connected').ilike('name', w).limit(2),
+      supabase.from('biolinks').select('id,name,slug,status').or(`name.ilike.${w},slug.ilike.${w}`).limit(2),
+      supabase.from('webhooks').select('id,name,url,status').or(`name.ilike.${w},url.ilike.${w}`).limit(2),
+      supabase.from('guide_articles').select('id,title,excerpt,category').or(`title.ilike.${w},excerpt.ilike.${w}`).limit(3),
+      supabase.from('courses').select('id,title,subtitle,instructor').or(`title.ilike.${w},subtitle.ilike.${w}`).limit(2),
+      supabase.from('alerts').select('id,title,description,severity').or(`title.ilike.${w},description.ilike.${w}`).limit(2),
     ])
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const ok = (r: PromiseSettledResult<any>) => r.status === 'fulfilled' ? (r.value.data ?? []) : []
+
     const results: SearchResult[] = [
-      ...(botsRes.data ?? []).map((b) => ({
-        id: b.id, type: 'bot' as const,
-        title: b.name || 'Bot sem nome',
-        subtitle: b.username ? `@${b.username}` : b.status ?? '',
-        href: '/dashboard/bots',
-      })),
-      ...(contactsRes.data ?? []).map((c) => ({
-        id: c.id, type: 'contact' as const,
-        title: c.name || c.email || 'Cliente',
-        subtitle: c.email ?? '',
-        href: '/dashboard/customers',
-      })),
-      ...(txRes.data ?? []).map((t) => ({
-        id: t.id, type: 'transaction' as const,
-        title: t.product_name || 'Transação',
-        subtitle: t.customer_name ? `${t.customer_name} · R$ ${Number(t.amount).toFixed(2)}` : `R$ ${Number(t.amount).toFixed(2)}`,
-        href: '/dashboard/finance',
-      })),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ...ok(botsR).map((b: any) => ({ id: b.id, type: 'bot' as const, title: b.name || 'Bot', subtitle: b.username ? `@${b.username}` : b.status ?? '', href: '/dashboard/bots' })),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ...ok(contactsR).map((c: any) => ({ id: c.id, type: 'contact' as const, title: c.name || c.email || 'Cliente', subtitle: c.email ?? '', href: '/dashboard/customers' })),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ...ok(txR).map((x: any) => ({ id: x.id, type: 'transaction' as const, title: x.product_name || 'Transação', subtitle: `${x.customer_name ?? ''} · R$ ${Number(x.amount).toFixed(2)}`.trim().replace(/^·\s*/, ''), href: '/dashboard/finance' })),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ...ok(flowsR).map((f: any) => ({ id: f.id, type: 'flow' as const, title: f.name, subtitle: f.description || f.status, href: '/dashboard/flows' })),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ...ok(broadcastsR).map((b: any) => ({ id: b.id, type: 'broadcast' as const, title: b.title, subtitle: b.bot || b.status, href: '/dashboard/broadcasts' })),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ...ok(redirectsR).map((r: any) => ({ id: r.id, type: 'redirect' as const, title: r.destination_label || r.slug, subtitle: `/${r.slug}`, href: '/dashboard/redirects' })),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ...ok(campaignsR).map((c: any) => ({ id: c.id, type: 'campaign' as const, title: c.name, subtitle: c.description || c.status, href: '/dashboard/remarketing' })),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ...ok(affiliatesR).map((a: any) => ({ id: a.id, type: 'affiliate' as const, title: a.name, subtitle: a.email, href: '/dashboard/affiliates' })),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ...ok(gatewaysR).map((g: any) => ({ id: g.id, type: 'gateway' as const, title: g.name, subtitle: g.connected ? 'Conectado' : 'Desconectado', href: '/dashboard/gateways' })),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ...ok(biolinksR).map((b: any) => ({ id: b.id, type: 'biolink' as const, title: b.name || b.slug, subtitle: `umbra.bio/${b.slug}`, href: '/dashboard/biolink' })),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ...ok(webhooksR).map((w: any) => ({ id: w.id, type: 'webhook' as const, title: w.name, subtitle: w.url, href: '/dashboard/webhooks' })),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ...ok(articlesR).map((a: any) => ({ id: a.id, type: 'article' as const, title: a.title, subtitle: a.category || a.excerpt?.slice(0, 60) || '', href: '/dashboard/guide' })),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ...ok(coursesR).map((c: any) => ({ id: c.id, type: 'course' as const, title: c.title, subtitle: c.instructor || c.subtitle, href: '/dashboard/academy' })),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ...ok(alertsR).map((a: any) => ({ id: a.id, type: 'alert' as const, title: a.title, subtitle: a.description?.slice(0, 60) || a.severity, href: '/dashboard/alerts' })),
     ]
 
     setSearchResults(results)
