@@ -150,6 +150,7 @@ export async function POST(request: NextRequest) {
         { icon: 'circle-dollar-sign', label: amountFmt },
         { icon: 'users',              label: tx.customer_name ?? 'Cliente' },
       ],
+      source:      'webhook',
     }).then(({ error }) => {
       if (error) Sentry.captureException(error, { extra: { txId: tx.id, context: 'mp_webhook_alert' } })
     })

@@ -82,6 +82,7 @@ export async function GET(request: Request) {
             title:       `${displayName} foi desconectado`,
             description: errDesc,
             context:     [{ icon: 'bot', label: displayName }],
+            source:      'cron',
           }),
         ])
         disconnected++

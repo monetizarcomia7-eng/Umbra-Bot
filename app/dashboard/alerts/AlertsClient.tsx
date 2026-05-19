@@ -27,6 +27,10 @@ export interface RawAlert {
   resolved: boolean
   resolved_at: string | null
   resolved_by: string | null
+  resolved_by_id: string | null
+  source: string | null
+  action_taken: string | null
+  viewed_at: string | null
   created_at: string
   user_id: string
 }
@@ -513,6 +517,19 @@ export function AlertsClient({
     return () => { supabase.removeChannel(channel) }
   }, [userId])
 
+  // Marca alertas ainda não visualizados como vistos (fire-and-forget)
+  useEffect(() => {
+    const unviewedIds = initialAlerts.filter((a) => !a.viewed_at).map((a) => a.id)
+    if (!unviewedIds.length) return
+    const supabase = createClient()
+    supabase.from('alerts')
+      .update({ viewed_at: new Date().toISOString() })
+      .in('id', unviewedIds)
+      .eq('user_id', userId)
+      .then(() => {})
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []) // Somente na montagem
+
   // Tick de relógio com Date.now() real — ← CORRIGIDO: era timestamp hardcoded
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 30_000)
@@ -578,7 +595,7 @@ export function AlertsClient({
     try {
       const supabase = createClient()
       await supabase.from('alerts')
-        .update({ resolved: true, resolved_at: new Date().toISOString(), resolved_by: userName })
+        .update({ resolved: true, resolved_at: new Date().toISOString(), resolved_by: userName, resolved_by_id: userId })
         .eq('id', id)
         .eq('user_id', userId)   // defesa-em-profundidade além da RLS
     } catch { /* silent — UI já atualizada */ }
@@ -622,16 +639,24 @@ export function AlertsClient({
       const supabase = createClient()
       // ← CORRIGIDO: 1 única query em vez de N paralelas
       await supabase.from('alerts')
-        .update({ resolved: true, resolved_at: new Date().toISOString(), resolved_by: userName })
+        .update({ resolved: true, resolved_at: new Date().toISOString(), resolved_by: userName, resolved_by_id: userId })
         .in('id', activeIds)
         .eq('user_id', userId)
     } catch { /* silent */ }
   }
 
   function action(a: Alert) {
-    const url = ALERT_TYPES[a.type]?.actionUrl ?? '/dashboard'
-    track('alert_action_clicked', { alert_type: a.type, action: ALERT_TYPES[a.type]?.actionLabel ?? '' })
-    router.push(url)   // ← CORRIGIDO: navega para a URL correta por tipo
+    const url   = ALERT_TYPES[a.type]?.actionUrl   ?? '/dashboard'
+    const label = ALERT_TYPES[a.type]?.actionLabel ?? ''
+    track('alert_action_clicked', { alert_type: a.type, action: label })
+    router.push(url)
+    // Salva a ação tomada (fire-and-forget)
+    const supabase = createClient()
+    supabase.from('alerts')
+      .update({ action_taken: label })
+      .eq('id', a.id)
+      .eq('user_id', userId)
+      .then(() => {})
   }
 
   function configureAlerts() {

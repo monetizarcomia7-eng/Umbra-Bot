@@ -11,6 +11,10 @@
     {
       "path": "/api/cron/check-bots",
       "schedule": "0 8 * * *"
+    },
+    {
+      "path": "/api/cron/cleanup-alerts",
+      "schedule": "0 4 * * *"
     }
   ]
 }

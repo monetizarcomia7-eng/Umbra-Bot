@@ -51,8 +51,10 @@ umbra-bot/
 │   │   ├── cron/
 │   │   │   ├── process-withdrawals/route.ts  # GET: processa saques pendentes (CRON_SECRET, horário)
 │   │   │   ├── cleanup-activity/route.ts     # GET: deleta activity_events com >90 dias (CRON_SECRET)
+│   │   │   ├── cleanup-alerts/route.ts       # GET: deleta alertas resolvidos com >30 dias (CRON_SECRET, 04:00 UTC)
+│   │   │   │                                 # Lotes de 500, cron_log, Sentry
 │   │   │   └── check-bots/route.ts           # GET: verifica conectividade de todos os bots a cada 30 min
-│   │   │                                     # disconnect → insere activity_event + alert critical (bot_offline)
+│   │   │                                     # disconnect → insere activity_event + alert critical (bot_offline, source='cron')
 │   │   │                                     # reconnect  → insere activity_event + auto-resolve alert (resolved_by='sistema (auto)')
 │   │   ├── push/
 │   │   │   ├── subscribe/route.ts
@@ -116,6 +118,8 @@ umbra-bot/
 │       │                         # filtros severidade+status+tipo, resolução individual/bulk (1 query),
 │       │                         # now=Date.now() real, ações navegam por URL, "..." apaga alerta,
 │       │                         # paginação "Carregar mais" (offset 50), 4 eventos PostHog
+│       │                         # mount: batch UPDATE viewed_at=now() para alertas não vistos
+│       │                         # resolve: salva resolved_by_id=userId; action: salva action_taken
 │       ├── affiliates/           # Afiliados — dados reais do Supabase (SSR + Client)
 │       │   ├── page.tsx          # Server Component: SSR affiliates (+ notes) + payments + config + bots em paralelo
 │       │   │                     # passa appUrl + bots ao Client; DEFAULT_CONFIG inclui active/programName/etc.
@@ -177,7 +181,7 @@ umbra-bot/
 ├── public/
 │   └── sw.js                     # Service Worker para Web Push
 ├── supabase/migrations/          # 58 migrações SQL (000 a 058)
-├── vercel.json                   # 3 Cron jobs: process-withdrawals (06:00 UTC) + cleanup-activity (02:00 UTC) + check-bots (a cada 30 min)
+├── vercel.json                   # 4 Cron jobs: process-withdrawals (06:00 UTC) + cleanup-activity (02:00 UTC) + check-bots (a cada 30 min) + cleanup-alerts (04:00 UTC)
 ├── sentry.*.config.ts            # Sentry (client com Replay / server com tracePropagation)
 ├── instrumentation.ts            # Next.js hook para Sentry server
 ├── middleware.ts                 # Auth guard + security headers + CSP (unsafe-eval só em dev)
@@ -339,8 +343,13 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Alertas — filtro por Tipo (Gateway/Bot/Integração/Plano/Pagamento/Domínio/Venda) | ✅ Implementado |
 | Alertas — paginação "Carregar mais" (offset 50, query .range()) | ✅ Implementado |
 | Alertas — 4 eventos PostHog: alert_resolved, alert_reopened, all_alerts_resolved, alert_action_clicked | ✅ Implementado |
-| Alertas — cron check-bots cria alert critical (bot_offline) + auto-resolve ao reconectar | ✅ Implementado |
-| Alertas — alertas de venda (type='sale') incluem context chips: valor BRL + nome do cliente | ✅ Implementado |
+| Alertas — cron check-bots cria alert critical (bot_offline, source='cron') + auto-resolve ao reconectar | ✅ Implementado |
+| Alertas — alertas de venda (type='sale') incluem context chips + source='webhook' (mp-webhook) | ✅ Implementado |
+| Alertas — TTL: cron cleanup-alerts (04:00 UTC) deleta resolvidos >30 dias (lotes 500 + cron_log) | ✅ Implementado |
+| Alertas — migração 059: resolved_by_id + source + action_taken + viewed_at + trigger resolved_at | ✅ Implementado |
+| Alertas — mount: batch UPDATE viewed_at=now() para alertas ainda não vistos | ✅ Implementado |
+| Alertas — resolve: salva resolved_by_id=userId (além de resolved_by=userName) | ✅ Implementado |
+| Alertas — action click: salva action_taken=actionLabel no banco (fire-and-forget) | ✅ Implementado |
 | CSV export (Financeiro + Clientes + Atividade) + evento csv_exported | ✅ Funcional |
 | Atalhos de teclado | ✅ Funcional |
 | Busca global (14 tabelas, race-condition safe, sem any) | ✅ Funcional |
