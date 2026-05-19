@@ -102,18 +102,22 @@ umbra-bot/
 │       ├── PageHeader.tsx
 │       ├── Button.tsx
 │       └── finance/              # Módulo completo do Financeiro (10 arquivos)
-│           ├── types.ts          # Transaction, Withdrawal, Invoice, BankAccount, RawTransaction, RawWithdrawal
+│           ├── types.ts          # Transaction, Withdrawal, Invoice, BankAccount, RawTransaction,
+│           │                     # RawWithdrawal, RawFinanceBot, RawFinanceFlow, RawInvoice, RawFinanceSummary
 │           ├── formatters.ts     # fmtBRL, fmtBRLdec, fmtDate, fmtDateTime, fmtTime, fmtPct
+│           │                     # — todos com timeZone: 'America/Sao_Paulo'
 │           ├── constants.ts      # txTypeMap, txStatusMap, wdStatusMap, invStatusMap, filtros
-│           ├── mock-data.ts      # financeMock (faturas mock; contas bancárias agora são reais)
+│           ├── mock-data.ts      # financeMock (faturas mock fallback; contas bancárias são reais)
 │           ├── atoms.tsx         # Icon, Badge, Card, Tabs, Modal, Dropdown, Btn, Spinner, etc.
 │           ├── FinanceDashboard.tsx  # Componente raiz (client) — seletor de período 7d/30d/90d/Tudo
-│           ├── TransactionsSection.tsx # Tabela com filtros, paginação e detalhe expandível
+│           │                         # buildLiveData: deltas reais, TxDetail real, invoices reais/mock
+│           ├── TransactionsSection.tsx # Tabela com filtros, paginação e detalhe expandível real
 │           ├── WithdrawalsSection.tsx  # Tabela de saques (filtrada pelo período selecionado)
-│           ├── InvoicesSection.tsx     # Tabela de faturas
+│           ├── InvoicesSection.tsx     # Tabela de faturas (reais quando billing ativo)
 │           └── WithdrawModal.tsx       # Modal multi-step: self-fetch de bank_accounts, add/delete inline
+│                                       # maskPixKey: oculta meio da chave PIX para privacidade
 ├── hooks/
-│   ├── use-analytics.ts          # PostHog events tipados (14 eventos: inclui analytics_filter_changed + analytics_cohort_error)
+│   ├── use-analytics.ts          # PostHog events tipados (19 eventos: inclui finance + analytics events)
 │   ├── use-keyboard-shortcuts.ts # ⌘K, b, f, c, a, ?
 │   └── use-mobile.ts
 ├── lib/
@@ -131,7 +135,7 @@ umbra-bot/
 │   └── DashboardProvider.tsx     # Contexto global: user, alerts, botsCount, logout — 1 fetch
 ├── public/
 │   └── sw.js                     # Service Worker para Web Push
-├── supabase/migrations/          # 43 migrações SQL (000 a 042)
+├── supabase/migrations/          # 46 migrações SQL (000 a 045)
 ├── vercel.json                   # Cron job: /api/cron/process-withdrawals todo dia às 06:00 UTC (Hobby: 1x/dia)
 ├── sentry.*.config.ts            # Sentry (client com Replay / server com tracePropagation)
 ├── instrumentation.ts            # Next.js hook para Sentry server
@@ -242,6 +246,20 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Modal de saque com API real (/api/withdrawals) | ✅ Funcional |
 | Contas bancárias reais no modal de saque (bank_accounts) | ✅ Funcional |
 | CRUD de contas bancárias (GET/POST/DELETE /api/bank-accounts) | ✅ Implementado |
+| Financeiro — formatadores com fuso horário America/Sao_Paulo | ✅ Implementado |
+| Financeiro — saldo correto (aprovadas − saques pending+completed) | ✅ Implementado |
+| Financeiro — deltas reais (período atual vs anterior, calculado client-side) | ✅ Implementado |
+| Financeiro — detalhe expansível com dados reais (customer, gateway, bot, flow, UTM) | ✅ Implementado |
+| Financeiro — tabela invoices real + fallback mock enquanto billing não existe (migração 043) | ✅ Implementado |
+| Financeiro — 5 eventos PostHog: withdrawal_requested, bank_account_added/deleted, finance_tab/period_changed | ✅ Implementado |
+| Financeiro — maskPixKey: oculta meio da chave PIX no modal de saque | ✅ Implementado |
+| Financeiro — tratamento de erro ao deletar conta bancária (deleteError state) | ✅ Implementado |
+| Financeiro — router.refresh() após saque aprovado (dados atualizados sem reload) | ✅ Implementado |
+| Financeiro — queries paralelas: 6 em Promise.all (tx + wd + bots + flows + invoices + RPC summary) | ✅ Implementado |
+| Financeiro — RPC finance_summary: KPI cards sempre precisos via profiles.balance (migration 045) | ✅ Implementado |
+| Financeiro — transactions.type ('sale'|'fee'|'commission'|'refund') — migration 044 | ✅ Implementado |
+| Financeiro — withdrawals.notes: motivo de falha exibido abaixo do badge — migration 044 | ✅ Implementado |
+| Financeiro — withdrawals/route.ts usa profiles.balance (trigger atômico) em vez de full scan | ✅ Implementado |
 | CSV export (Financeiro + Clientes) + evento csv_exported | ✅ Funcional |
 | Atalhos de teclado | ✅ Funcional |
 | Busca global (14 tabelas, race-condition safe, sem any) | ✅ Funcional |
@@ -260,9 +278,9 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Web Push (VAPID) | ✅ Implementado |
 | Rate limiting (Upstash Redis + fallback) | ✅ Funcional |
 | Sentry (client Replay + server tracePropagation + captureException) | ✅ Configurado |
-| PostHog (14 eventos rastreados) | ✅ Configurado |
+| PostHog (19 eventos rastreados) | ✅ Configurado |
 | Vercel Analytics + Speed Insights | ✅ Ativo |
-| Schema do banco (30 tabelas) | ✅ Migrações SQL criadas e aplicadas |
+| Schema do banco (31 tabelas — inclui invoices, migration 043) | ✅ Migrações SQL criadas e aplicadas no Supabase |
 | RLS em todas as tabelas | ✅ Configurado (flows corrigida na migração 040) |
 | Content-Security-Policy (CSP sem unsafe-eval em produção) | ✅ Configurado no middleware |
 | Sistema de planos/billing | ❌ Não iniciado |
@@ -293,6 +311,11 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | `plan_upgraded` | disponível no EventMap |
 | `analytics_filter_changed` | `AnalyticsClient.tsx` — toda mudança de filtro ou Limpar (period, compare, bot, produto, fluxo, UTM) |
 | `analytics_cohort_error` | `analytics/page.tsx` (server-side via `captureEvent`) — erro na RPC de coorte |
+| `withdrawal_requested` | `WithdrawModal.tsx` — ao confirmar saque (inclui amount + account_kind) |
+| `bank_account_added` | `WithdrawModal.tsx` — ao adicionar nova conta bancária (inclui kind) |
+| `bank_account_deleted` | `WithdrawModal.tsx` — ao remover conta bancária |
+| `finance_tab_changed` | `FinanceDashboard.tsx` — ao trocar entre Transações / Saques / Faturas |
+| `finance_period_changed` | `FinanceDashboard.tsx` — ao mudar período (7d / 30d / 90d / Tudo) |
 
 ---
 
@@ -361,7 +384,7 @@ DashboardLayout (components/dashboard/Layout.tsx)
 - **Vulnerabilidade corrigida:** tabela `flows` criada com `using (true)` → qualquer usuário autenticado via Supabase SDK direto podia ler fluxos de outros
 - **Fix:** migração 040 adiciona `user_id uuid references auth.users(id)` + policy `flows_owner (auth.uid() = user_id)` — reforça migração 021
 - **Código:** `saveFlow()` em `app/dashboard/flows/page.tsx` inclui `user_id: user.id` no upsert (sem isso o INSERT seria bloqueado pelo `with check` pós-migração)
-- **SQL consolidado:** `supabase/migrations/_pending_analytics_037_to_041.sql` — contém migrações 037–042 prontas para rodar no Supabase SQL Editor
+- **SQL consolidado:** `supabase/migrations/_pending_analytics_037_to_041.sql` — contém migrações 037–045 prontas para rodar no Supabase SQL Editor
 
 ---
 
@@ -371,21 +394,64 @@ DashboardLayout (components/dashboard/Layout.tsx)
 
 ```
 FinancePage (Server Component)
-  └── busca transactions (limit 500) + withdrawals (limit 200) em paralelo
-  └── passa como initialTransactions / initialWithdrawals
+  └── Promise.all com 6 queries em paralelo:
+        ├── transactions (limit 500): id, amount, net, fee, status, type, product_name,
+        │   customer_name, customer_email, gateway, bot_id, flow_id, utm_source, utm_campaign, created_at
+        ├── withdrawals  (limit 200): id, amount, account_id, account_label, status, created_at, concluded_at, notes
+        ├── bots: id, name, username
+        ├── flows: id, name (limit 100)
+        ├── invoices: id, period, value, due_date, status, created_at (limit 24)
+        └── RPC finance_summary(uid): saldo_disponivel, a_liberar, total_recebido, comissoes_plataforma
+  └── passa como 6 props: initialTransactions / initialWithdrawals / initialBots / initialFlows
+                           / initialInvoices / initialSummary
 
 FinanceDashboard (Client Component)
   ├── period state: '7d' | '30d' | '90d' | 'all'  (default: '30d')
-  ├── filteredTxs = transactions filtradas por period (client-side)
-  ├── filteredWds = withdrawals filtradas por period (client-side)
-  ├── summary cards = sempre ALL-TIME (saldo correto independente do período)
-  └── CSV export usa dados filtrados pelo período ativo
+  ├── useMemo → buildLiveData(txs, wds, period, bots, flows, invoices, dbSummary)
+  │     ├── botMap / flowMap para lookup O(1) de nomes por id
+  │     ├── transaction.type lido do banco (mig 044); fallback: heurística por status
+  │     │     'fee' | 'commission' → tipos diretos; isRefund → 'refund'; default → 'sale'
+  │     ├── TxDetail populado de dados reais para transações approved:
+  │     │     customer_name, customer_email, gateway (GATEWAY_LABEL), bot_id→nome, flow_id→nome,
+  │     │     utm_source, utm_campaign  — method hardcoded 'Pix' (não está no DB)
+  │     ├── summary cards — usa dbSummary (RPC) quando disponível:
+  │     │     saldoDisponivel = profiles.balance (trigger atômico, sempre preciso)
+  │     │     aLiberar / totalRecebido / comissoesPlataforma = SUM() no banco (sem limite de rows)
+  │     │     Fallback se RPC falhar: computa dos rows carregados (pode ser incompleto com >500 txs)
+  │     ├── deltas reais: compara período atual vs anterior (client-side, dos rows carregados)
+  │     │     pct(cur, prev) = prev > 0 ? round(((cur-prev)/prev)*1000)/10 : 0
+  │     └── invoices: rawInvoices.length > 0 → dados reais; senão financeMock.invoices (fallback)
+  ├── filteredTxs = m.transactions filtradas por period (client-side)
+  ├── filteredWds = m.withdrawals filtradas por period (client-side)
+  ├── banner limitReached: "totais nos cards são precisos, mas % de variação e tabela podem ser incompletos"
+  ├── CSV export usa dados filtrados pelo período ativo (inclui campo period no evento PostHog)
+  │     — saques incluem coluna "Observação" (withdrawal.notes)
+  ├── handleTabChange → track('finance_tab_changed', { tab })
+  ├── handlePeriodChange → track('finance_period_changed', { period })
+  └── handleWithdrawalSuccess → setModalOpen(false) + router.refresh()
 
 WithdrawModal (Client Component — sem props de contas)
   ├── self-fetch de GET /api/bank-accounts ao abrir
+  ├── maskPixKey(key): exibe primeiros 4 + '•••' + últimos 4 para privacidade
   ├── permite adicionar nova conta inline (label + tipo + chave)
+  │     → track('bank_account_added', { kind })
   ├── permite deletar conta com botão hover (DELETE /api/bank-accounts/[id])
-  └── POST /api/withdrawals com account_id e account_label reais
+  │     → verifica res.ok antes de remover do state; deleteError state para feedback
+  │     → track('bank_account_deleted', {})
+  ├── POST /api/withdrawals com account_id e account_label reais
+  │     → track('withdrawal_requested', { amount, account_kind })
+  └── step 'success': botão "Fechar" chama onSuccess (→ router.refresh()) não onClose
+```
+
+### GATEWAY_LABEL — mapeamento de IDs para nomes legíveis
+
+```typescript
+const GATEWAY_LABEL: Record<string, string> = {
+  mercadopago: 'Mercado Pago',
+  pushinpay:   'Pushinpay',
+  pagarme:     'Pagar.me',
+  stripe:      'Stripe',
+}
 ```
 
 ### Tabela bank_accounts
@@ -395,6 +461,78 @@ WithdrawModal (Client Component — sem props de contas)
 id, user_id, label, pix_key, kind ('pix'|'conta'|'ted'), created_at
 RLS: usuário vê/gerencia apenas as próprias contas
 ```
+
+### Novas colunas — migration 044
+
+```sql
+-- transactions.type: distingue a natureza da transação
+alter table public.transactions
+  add column if not exists type text not null default 'sale'
+    check (type in ('sale', 'fee', 'commission', 'refund'));
+-- Persistido pelo pix/route.ts com type='sale' em toda nova transação PIX
+-- Futuro: cron pode inserir type='fee' ou 'commission' para lançamentos internos
+
+-- withdrawals.notes: motivo de falha ou observação do admin
+alter table public.withdrawals
+  add column if not exists notes text;
+-- Exibido abaixo do badge de status em saques falhos no WithdrawalsSection
+-- O cron (process-withdrawals) pode preencher ao marcar status='failed'
+```
+
+### Função finance_summary — migration 045
+
+```sql
+create or replace function public.finance_summary(p_user_id uuid)
+returns json language sql stable security invoker set search_path = public
+-- Retorna: { saldo_disponivel, a_liberar, total_recebido, comissoes_plataforma }
+-- saldo_disponivel = profiles.balance (mantido por triggers da mig 029, atômico)
+-- Demais = SUM() de transactions aprovadas/pending — sem limite de rows
+-- grant execute to authenticated
+```
+
+- Chamada via `supabase.rpc('finance_summary', { p_user_id: uid })` no `FinancePage`
+- Resolve o problema dos KPI cards ficarem errados quando usuário tem >500 transações
+- `profiles.balance` é atualizado por triggers `sync_balance_on_transaction` e
+  `sync_balance_on_withdrawal` a cada INSERT/UPDATE/DELETE — nunca desatualizado
+
+### /api/withdrawals — uso de profiles.balance
+
+```typescript
+// ANTES (2 queries sem limite → lento; problema se >500 txs no client)
+const [balanceResult, wdResult] = await Promise.all([
+  supabase.from('transactions').select('net, amount, fee').eq('user_id', user.id).eq('status', 'approved'),
+  supabase.from('withdrawals').select('amount').eq('user_id', user.id).in('status', [...]),
+])
+const available = totalApproved - totalWithdrawn
+
+// DEPOIS (1 leitura de profiles.balance — trigger garante precisão)
+const { data: profile } = await supabase.from('profiles').select('balance').eq('id', user.id).single()
+const available = Math.max(0, Number(profile?.balance ?? 0))
+```
+
+### Tabela invoices (migração 043)
+
+```sql
+-- Rodar no Supabase SQL Editor (inclusa em _pending_analytics_037_to_041.sql)
+create table public.invoices (
+  id           uuid primary key default gen_random_uuid(),
+  user_id      uuid not null references auth.users(id) on delete cascade,
+  period       text not null,          -- ex: 'Mai 2026'
+  period_start date not null,
+  period_end   date not null,
+  value        numeric(10,2) not null default 0,
+  due_date     date not null,
+  status       text not null default 'pending'  -- 'paid' | 'pending' | 'overdue'
+    check (status in ('paid', 'pending', 'overdue')),
+  paid_at      timestamptz,
+  notes        text,
+  created_at   timestamptz not null default now()
+);
+-- Índices: invoices_user_id_idx, invoices_status_idx, invoices_period_start_idx
+-- RLS: policy "invoices_owner" → auth.uid() = user_id
+```
+
+**Nota:** enquanto o sistema de billing não existe, a tabela estará vazia → `buildLiveData` retorna `financeMock.invoices` como fallback. Quando o billing for ativado, inserir linhas reais na tabela `invoices` e o fallback deixa de ser usado automaticamente.
 
 ---
 
