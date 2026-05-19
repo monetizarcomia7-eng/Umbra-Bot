@@ -70,7 +70,10 @@ umbra-bot/
 │       ├── activity/             # Feed de eventos — dados reais do Supabase
 │       │   ├── page.tsx          # Server Component: busca 25 eventos + bots em paralelo (SSR)
 │       │   └── ActivityClient.tsx # Client Component: Realtime, filtros, paginação, CSV export, NoDataState
-│       ├── customers/            # Clientes + CSV export com analytics (mock)
+│       ├── customers/            # Clientes — dados reais do Supabase (SSR + Realtime)
+│       │   ├── page.tsx          # Server Component: SSR contacts + bots + summary RPC + filter options
+│       │   └── CustomersClient.tsx # Client Component: Realtime, filtros+sort persistidos, paginação server-side,
+│       │                           # timeline real (activity_events), add/import modal, bulkAddTag RPC
 │       ├── analytics/            # Análises — dados reais do Supabase (arquitetura modular)
 │       │   ├── page.tsx          # Server Component: filtros SQL, bots/flows no Promise.all principal, paralelismo total
 │       │   ├── AnalyticsClient.tsx # Client Component fino (~130 linhas): useTransition + router.replace + PostHog
@@ -322,7 +325,22 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Afiliados (funcional) | ❌ Não iniciado |
 | Bots — CRUD real | ❌ Ainda mock |
 | Gateways — configuração real de credenciais | ❌ Ainda mock |
-| Clientes — dados reais do banco | ❌ Ainda mock |
+| Clientes — Server Component SSR + dados reais (sem mock) | ✅ Funcional |
+| Clientes — colunas origin, first_purchase, last_purchase, avg_ticket (mig 052) | ✅ Implementado |
+| Clientes — status buyer/lead derivado de purchases > 0 (sem mismatch DB) | ✅ Corrigido |
+| Clientes — timeline real via activity_events.contact_id (lazy load) | ✅ Funcional |
+| Clientes — paginação server-side "Carregar mais" + cliente 10/pág | ✅ Funcional |
+| Clientes — Realtime INSERT + UPDATE via Supabase channel | ✅ Funcional |
+| Clientes — filtros persistidos em localStorage + debounce 300ms | ✅ Funcional |
+| Clientes — bulkAddTag via RPC contacts_bulk_add_tag (1 query atômica) | ✅ Implementado |
+| Clientes — "Adicionar cliente" modal funcional (POST → contacts) | ✅ Funcional |
+| Clientes — "Importar CSV" modal com preview + batch insert (lotes 50) | ✅ Funcional |
+| Clientes — NoDataState quando tabela vazia (sem mock) | ✅ Implementado |
+| Clientes — relTime usa Date.now() real (frozen timestamp corrigido) | ✅ Corrigido |
+| Clientes — trigger trg_sync_contact_stats sincroniza stats ao aprovar transação | ✅ Implementado |
+| Clientes — RPCs: contacts_summary, contacts_bulk_add_tag, contacts_filter_options | ✅ Implementado |
+| Clientes — 5 eventos PostHog: filter_changed, profile_opened, tag_added, added, imported | ✅ Implementado |
+| Clientes — ordenação clicável em todas as colunas (persiste em localStorage) | ✅ Implementado |
 | Testes (unit/e2e) | ❌ Não iniciado |
 | CI/CD | ❌ Não iniciado |
 
@@ -352,6 +370,11 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | `finance_period_changed` | `FinanceDashboard.tsx` — ao mudar período (7d / 30d / 90d / Tudo) |
 | `activity_filter_changed` | `ActivityClient.tsx` — ao mudar categoria, bot, período ou busca (inclui category + bot_filtered + period? + search?) |
 | `activity_live_toggled` | `ActivityClient.tsx` — ao ligar/desligar modo ao vivo (inclui live: boolean) |
+| `customer_filter_changed` | `CustomersClient.tsx` — ao mudar status, origem, tag ou período (inclui status + origin_filtered + tag_filtered + period) |
+| `customer_profile_opened` | `CustomersClient.tsx` — ao abrir painel lateral de cliente (inclui status) |
+| `customer_tag_added` | `CustomersClient.tsx` — tag adicionada individualmente ou em bulk (inclui tag + bulk + count?) |
+| `customer_added` | `CustomersClient.tsx` — ao criar cliente manualmente via modal |
+| `customer_imported` | `CustomersClient.tsx` — ao importar CSV (inclui rows: número de contatos importados) |
 
 ---
 
@@ -1083,3 +1106,106 @@ const botMap = useMemo(() => {
 // Uso: botMap.get(event.bot_id) ?? event.bot ?? 'Bot desconhecido'
 ```
 O campo `bot` (string legada) serve de fallback para eventos inseridos antes da migração 049 que adicionou `bot_id` FK.
+
+---
+
+## 16. MÓDULO DE CLIENTES
+
+### Arquivos
+
+```
+app/dashboard/customers/
+  ├── page.tsx            # Server Component — SSR: contacts (25 rows) + bots + contacts_summary RPC
+  │                       # + contacts_filter_options RPC — tudo em Promise.all
+  └── CustomersClient.tsx # Client Component — Realtime, filtros, sort, paginação, modais, timeline
+```
+
+### Fluxo de dados
+
+```
+CustomersPage (Server Component)
+  ├── Promise.all em paralelo:
+  │     ├── contacts: id, name, username, email, phone, origin, bot, bot_id,
+  │     │   purchases, total_spent, avg_ticket, tags, first_contact, last_contact,
+  │     │   first_purchase, last_purchase (limit 25, order last_contact desc)
+  │     ├── bots: id, name, username  (para dropdown de bot e resolução de nome)
+  │     ├── RPC contacts_summary(p_user_id): { total, buyers, leads }
+  │     └── RPC contacts_filter_options(p_user_id): { origins: string[] }
+  └── passa como props:
+        initialContacts: RawContact[]   hasMore: boolean
+        bots: ContactBotOption[]        originOptions: string[]
+        totalCount / buyersCount / leadsCount: number
+
+CustomersClient (Client Component)
+  ├── customers state: initialContacts.map(mapRaw) — nunca usa mock
+  ├── mapRaw: status = purchases > 0 ? 'buyer' : 'lead'  (não lê status do DB)
+  ├── relTime: usa Date.now() — nunca timestamp congelado
+  ├── Supabase Realtime:
+  │     canal 'customers-realtime', INSERT → prepend + incrementa contadores
+  │     UPDATE → atualiza inline no array
+  ├── Filtros persistidos em localStorage (prefixo 'umbra_cust_'):
+  │     search (debounce 300ms), status, origin, tag, period
+  │     getPeriodCutoff(period) usa Date.now() como base
+  ├── Sort: SortField × SortDir — sortCustomers() com localeCompare pt-BR
+  │     6 colunas clicáveis: name | origin | status | purchases | totalSpent | lastContact
+  │     Sort + direção persistidos em localStorage (umbra_cust_sort, umbra_cust_sort_dir)
+  ├── Paginação:
+  │     client-side: 10/pág sobre dados já carregados
+  │     server-side: "Carregar mais" → .range(offset, offset+24) acumula em customers
+  ├── bulkAddTag: RPC contacts_bulk_add_tag(p_ids, p_tag) — 1 UPDATE atômico
+  ├── Timeline (ProfilePanel):
+  │     lazy load via activity_events WHERE contact_id = customer.id
+  │     só executa ao abrir o painel — sem dados pré-carregados
+  ├── AddCustomerModal: INSERT em contacts com user_id do auth
+  └── ImportCSVModal: FileReader + parseCSV + batch INSERT (lotes 50)
+        Colunas CSV: Nome*, Username, E-mail, Telefone, Origem, Tags (sep. ;)
+```
+
+### Schema contacts — colunas relevantes (migration 052)
+
+```sql
+-- Colunas adicionadas na migração 052
+origin         text                          -- UTM source ou origem manual
+first_purchase timestamptz                   -- data da primeira transação aprovada
+last_purchase  timestamptz                   -- data da última transação aprovada
+avg_ticket     numeric(10,2) default 0       -- total_spent / purchases (mantido por trigger)
+
+-- Trigger: trg_sync_contact_stats (migration 052)
+-- Dispara após INSERT/UPDATE/DELETE em transactions WHERE contact_id IS NOT NULL
+-- Recalcula: purchases, orders_count, total_spent, avg_ticket, first_purchase, last_purchase
+```
+
+### RPCs do módulo (migration 052)
+
+```sql
+-- contacts_summary(p_user_id): retorna { total, buyers, leads }
+-- Usado na PageHeader para mostrar "38 contatos · 25 compradores · 13 leads"
+-- Zero rows transferidas (só contagem)
+
+-- contacts_bulk_add_tag(p_ids uuid[], p_tag text): UPDATE atômico
+-- array_append com NOT (tags @> ARRAY[p_tag]) — idempotente, sem duplicatas
+-- Substitui N queries paralelas (race condition eliminada)
+
+-- contacts_filter_options(p_user_id): retorna { origins: string[] }
+-- SELECT DISTINCT origin — populado no server-side para o dropdown Origem
+```
+
+### Status buyer/lead — lógica correta
+
+```typescript
+// mapRaw() em CustomersClient.tsx
+status: Number(row.purchases ?? 0) > 0 ? 'buyer' : 'lead'
+// O DB usa status in ('new','active','vip','inactive','blocked') — não usado para classificação
+// A classificação visual é sempre derivada do campo purchases
+```
+
+### Eventos PostHog do módulo
+
+| Evento | Quando |
+|---|---|
+| `customer_filter_changed` | ao mudar qualquer filtro (inclui status, origin_filtered, tag_filtered, period) |
+| `customer_profile_opened` | ao abrir painel lateral (inclui status: 'buyer'\|'lead') |
+| `customer_tag_added` | ao adicionar tag individual ou bulk (inclui tag, bulk, count?) |
+| `customer_added` | ao criar cliente via modal "Adicionar cliente" |
+| `customer_imported` | ao concluir import CSV (inclui rows: número de contatos) |
+| `csv_exported` | ao exportar CSV (inclui section: 'clientes', rows) |

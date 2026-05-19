@@ -34,6 +34,12 @@ type EventMap = {
   bank_account_deleted:      Record<string, never>
   finance_tab_changed:       { tab: string }
   finance_period_changed:    { period: string }
+  // Aba Clientes
+  customer_filter_changed:   { status: string; origin_filtered: boolean; tag_filtered: boolean; period: string }
+  customer_profile_opened:   { status: 'buyer' | 'lead' }
+  customer_tag_added:        { tag: string; bulk: boolean; count?: number }
+  customer_added:            Record<string, never>
+  customer_imported:         { rows: number }
 }
 
 export function useAnalytics() {
