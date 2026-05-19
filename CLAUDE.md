@@ -37,7 +37,9 @@ umbra-bot/
 │   │   │   └── register/route.ts # Registra webhook no Telegram
 │   │   ├── payments/
 │   │   │   ├── pix/route.ts      # Cria pagamento PIX (Mercado Pago) + Sentry + analytics
+│   │   │   │                     # Lê cookie 'umbra_aff' → valida afiliado (.eq user_id, IDOR-safe) → salva affiliate_id
 │   │   │   └── mercadopago-webhook/route.ts # Confirma pagamento (valida secret em prod)
+│   │   │                                    # Aprovado: credita comissão via RPC credit_affiliate_sale (mig 058)
 │   │   ├── withdrawals/
 │   │   │   └── route.ts          # POST: solicita saque (auth + zod + rate limit 3/dia + IP + Sentry)
 │   │   ├── bank-accounts/
@@ -69,8 +71,16 @@ umbra-bot/
 │   │   └── [userId]/
 │   │       ├── page.tsx          # Página pública do programa de afiliados (sem auth)
 │   │       │                     # Server Component: chama get_public_affiliate_program (RPC anon)
-│   │       │                     # Se userId inválido ou programa não encontrado → ProgramNotFound
+│   │       │                     # found=false → ProgramNotFound | active=false → ProgramClosed
+│   │       │                     # Exibe program_name, program_description, benefits[] dinâmicos
 │   │       └── ApplicationForm.tsx # Client Component: formulário de candidatura → POST /api/affiliates/apply
+│   ├── r/
+│   │   └── [slug]/
+│   │       └── route.ts          # GET: redirect de link de afiliado — rastreia clique + seta cookie
+│   │                             # Chama RPC track_affiliate_click (security definer, migração 057)
+│   │                             # Define cookie HTTP-only 'umbra_aff' com affiliate_id (maxAge = cookie_window dias)
+│   │                             # Redireciona para redirect_url do programa ou APP_URL como fallback
+│   │                             # Não está no matcher do middleware → público por padrão
 │   └── dashboard/
 │       ├── page.tsx              # Server Component async — busca KPIs 30d no servidor, passa initialData ao DashboardClient
 │       ├── _components/
@@ -99,8 +109,9 @@ umbra-bot/
 │       │       └── CohortTable.tsx   # Coorte semanal S0–S5 com heatmap color-mix
 │       ├── alerts/               # Alertas (mock)
 │       ├── affiliates/           # Afiliados — dados reais do Supabase (SSR + Client)
-│       │   ├── page.tsx          # Server Component: SSR affiliates + payments + config em paralelo; passa appUrl
-│       │   └── AffiliatesClient.tsx # Client Component: CRUD, pagamentos, config, pending, PostHog
+│       │   ├── page.tsx          # Server Component: SSR affiliates (+ notes) + payments + config + bots em paralelo
+│       │   │                     # passa appUrl + bots ao Client; DEFAULT_CONFIG inclui active/programName/etc.
+│       │   └── AffiliatesClient.tsx # Client Component: CRUD, ApproveAffiliateModal, config v2, comissão, PostHog
 │       ├── flows/                # Fluxos de venda (placeholder)
 │       ├── redirects/            # Redirecionadores (mock)
 │       ├── remarketing/          # Remarketing (mock)
@@ -157,7 +168,7 @@ umbra-bot/
 │   └── DashboardProvider.tsx     # Contexto global: user, alerts, botsCount, logout — 1 fetch
 ├── public/
 │   └── sw.js                     # Service Worker para Web Push
-├── supabase/migrations/          # 54 migrações SQL (000 a 054)
+├── supabase/migrations/          # 58 migrações SQL (000 a 058)
 ├── vercel.json                   # 3 Cron jobs: process-withdrawals (06:00 UTC) + cleanup-activity (02:00 UTC) + check-bots (a cada 30 min)
 ├── sentry.*.config.ts            # Sentry (client com Replay / server com tracePropagation)
 ├── instrumentation.ts            # Next.js hook para Sentry server
@@ -350,6 +361,18 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Afiliados — badge de candidaturas pendentes na PageHeader | ✅ Implementado |
 | Afiliados — filtro "Pendentes" na tabela de afiliados | ✅ Implementado |
 | Afiliados — migração 054: status pending + RPCs get_public_affiliate_program + submit_affiliate_application | ✅ Aplicada |
+| Afiliados — ApproveAffiliateModal: seleção de bots + produtos ao aprovar candidatura (salva JSON em notes) | ✅ Implementado |
+| Afiliados — coluna notes em affiliates (migração 055) | ✅ Implementado |
+| Afiliados — config v2: ativar/desativar programa (toggle active) | ✅ Implementado |
+| Afiliados — config v2: personalização pública (program_name, program_description, benefits list, redirect_url) | ✅ Implementado |
+| Afiliados — config v2: minPayout editável quando autoPayment=true | ✅ Implementado |
+| Afiliados — migração 056: campos config v2 + RPC get_public_affiliate_program atualizada | ✅ Implementada |
+| Afiliados — página /afiliar/[userId]: ProgramClosed quando active=false; renderiza name/description/benefits dinâmicos | ✅ Implementado |
+| Afiliados — /r/[slug]: redirect com rastreamento de clique + cookie HTTP-only de atribuição | ✅ Implementado |
+| Afiliados — migração 057: RPC track_affiliate_click (incremento atômico clicks, retorna redirect_url) | ✅ Implementada |
+| Afiliados — PIX route: lê cookie umbra_aff, valida IDOR, salva affiliate_id na transação | ✅ Implementado |
+| Afiliados — Webhook MP: credita sales++ e commission via RPC credit_affiliate_sale ao aprovar pagamento | ✅ Implementado |
+| Afiliados — migração 058: transactions.affiliate_id + RPC credit_affiliate_sale (security definer, anon) | ✅ Implementada |
 | Bots — CRUD real | ❌ Ainda mock |
 | Gateways — configuração real de credenciais | ❌ Ainda mock |
 | Clientes — Server Component SSR + dados reais (sem mock) | ✅ Funcional |
@@ -1264,22 +1287,25 @@ app/dashboard/affiliates/
 AffiliatesPage (Server Component)
   ├── Promise.all em paralelo:
   │     ├── affiliates: id, name, email, slug, status, clicks, sales, commission,
-  │     │   conversion_rate, payment_method, commission_pct, joined_at
+  │     │   conversion_rate, payment_method, commission_pct, joined_at, notes
   │     │   filtrado por user_id, ordenado por commission desc
   │     ├── affiliate_payments: id, affiliate_id, cycle, sales, amount, status, paid_at, created_at
   │     │   filtrado por user_id, ordenado por created_at desc
-  │     └── affiliate_config: * (single) — fallback: DEFAULT_CONFIG se inexistente
+  │     ├── affiliate_config: * (single) — fallback: DEFAULT_CONFIG se inexistente
+  │     └── bots: id, name, username — para ApproveAffiliateModal
   └── passa como props:
         initialAffiliates: RawAffiliate[]
         initialPayments: RawPayment[]
         initialConfig: RawConfig
         userId: string
         appUrl: string  ← process.env.APP_URL ?? 'https://umbra.bot'
+        bots: RawBot[]  ← export interface RawBot { id, name, username }
 
 AffiliatesClient (Client Component)
   ├── affiliates state: initialAffiliates.map(mapAffiliate)
   ├── payments state: initialPayments.map(mapPayment)
   ├── config state: initialConfig
+  ├── approveId state: string | null — id do afiliado a aprovar via modal
   ├── KPIs computados dos dados reais:
   │     activeCount, pendingApps (candidaturas pending),
   │     totalSales, totalComm, pendingCount, pendingTotal
@@ -1290,7 +1316,10 @@ AffiliatesClient (Client Component)
   ├── handleStatusChange: UPDATE status em affiliates → atualiza state
   │     track('affiliate_status_changed', { status })
   ├── handleDelete: DELETE em affiliates → remove do state
+  ├── handleApprove(id, notesJson): UPDATE status='active' + notes=notesJson → atualiza state
+  │     chamado pelo ApproveAffiliateModal ao confirmar aprovação
   ├── handleSaveConfig: UPSERT em affiliate_config (onConflict: 'user_id') → atualiza state
+  │     cleanBenefits filtra strings vazias antes de salvar
   │     track('affiliate_config_saved', { percentage, attribution, cookie_window })
   ├── handlePay: batch UPDATE affiliate_payments (status='paid', paid_at=now)
   │     await Promise.all de N updates → toast de erro/sucesso
@@ -1305,17 +1334,34 @@ AffiliatesClient (Client Component)
   │     conversão (%), link, menu MoreHorizontal
   │     filtro de status: Todos | Ativos | Pausados | Arquivados | Pendentes
   ├── AffiliateActionsMenu:
-  │     status 'pending': Aprovar (→ active) | Recusar (→ delete)
+  │     status 'pending': Aprovar (→ abre ApproveAffiliateModal) | Recusar (→ delete)
   │     status outros: Edit | Pause/Ativar | Arquivar/Reativar | Apagar
+  ├── ApproveAffiliateModal (novo):
+  │     checkboxes de bots (lista dos bots do usuário)
+  │     textarea de produtos (nomes separados por vírgula)
+  │     ao confirmar: chama handleApprove(id, JSON.stringify({ bots, products }))
+  │     salva seleção em affiliates.notes como JSON
   ├── CopyableLink: ícone de cópia + feedback visual "Copiado!"
   │     track('affiliate_link_copied', {})
   ├── AddAffiliateModal: nome, email, slug (auto-gerado), comissão
   ├── EditAffiliateModal: editar nome, email, slug, comissão, método de pagamento
   ├── DeleteConfirmModal: confirmação antes de deletar
   ├── ProgramConfigSection (aba Configurações):
-  │     percentage, attributionRule, cookieWindow, upsellCommissions,
-  │     recurringCommissions, autoPayment, minPayout
+  │     Seção "Página pública":
+  │       toggle active (ativa/desativa programa inteiro)
+  │       programName input (nome público do programa)
+  │       programDescription textarea (160 chars max, contador visível)
+  │       redirectUrl input (URL para redirecionar após /r/[slug])
+  │     Seção "Benefícios":
+  │       lista editável de até 8 benefícios (add/remove por item)
+  │     Seção "Comissão padrão": percentage slider/input
+  │     Seção "Regra de atribuição": attributionRule select
+  │     Seção "Janela de cookie": cookieWindow select
+  │     Seção "Regras avançadas":
+  │       upsellCommissions toggle, recurringCommissions toggle
+  │       autoPayment toggle → quando true: minPayout number input (R$)
   │     botão "Salvar configurações" → handleSaveConfig
+  │     Preview card: mostra estado do programa (ativo/fechado) + campos configurados
   └── PaymentsSection (aba Pagamentos):
         tabela com ciclo, afiliado, vendas, valor, status
         checkbox seleção múltipla + "Marcar como pago" em lote
@@ -1328,6 +1374,9 @@ AffiliatesClient (Client Component)
 user_id        uuid references auth.users(id) on delete cascade
 commission_pct numeric(5,2) not null default 30
 -- RLS: affiliates_owner → auth.uid() = user_id
+
+-- affiliates (migration 055 — campo adicionado)
+notes text  -- JSON com { bots: string[], products: string[] } salvo ao aprovar candidatura
 
 -- affiliate_payments (migration 053 — campo adicionado)
 user_id uuid references auth.users(id) on delete cascade
@@ -1346,6 +1395,18 @@ min_payout            numeric(10,2) not null default 100
 created_at / updated_at  timestamptz
 -- RLS: affiliate_config_owner → auth.uid() = user_id
 -- Trigger: affiliate_config_updated_at (chama set_updated_at())
+
+-- affiliate_config (migration 056 — campos adicionados)
+active              boolean not null default true   -- ativa/desativa o programa inteiro
+program_name        text                            -- nome público do programa
+program_description text                            -- descrição exibida em /afiliar/[userId]
+benefits            text[]                          -- lista de benefícios (até 8 itens)
+redirect_url        text                            -- URL de destino após /r/[slug]
+
+-- transactions (migration 058 — campo adicionado)
+affiliate_id uuid references public.affiliates(id) on delete set null
+-- Índice parcial: transactions_affiliate_id_idx WHERE affiliate_id IS NOT NULL
+-- Preenchido pelo POST /api/payments/pix quando cookie 'umbra_aff' está presente
 ```
 
 ### DEFAULT_CONFIG (fallback quando affiliate_config ainda não existe)
@@ -1359,6 +1420,11 @@ const DEFAULT_CONFIG: RawConfig = {
   recurringCommissions: false,
   autoPayment: false,
   minPayout: 100,
+  active: true,
+  programName: '',
+  programDescription: '',
+  benefits: [],
+  redirectUrl: '',
 }
 ```
 
@@ -1372,7 +1438,7 @@ const DEFAULT_CONFIG: RawConfig = {
 | `pending` | Pendente | Candidatura via página pública aguardando aprovação |
 
 Ações do menu por status:
-- **pending**: Aprovar (→ active) ou Recusar (DELETE)
+- **pending**: Aprovar (→ abre `ApproveAffiliateModal` → handleApprove) ou Recusar (DELETE)
 - **outros**: Editar, Pausar/Ativar, Arquivar/Reativar, Apagar
 
 ### Página pública de candidaturas — `/afiliar/[userId]`
@@ -1382,7 +1448,10 @@ app/afiliar/[userId]/
   ├── page.tsx          # Server Component público (sem auth no middleware)
   │                     # Valida UUID → chama get_public_affiliate_program(userId)
   │                     # found=false → ProgramNotFound (sem auth redirect)
-  │                     # Renderiza: hero com % comissão, lista de benefícios, ApplicationForm
+  │                     # active=false → ProgramClosed (🔒 "Programa fechado", exibe program_name)
+  │                     # Renderiza: hero com program_name (ou fallback), program_description,
+  │                     #   lista de benefícios (benefits[] ou auto-gerados dos flags)
+  │                     #   + ApplicationForm
   └── ApplicationForm.tsx # Client Component — form nome + email
                           # POST /api/affiliates/apply → { userId, name, email }
                           # Estados: idle | loading | success | error | duplicate
@@ -1395,6 +1464,28 @@ app/api/affiliates/apply/route.ts
         → security definer, bypass RLS, grant to anon
         → retorna { success: true } ou { success: false, error: 'already_applied' | 'invalid_program' }
 ```
+
+### Link de divulgação — `/r/[slug]`
+
+```
+app/r/[slug]/route.ts
+  GET /r/{slug-do-afiliado}
+  ├── Chama RPC track_affiliate_click({ p_slug }) via supabase.rpc (anon key)
+  ├── found=false (slug inválido, afiliado inativo, programa desativado) → redirect para APP_URL
+  ├── found=true:
+  │     → define cookie 'umbra_aff' = affiliate_id
+  │         httpOnly: true, sameSite: 'lax', path: '/'
+  │         maxAge = cookie_window * 86400 (dias convertidos em segundos)
+  │         secure: true em produção
+  │     → redirect para result.redirect_url || APP_URL
+  └── O cookie é lido pelo POST /api/payments/pix ao criar cobrança
+```
+
+**Ciclo completo de atribuição:**
+1. Afiliado compartilha `umbra.bot/r/seu-slug`
+2. Visitante acessa → clique registrado atomicamente (clicks++) + cookie 'umbra_aff' setado
+3. Visitante compra → PIX route lê cookie, valida IDOR (.eq user_id + status active), salva `affiliate_id` na transação
+4. Mercado Pago confirma pagamento → webhook lê `affiliate_id`, busca `commission_pct`, chama `credit_affiliate_sale` (sales++ + commission+=)
 
 ### RPCs públicas — migração 054
 
@@ -1415,6 +1506,48 @@ submit_affiliate_application(p_user_id, p_name, p_email) → json
   -- INSERT com status='pending'
   -- Retorna { success: true } ou { success: false, error: string }
 ```
+
+### RPC atualizada — migração 056
+
+```sql
+-- get_public_affiliate_program reescrita para incluir novos campos
+get_public_affiliate_program(p_user_id uuid) → json
+  { found, active, percentage, cookie_window, upsell_commissions, recurring_commissions,
+    program_name, program_description, benefits }
+  -- Retorna active=false se o programa foi desativado pelo operador
+  -- A página /afiliar/[userId] exibe ProgramClosed quando active=false
+  -- Benefits é text[] (pode ser null → página usa benefícios gerados automaticamente)
+```
+
+### RPC de rastreamento de clique — migração 057
+
+```sql
+-- track_affiliate_click(p_slug text) → json
+-- security definer, grant to anon, authenticated
+-- Busca afiliado pelo slug (status='active')
+-- Verifica se o programa está active=true
+-- Incremento atômico: UPDATE affiliates SET clicks = clicks + 1
+-- Retorna: { found, affiliate_id, cookie_window, redirect_url }
+-- found=false se slug não existe, afiliado inativo ou programa desativado
+```
+
+- Chamada via `supabase.rpc('track_affiliate_click', { p_slug: slug })` em `app/r/[slug]/route.ts`
+- Rota pública (não está no middleware matcher) → usa anon key → function bypassa RLS
+- Cookie `umbra_aff` definido com maxAge = `cookie_window * 24 * 60 * 60` segundos
+
+### RPC de crédito de comissão — migração 058
+
+```sql
+-- credit_affiliate_sale(p_affiliate_id uuid, p_commission numeric) → void
+-- security definer, grant to anon, authenticated
+-- UPDATE affiliates SET sales = sales + 1, commission = commission + p_commission
+-- Atomicamente incrementa sales e comissão em uma única query
+-- Necessário pois o webhook MP roda com anon key (sem sessão de usuário)
+```
+
+- Chamada no webhook MP ao confirmar `status = 'approved'`
+- Comissão calculada: `net * commission_pct / 100`, arredondada para 2 casas
+- Erro capturado com Sentry mas não bloqueia o 200 para o Mercado Pago
 
 ### Eventos PostHog do módulo
 
