@@ -19,7 +19,7 @@ export interface RawAffiliate {
   name: string
   email: string
   slug: string
-  status: 'active' | 'paused' | 'archived'
+  status: 'active' | 'paused' | 'archived' | 'pending'
   clicks: number
   sales: number
   commission: number
@@ -63,7 +63,7 @@ interface Affiliate {
   sales: number
   commission: number
   conversionRate: number
-  status: 'active' | 'paused' | 'archived'
+  status: 'active' | 'paused' | 'archived' | 'pending'
   joined: number
   paymentMethod: string
   commissionPct: number
@@ -385,6 +385,7 @@ const STATUS_MAP = {
   active:   { label: 'Ativo',     tone: 'success' },
   paused:   { label: 'Pausado',   tone: 'warning' },
   archived: { label: 'Arquivado', tone: 'muted'   },
+  pending:  { label: 'Pendente',  tone: 'primary'  },
 } as const
 
 const SORT_LABEL: Record<string, string> = {
@@ -431,6 +432,8 @@ function AffiliateActionsMenu({ affiliate, onEdit, onStatusChange, onDeleteReque
     return () => document.removeEventListener('mousedown', h)
   }, [])
 
+  const isPending = affiliate.status === 'pending'
+
   return (
     <div ref={ref} className="relative">
       <button
@@ -440,41 +443,57 @@ function AffiliateActionsMenu({ affiliate, onEdit, onStatusChange, onDeleteReque
       </button>
       {open && (
         <div className="absolute right-0 z-50 top-full mt-1 bg-surface border border-border rounded-xl shadow-lg py-1 w-44 overflow-hidden">
-          <button onClick={() => { onEdit(); setOpen(false) }}
-            className="w-full flex items-center gap-2 px-3 py-2 text-[12.5px] text-text hover:bg-surface-2">
-            <Edit2 size={13} className="text-text-muted" /> Editar
-          </button>
+          {isPending ? (
+            <>
+              <button onClick={() => { onStatusChange('active'); setOpen(false) }}
+                className="w-full flex items-center gap-2 px-3 py-2 text-[12.5px] text-success hover:bg-success-soft">
+                <Check size={13} /> Aprovar
+              </button>
+              <div className="border-t border-border my-1" />
+              <button onClick={() => { onDeleteRequest(); setOpen(false) }}
+                className="w-full flex items-center gap-2 px-3 py-2 text-[12.5px] text-danger hover:bg-danger-soft">
+                <Trash2 size={13} /> Recusar
+              </button>
+            </>
+          ) : (
+            <>
+              <button onClick={() => { onEdit(); setOpen(false) }}
+                className="w-full flex items-center gap-2 px-3 py-2 text-[12.5px] text-text hover:bg-surface-2">
+                <Edit2 size={13} className="text-text-muted" /> Editar
+              </button>
 
-          {affiliate.status === 'active' && (
-            <button onClick={() => { onStatusChange('paused'); setOpen(false) }}
-              className="w-full flex items-center gap-2 px-3 py-2 text-[12.5px] text-text hover:bg-surface-2">
-              <Pause size={13} className="text-text-muted" /> Pausar
-            </button>
-          )}
-          {affiliate.status === 'paused' && (
-            <button onClick={() => { onStatusChange('active'); setOpen(false) }}
-              className="w-full flex items-center gap-2 px-3 py-2 text-[12.5px] text-text hover:bg-surface-2">
-              <Play size={13} className="text-text-muted" /> Ativar
-            </button>
-          )}
-          {affiliate.status !== 'archived' && (
-            <button onClick={() => { onStatusChange('archived'); setOpen(false) }}
-              className="w-full flex items-center gap-2 px-3 py-2 text-[12.5px] text-text hover:bg-surface-2">
-              <Archive size={13} className="text-text-muted" /> Arquivar
-            </button>
-          )}
-          {affiliate.status === 'archived' && (
-            <button onClick={() => { onStatusChange('active'); setOpen(false) }}
-              className="w-full flex items-center gap-2 px-3 py-2 text-[12.5px] text-text hover:bg-surface-2">
-              <Play size={13} className="text-text-muted" /> Reativar
-            </button>
-          )}
+              {affiliate.status === 'active' && (
+                <button onClick={() => { onStatusChange('paused'); setOpen(false) }}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-[12.5px] text-text hover:bg-surface-2">
+                  <Pause size={13} className="text-text-muted" /> Pausar
+                </button>
+              )}
+              {affiliate.status === 'paused' && (
+                <button onClick={() => { onStatusChange('active'); setOpen(false) }}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-[12.5px] text-text hover:bg-surface-2">
+                  <Play size={13} className="text-text-muted" /> Ativar
+                </button>
+              )}
+              {affiliate.status !== 'archived' && (
+                <button onClick={() => { onStatusChange('archived'); setOpen(false) }}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-[12.5px] text-text hover:bg-surface-2">
+                  <Archive size={13} className="text-text-muted" /> Arquivar
+                </button>
+              )}
+              {affiliate.status === 'archived' && (
+                <button onClick={() => { onStatusChange('active'); setOpen(false) }}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-[12.5px] text-text hover:bg-surface-2">
+                  <Play size={13} className="text-text-muted" /> Reativar
+                </button>
+              )}
 
-          <div className="border-t border-border my-1" />
-          <button onClick={() => { onDeleteRequest(); setOpen(false) }}
-            className="w-full flex items-center gap-2 px-3 py-2 text-[12.5px] text-danger hover:bg-danger-soft">
-            <Trash2 size={13} /> Apagar
-          </button>
+              <div className="border-t border-border my-1" />
+              <button onClick={() => { onDeleteRequest(); setOpen(false) }}
+                className="w-full flex items-center gap-2 px-3 py-2 text-[12.5px] text-danger hover:bg-danger-soft">
+                <Trash2 size={13} /> Apagar
+              </button>
+            </>
+          )}
         </div>
       )}
     </div>
@@ -504,6 +523,7 @@ function AffiliatesTable({ data, onAddClick, onEdit, onStatusChange, onDeleteReq
       if (statusFilter === 'Ativos'     && a.status !== 'active')   return false
       if (statusFilter === 'Pausados'   && a.status !== 'paused')   return false
       if (statusFilter === 'Arquivados' && a.status !== 'archived') return false
+      if (statusFilter === 'Pendentes'  && a.status !== 'pending')  return false
       return true
     })
     const [field, dir] = sort.split('_')
@@ -540,7 +560,7 @@ function AffiliatesTable({ data, onAddClick, onEdit, onStatusChange, onDeleteReq
             className="w-full h-9 pl-9 pr-3 bg-surface border border-border rounded-lg text-[12.5px] placeholder:text-text-subtle text-text focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50" />
         </div>
         <Dropdown label="Status" value={statusFilter}
-          options={['Todos os status', 'Ativos', 'Pausados', 'Arquivados']}
+          options={['Todos os status', 'Ativos', 'Pausados', 'Arquivados', 'Pendentes']}
           onChange={setStatusFilter} />
         <Dropdown label="Ordenar" value={SORT_LABEL[sort]}
           options={Object.values(SORT_LABEL)}
@@ -1197,11 +1217,12 @@ function Tabs({ tabs, active, onChange }: { tabs: { id: string; label: string; c
 
 /* ── AffiliatesClient ─────────────────────────────────────── */
 
-export default function AffiliatesClient({ initialAffiliates, initialPayments, initialConfig, userId }: {
+export default function AffiliatesClient({ initialAffiliates, initialPayments, initialConfig, userId, appUrl }: {
   initialAffiliates: RawAffiliate[]
   initialPayments: RawPayment[]
   initialConfig: RawConfig
   userId: string
+  appUrl: string
 }) {
   const { track } = useAnalytics()
 
@@ -1221,11 +1242,13 @@ export default function AffiliatesClient({ initialAffiliates, initialPayments, i
   }
 
   // ── KPIs
-  const activeCount  = affiliates.filter((a) => a.status === 'active').length
-  const totalSales   = affiliates.reduce((s, a) => s + a.sales, 0)
-  const totalComm    = affiliates.reduce((s, a) => s + a.commission, 0)
-  const pendingCount = payments.filter((p) => p.status === 'pending').length
-  const pendingTotal = payments.filter((p) => p.status === 'pending').reduce((s, p) => s + p.amount, 0)
+  const activeCount     = affiliates.filter((a) => a.status === 'active').length
+  const pendingApps     = affiliates.filter((a) => a.status === 'pending').length
+  const totalSales      = affiliates.reduce((s, a) => s + a.sales, 0)
+  const totalComm       = affiliates.reduce((s, a) => s + a.commission, 0)
+  const pendingCount    = payments.filter((p) => p.status === 'pending').length
+  const pendingTotal    = payments.filter((p) => p.status === 'pending').reduce((s, p) => s + p.amount, 0)
+  const publicPageUrl   = `${appUrl}/afiliar/${userId}`
 
   // ── Add affiliate
   async function handleAdd(data: { name: string; email: string; payment: string; commissionPct: number }) {
@@ -1335,6 +1358,13 @@ export default function AffiliatesClient({ initialAffiliates, initialPayments, i
     { id: 'payments',   label: 'Pagamentos',   count: pendingCount > 0 ? pendingCount : undefined },
   ]
 
+  const [linkCopied, setLinkCopied] = useState(false)
+  function handleCopyPublicLink() {
+    try { navigator.clipboard?.writeText(publicPageUrl) } catch (_) {}
+    setLinkCopied(true)
+    setTimeout(() => setLinkCopied(false), 2000)
+  }
+
   return (
     <>
       <PageHeader
@@ -1342,9 +1372,23 @@ export default function AffiliatesClient({ initialAffiliates, initialPayments, i
         subtitle="Gerencie parceiros, comissões e pagamentos do seu programa de afiliação."
         actions={
           <>
-            <button className="h-9 px-3.5 inline-flex items-center gap-1.5 text-[12.5px] font-medium bg-surface border border-border text-text hover:bg-surface-2 rounded-lg transition-colors">
-              <ExternalLink size={14} />Página pública
-            </button>
+            <div className="flex items-center gap-1">
+              <a href={publicPageUrl} target="_blank" rel="noopener noreferrer"
+                className="h-9 px-3.5 inline-flex items-center gap-1.5 text-[12.5px] font-medium bg-surface border border-border text-text hover:bg-surface-2 rounded-l-lg border-r-0 transition-colors">
+                <ExternalLink size={14} />Página pública
+              </a>
+              <button onClick={handleCopyPublicLink} title="Copiar link"
+                className="h-9 px-2.5 inline-flex items-center justify-center bg-surface border border-border text-text-muted hover:bg-surface-2 hover:text-text rounded-r-lg transition-colors">
+                {linkCopied ? <Check size={13} className="text-success" /> : <Copy size={13} />}
+              </button>
+            </div>
+            {pendingApps > 0 && (
+              <button onClick={() => setTab('affiliates')}
+                className="h-9 px-3 inline-flex items-center gap-1.5 text-[12.5px] font-medium bg-primary-soft text-primary border border-primary/20 rounded-lg hover:bg-primary/15 transition-colors">
+                <span className="w-4 h-4 rounded-full bg-primary text-primary-fg text-[10px] font-bold flex items-center justify-center">{pendingApps}</span>
+                {pendingApps === 1 ? 'candidatura' : 'candidaturas'}
+              </button>
+            )}
             <button onClick={() => setAddOpen(true)}
               className="h-9 px-3.5 inline-flex items-center gap-1.5 text-[12.5px] font-medium bg-primary text-primary-fg hover:opacity-90 rounded-lg transition-colors">
               <UserPlus size={14} />Adicionar afiliado
@@ -1358,7 +1402,7 @@ export default function AffiliatesClient({ initialAffiliates, initialPayments, i
         <SummaryCard
           label="Afiliados ativos" icon={UsersRound} tone="primary"
           value={`${fmtNum(activeCount)} / ${fmtNum(affiliates.length)}`}
-          sub={affiliates.length === 0 ? 'Nenhum afiliado ainda' : `${affiliates.length} no programa`}
+          sub={pendingApps > 0 ? `${pendingApps} candidatura${pendingApps === 1 ? '' : 's'} pendente${pendingApps === 1 ? '' : 's'}` : affiliates.length === 0 ? 'Nenhum afiliado ainda' : `${affiliates.length} no programa`}
         />
         <SummaryCard
           label="Vendas atribuídas" icon={ShoppingBag}

@@ -50,6 +50,8 @@ export default async function AffiliatesPage() {
     minPayout:            Number(configRes.data.min_payout),
   } : DEFAULT_CONFIG
 
+  const appUrl = process.env.APP_URL ?? 'https://umbra.bot'
+
   return (
     <DashboardLayout>
       <AffiliatesClient
@@ -57,6 +59,7 @@ export default async function AffiliatesPage() {
         initialPayments={(paymentsRes.data ?? []) as unknown as RawPayment[]}
         initialConfig={config}
         userId={uid}
+        appUrl={appUrl}
       />
     </DashboardLayout>
   )
