@@ -40,6 +40,12 @@ type EventMap = {
   customer_tag_added:        { tag: string; bulk: boolean; count?: number }
   customer_added:            Record<string, never>
   customer_imported:         { rows: number }
+  // Aba Afiliados
+  affiliate_added:           { commission_pct: number }
+  affiliate_status_changed:  { status: 'active' | 'paused' | 'archived' }
+  affiliate_paid:            { count: number; total: number }
+  affiliate_config_saved:    { percentage: number; attribution: string; cookie_window: number }
+  affiliate_link_copied:     Record<string, never>
 }
 
 export function useAnalytics() {

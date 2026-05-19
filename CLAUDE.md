@@ -88,7 +88,9 @@ umbra-bot/
 │       │       ├── StatusCard.tsx    # Pizza Recharts — distribuição por status
 │       │       └── CohortTable.tsx   # Coorte semanal S0–S5 com heatmap color-mix
 │       ├── alerts/               # Alertas (mock)
-│       ├── affiliates/           # Afiliados (mock)
+│       ├── affiliates/           # Afiliados — dados reais do Supabase (SSR + Client)
+│       │   ├── page.tsx          # Server Component: SSR affiliates + payments + config em paralelo
+│       │   └── AffiliatesClient.tsx # Client Component: CRUD, pagamentos, configuração, PostHog
 │       ├── flows/                # Fluxos de venda (placeholder)
 │       ├── redirects/            # Redirecionadores (mock)
 │       ├── remarketing/          # Remarketing (mock)
@@ -127,7 +129,7 @@ umbra-bot/
 │           └── WithdrawModal.tsx       # Modal multi-step: self-fetch de bank_accounts, add/delete inline
 │                                       # maskPixKey: oculta meio da chave PIX para privacidade
 ├── hooks/
-│   ├── use-analytics.ts          # PostHog events tipados (19 eventos: inclui finance + analytics events)
+│   ├── use-analytics.ts          # PostHog events tipados (24 eventos: inclui finance + analytics + affiliates)
 │   ├── use-keyboard-shortcuts.ts # ⌘K, b, f, c, a, ?
 │   └── use-mobile.ts
 ├── lib/
@@ -145,7 +147,7 @@ umbra-bot/
 │   └── DashboardProvider.tsx     # Contexto global: user, alerts, botsCount, logout — 1 fetch
 ├── public/
 │   └── sw.js                     # Service Worker para Web Push
-├── supabase/migrations/          # 52 migrações SQL (000 a 051)
+├── supabase/migrations/          # 53 migrações SQL (000 a 053)
 ├── vercel.json                   # 3 Cron jobs: process-withdrawals (06:00 UTC) + cleanup-activity (02:00 UTC) + check-bots (a cada 30 min)
 ├── sentry.*.config.ts            # Sentry (client com Replay / server com tracePropagation)
 ├── instrumentation.ts            # Next.js hook para Sentry server
@@ -322,7 +324,16 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Content-Security-Policy (CSP sem unsafe-eval em produção) | ✅ Configurado no middleware |
 | Sistema de planos/billing | ❌ Não iniciado |
 | Editor de fluxos de venda | ❌ Não iniciado |
-| Afiliados (funcional) | ❌ Não iniciado |
+| Afiliados — Server Component SSR + Client Component (dados reais) | ✅ Funcional |
+| Afiliados — CRUD real (add/edit/pause/archive/delete) + confirmação modal | ✅ Implementado |
+| Afiliados — link de afiliado copiável (slug-based) | ✅ Implementado |
+| Afiliados — pagamentos com async/await + feedback de erro | ✅ Implementado |
+| Afiliados — configuração do programa persistida em affiliate_config (upsert) | ✅ Implementado |
+| Afiliados — RLS corrigida (user_id em affiliates + affiliate_payments + affiliate_config) | ✅ Implementado |
+| Afiliados — 5 eventos PostHog: affiliate_added/status_changed/paid/config_saved/link_copied | ✅ Implementado |
+| Afiliados — NoDataState quando tabela vazia (sem mock) | ✅ Implementado |
+| Afiliados — KPIs reais computados dos dados (sem deltas hardcoded) | ✅ Implementado |
+| Afiliados — migração 053: user_id + RLS + affiliate_config | ✅ Migração criada |
 | Bots — CRUD real | ❌ Ainda mock |
 | Gateways — configuração real de credenciais | ❌ Ainda mock |
 | Clientes — Server Component SSR + dados reais (sem mock) | ✅ Funcional |
@@ -376,6 +387,11 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | `customer_tag_added` | `CustomersClient.tsx` — tag adicionada individualmente ou em bulk (inclui tag + bulk + count?) |
 | `customer_added` | `CustomersClient.tsx` — ao criar cliente manualmente via modal |
 | `customer_imported` | `CustomersClient.tsx` — ao importar CSV (inclui rows: número de contatos importados) |
+| `affiliate_added` | `AffiliatesClient.tsx` — ao adicionar novo afiliado (inclui commission_pct) |
+| `affiliate_status_changed` | `AffiliatesClient.tsx` — ao pausar, ativar ou arquivar afiliado (inclui status) |
+| `affiliate_paid` | `AffiliatesClient.tsx` — ao marcar pagamentos como pagos (inclui count + total) |
+| `affiliate_config_saved` | `AffiliatesClient.tsx` — ao salvar configuração do programa (inclui percentage, attribution, cookie_window) |
+| `affiliate_link_copied` | `AffiliatesClient.tsx` — ao copiar link de afiliado |
 
 ---
 
@@ -1212,3 +1228,120 @@ status: Number(row.purchases ?? 0) > 0 ? 'buyer' : 'lead'
 | `customer_added` | ao criar cliente via modal "Adicionar cliente" |
 | `customer_imported` | ao concluir import CSV (inclui rows: número de contatos) |
 | `csv_exported` | ao exportar CSV (inclui section: 'clientes', rows) |
+
+---
+
+## 17. MÓDULO DE AFILIADOS
+
+### Arquivos
+
+```
+app/dashboard/affiliates/
+  ├── page.tsx             # Server Component — SSR: affiliates + affiliate_payments + affiliate_config
+  │                        # Promise.all em paralelo; DEFAULT_CONFIG fallback quando config inexistente
+  └── AffiliatesClient.tsx # Client Component — CRUD completo, pagamentos, config, PostHog
+```
+
+### Fluxo de dados
+
+```
+AffiliatesPage (Server Component)
+  ├── Promise.all em paralelo:
+  │     ├── affiliates: id, name, email, slug, status, clicks, sales, commission,
+  │     │   conversion_rate, payment_method, commission_pct, joined_at
+  │     │   filtrado por user_id, ordenado por commission desc
+  │     ├── affiliate_payments: id, affiliate_id, cycle, sales, amount, status, paid_at, created_at
+  │     │   filtrado por user_id, ordenado por created_at desc
+  │     └── affiliate_config: * (single) — fallback: DEFAULT_CONFIG se inexistente
+  └── passa como props:
+        initialAffiliates: RawAffiliate[]
+        initialPayments: RawPayment[]
+        initialConfig: RawConfig
+        userId: string
+
+AffiliatesClient (Client Component)
+  ├── affiliates state: initialAffiliates.map(mapAffiliate)
+  ├── payments state: initialPayments.map(mapPayment)
+  ├── config state: initialConfig
+  ├── KPIs computados dos dados reais:
+  │     totalAffiliates, activeAffiliates, totalClicks, totalSales,
+  │     totalCommission, pendingAmount (pagamentos pendentes)
+  ├── handleAdd: INSERT em affiliates → usa UUID retornado do banco → prepend no state
+  │     track('affiliate_added', { commission_pct })
+  ├── handleEdit: UPDATE em affiliates → atualiza state inline
+  ├── handleStatusChange: UPDATE status em affiliates → atualiza state
+  │     track('affiliate_status_changed', { status })
+  ├── handleDelete: DELETE em affiliates → remove do state
+  ├── handleSaveConfig: UPSERT em affiliate_config (onConflict: 'user_id') → atualiza state
+  │     track('affiliate_config_saved', { percentage, attribution, cookie_window })
+  ├── handlePay: batch UPDATE affiliate_payments (status='paid', paid_at=now)
+  │     await Promise.all de N updates → toast de erro/sucesso
+  │     track('affiliate_paid', { count, total })
+  ├── Tabela de afiliados:
+  │     colunas: avatar+nome, status badge, comissão (R$), vendas, cliques,
+  │     conversão (%), link, menu MoreHorizontal (Edit/Pause/Archive/Delete)
+  ├── AffiliateActionsMenu: Edit | Pause/Ativar | Arquivar/Reativar | Apagar (confirmação modal)
+  ├── CopyableLink: ícone de cópia + feedback visual "Copiado!"
+  │     track('affiliate_link_copied', {})
+  ├── AddAffiliateModal: nome, email, slug (auto-gerado), comissão
+  ├── EditAffiliateModal: editar nome, email, slug, comissão, método de pagamento
+  ├── DeleteConfirmModal: confirmação antes de deletar
+  ├── ProgramConfigSection (aba Configurações):
+  │     percentage, attributionRule, cookieWindow, upsellCommissions,
+  │     recurringCommissions, autoPayment, minPayout
+  │     botão "Salvar configurações" → handleSaveConfig
+  └── PaymentsSection (aba Pagamentos):
+        tabela com ciclo, afiliado, vendas, valor, status
+        checkbox seleção múltipla + "Marcar como pago" em lote
+```
+
+### Tabelas do banco
+
+```sql
+-- affiliates (migration 053 — campos adicionados)
+user_id        uuid references auth.users(id) on delete cascade
+commission_pct numeric(5,2) not null default 30
+-- RLS: affiliates_owner → auth.uid() = user_id
+
+-- affiliate_payments (migration 053 — campo adicionado)
+user_id uuid references auth.users(id) on delete cascade
+-- RLS: affiliate_payments_owner → auth.uid() = user_id
+
+-- affiliate_config (migration 053 — tabela nova)
+id                    uuid primary key
+user_id               uuid not null unique references auth.users(id) on delete cascade
+percentage            numeric(5,2) not null default 30
+attribution_rule      text not null default 'last_click'  -- 'first_click' | 'last_click'
+cookie_window         integer not null default 30
+upsell_commissions    boolean not null default true
+recurring_commissions boolean not null default false
+auto_payment          boolean not null default false
+min_payout            numeric(10,2) not null default 100
+created_at / updated_at  timestamptz
+-- RLS: affiliate_config_owner → auth.uid() = user_id
+-- Trigger: affiliate_config_updated_at (chama set_updated_at())
+```
+
+### DEFAULT_CONFIG (fallback quando affiliate_config ainda não existe)
+
+```ts
+const DEFAULT_CONFIG: RawConfig = {
+  percentage: 30,
+  attributionRule: 'last_click',
+  cookieWindow: 30,
+  upsellCommissions: true,
+  recurringCommissions: false,
+  autoPayment: false,
+  minPayout: 100,
+}
+```
+
+### Eventos PostHog do módulo
+
+| Evento | Quando |
+|---|---|
+| `affiliate_added` | ao adicionar novo afiliado (inclui commission_pct) |
+| `affiliate_status_changed` | ao pausar, ativar ou arquivar (inclui status) |
+| `affiliate_paid` | ao marcar pagamentos como pagos (inclui count + total em R$) |
+| `affiliate_config_saved` | ao salvar configuração do programa (inclui percentage, attribution, cookie_window) |
+| `affiliate_link_copied` | ao copiar link de afiliado |
