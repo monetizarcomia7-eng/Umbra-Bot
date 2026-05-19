@@ -1,6 +1,6 @@
 -- ============================================================
 -- Umbra Bot — SQL PENDENTE (rodar no Supabase SQL Editor)
--- Migrações 037 a 041 — Analytics + SEGURANÇA flows RLS
+-- Migrações 037 a 042 — Analytics + SEGURANÇA flows RLS
 --
 -- CRÍTICO: migração 040 fecha a vulnerabilidade de privacidade
 -- na tabela flows (RLS usando (true) → auth.uid() = user_id).
@@ -264,3 +264,44 @@ $$;
 grant execute
   on function public.track_checkout_event(uuid, text, text, uuid, text, text, text)
   to anon, authenticated;
+
+
+-- ────────────────────────────────────────────────────────────
+-- MIGRATION 042 — Função: analytics_filter_options
+-- Performance: SELECT DISTINCT no banco substitui 2 queries de
+-- 500 linhas + dedup em JavaScript nos dropdowns de filtro.
+-- ────────────────────────────────────────────────────────────
+
+create or replace function public.analytics_filter_options(p_user_id uuid)
+returns json
+language sql
+stable
+security invoker
+set search_path = public
+as $$
+  select json_build_object(
+    'products', (
+      select coalesce(json_agg(p order by p), '[]'::json)
+      from (
+        select distinct product_name as p
+        from public.transactions
+        where user_id = p_user_id
+          and product_name is not null
+          and product_name <> ''
+      ) _
+    ),
+    'utm_sources', (
+      select coalesce(json_agg(u order by u), '[]'::json)
+      from (
+        select distinct utm_source as u
+        from public.transactions
+        where user_id = p_user_id
+          and utm_source is not null
+      ) _
+    )
+  )
+$$;
+
+grant execute
+  on function public.analytics_filter_options(uuid)
+  to authenticated;

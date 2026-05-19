@@ -102,8 +102,6 @@ export interface AnalyticsSummary {
   productOptions: string[]
   flowOptions: FlowOption[]
   utmOptions: string[]
-  // Linhas brutas (apenas aprovadas) para CSV export
-  exportRows: ExportRow[]
   // Meta
   error: string | null
   limitReached: boolean

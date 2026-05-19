@@ -8,6 +8,7 @@ import { exportCSV } from '@/lib/csv'
 import { cn } from '@/lib/utils'
 import { AlertTriangle, Download, RefreshCw } from 'lucide-react'
 import { useAnalytics } from '@/hooks/use-analytics'
+import { getExportRows } from './_actions'
 import type { AnalyticsSummary, Filters } from './_types'
 import { fmtBRL, fmtNum } from './_utils'
 import { FilterBar } from './_components/FilterBar'
@@ -101,19 +102,23 @@ export function AnalyticsClient({ summary }: { summary: AnalyticsSummary }) {
     startTransition(() => router.replace('/dashboard/analytics', { scroll: false }))
   }
 
-  const handleExport = useCallback(() => {
+  const handleExport = useCallback(async () => {
     setExporting(true)
-    track('csv_exported', { section: 'analytics', rows: summary.exportRows.length, period: filters.period })
-    exportCSV(
-      `analytics-${filters.period}-${new Date().toISOString().slice(0, 10)}.csv`,
-      ['Data', 'Produto', 'Valor bruto (R$)', 'Taxa (R$)', 'Valor líquido (R$)', 'Bot', 'Fluxo', 'Origem (UTM)', 'Campanha (UTM)'],
-      summary.exportRows.map((r) => [
-        r.date, r.product, r.amount, r.fee, r.net,
-        r.bot, r.flow, r.utmSource, r.utmCampaign,
-      ]),
-    )
-    setTimeout(() => setExporting(false), 600)
-  }, [summary.exportRows, filters.period, track])
+    try {
+      const rows = await getExportRows(filters)
+      track('csv_exported', { section: 'analytics', rows: rows.length, period: filters.period })
+      exportCSV(
+        `analytics-${filters.period}-${new Date().toISOString().slice(0, 10)}.csv`,
+        ['Data', 'Produto', 'Valor bruto (R$)', 'Taxa (R$)', 'Valor líquido (R$)', 'Bot', 'Fluxo', 'Origem (UTM)', 'Campanha (UTM)'],
+        rows.map((r) => [
+          r.date, r.product, r.amount, r.fee, r.net,
+          r.bot, r.flow, r.utmSource, r.utmCampaign,
+        ]),
+      )
+    } finally {
+      setExporting(false)
+    }
+  }, [filters, track])
 
   const flowHasRealData = summary.byFlow.some((f) => f.isReal)
 

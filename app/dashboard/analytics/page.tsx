@@ -6,9 +6,9 @@ import { getDateRange } from './_utils'
 import {
   computeFunnel, computeByBot, computeByProduct,
   computeByFlow, computeByUtm, computeStatusBreakdown,
-  computeExportRows, transformCohortRpc,
+  transformCohortRpc,
 } from './_server'
-import type { RawTx, RawContact, RawCheckoutEvent, RawBot, RawFlow, CohortRpcRow } from './_server'
+import type { RawTx, RawCheckoutEvent, RawBot, RawFlow, CohortRpcRow } from './_server'
 
 const QUERY_LIMIT = 5000
 
@@ -40,7 +40,7 @@ export default async function AnalyticsPage({
   const isAll = period === 'all'
   const { start, end, prevStart, prevEnd } = getDateRange(period)
 
-  // ── Query builders (lazy — requests fire only when awaited) ──
+  // ── Query builders ───────────────────────────────────────────
 
   const buildTx = (s: Date, e: Date, applyDate: boolean) => {
     let q = supabase
@@ -59,12 +59,12 @@ export default async function AnalyticsPage({
     return q
   }
 
+  // COUNT-only: zero rows transferidas — só o número do PostgreSQL
   const buildCnt = (s: Date, e: Date, applyDate: boolean) => {
     let q = supabase
       .from('contacts')
-      .select('bot_id')
+      .select('*', { count: 'exact', head: true })
       .eq('user_id', uid)
-      .limit(QUERY_LIMIT)
     if (applyDate) q = q.gte('created_at', s.toISOString()).lte('created_at', e.toISOString())
     if (botId !== 'all') q = q.eq('bot_id', botId)
     return q
@@ -95,8 +95,8 @@ export default async function AnalyticsPage({
       .order('executions', { ascending: false })
       .limit(50),
     supabase.rpc('analytics_cohort_weekly', { p_user_id: uid, p_cohorts: 6, p_weeks: 6 }),
-    supabase.from('transactions').select('product_name').eq('user_id', uid).not('product_name', 'is', null).limit(500),
-    supabase.from('transactions').select('utm_source').eq('user_id', uid).not('utm_source', 'is', null).limit(500),
+    // 1 RPC com SELECT DISTINCT substitui 2 queries de 500 linhas + dedup JS
+    supabase.rpc('analytics_filter_options', { p_user_id: uid }),
   ])
 
   const prevBatch = canCompare
@@ -107,15 +107,13 @@ export default async function AnalyticsPage({
       ])
     : null
 
-  // Await both batches (they ran in parallel)
-  const [txRes, cntRes, evtRes, botsRes, flowsRes, cohortRes, prodRes, utmSrcRes] = await mainBatch
+  const [txRes, cntRes, evtRes, botsRes, flowsRes, cohortRes, filterOptsRes] = await mainBatch
   const prevResults = prevBatch ? await prevBatch : null
 
   // ── Extract data ─────────────────────────────────────────────
 
   const error =
     txRes.error?.message ??
-    cntRes.error?.message ??
     evtRes.error?.message ??
     cohortRes.error?.message ??
     null
@@ -123,30 +121,27 @@ export default async function AnalyticsPage({
   if (cohortRes.error) {
     void captureEvent(uid, 'analytics_cohort_error', { error: cohortRes.error.message })
   }
+
   const limitReached =
     (txRes.data?.length ?? 0) >= QUERY_LIMIT ||
-    (cntRes.data?.length ?? 0) >= QUERY_LIMIT ||
     (evtRes.data?.length ?? 0) >= QUERY_LIMIT
 
-  const curTxs    = (txRes.data    as unknown as RawTx[])             ?? []
-  const curConts  = (cntRes.data   as unknown as RawContact[])        ?? []
-  const curEvts   = (evtRes.data   as unknown as RawCheckoutEvent[])  ?? []
+  const curTxs    = (txRes.data   as unknown as RawTx[])            ?? []
+  const curConts  = cntRes.count  ?? 0
+  const curEvts   = (evtRes.data  as unknown as RawCheckoutEvent[]) ?? []
   const prevTxs   = (prevResults?.[0].data as unknown as RawTx[])            ?? []
-  const prevConts = (prevResults?.[1].data as unknown as RawContact[])       ?? []
+  const prevConts = prevResults?.[1].count ?? 0
   const prevEvts  = (prevResults?.[2].data as unknown as RawCheckoutEvent[]) ?? []
-  const bots      = (botsRes.data   as unknown as RawBot[])           ?? []
-  const flows     = (flowsRes.data  as unknown as RawFlow[])          ?? []
-  const cohortRaw = (cohortRes.data as unknown as CohortRpcRow[])     ?? []
+  const bots      = (botsRes.data  as unknown as RawBot[])          ?? []
+  const flows     = (flowsRes.data as unknown as RawFlow[])         ?? []
+  const cohortRaw = (cohortRes.data as unknown as CohortRpcRow[])   ?? []
 
-  // ── Build dropdown option lists (all-time distinct values) ───
+  // ── Filter options (SELECT DISTINCT via RPC) ─────────────────
 
-  const productOptions = [...new Set(
-    (prodRes.data ?? []).map((r) => (r as { product_name: string }).product_name).filter(Boolean),
-  )].sort()
-
-  const utmOptions = [...new Set(
-    (utmSrcRes.data ?? []).map((r) => (r as { utm_source: string }).utm_source).filter(Boolean),
-  )].sort()
+  const filterOpts = (filterOptsRes.data as { products: string[]; utm_sources: string[] } | null)
+    ?? { products: [], utm_sources: [] }
+  const productOptions = filterOpts.products   ?? []
+  const utmOptions     = filterOpts.utm_sources ?? []
 
   // ── Assemble summary ─────────────────────────────────────────
 
@@ -163,7 +158,6 @@ export default async function AnalyticsPage({
     productOptions,
     flowOptions:     flows.map((f) => ({ id: f.id, name: f.name })),
     utmOptions,
-    exportRows:      computeExportRows(curTxs, bots, flows),
     error,
     limitReached,
     queryLimit:      QUERY_LIMIT,

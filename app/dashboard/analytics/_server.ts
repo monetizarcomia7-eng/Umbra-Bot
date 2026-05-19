@@ -21,10 +21,6 @@ export interface RawTx {
   created_at:           string
 }
 
-export interface RawContact {
-  bot_id: string | null
-}
-
 export interface RawCheckoutEvent {
   event_type: string
   bot_id:     string | null
@@ -67,12 +63,12 @@ const STATUS_META: Record<string, { label: string; color: string }> = {
 // ── Funnel ───────────────────────────────────────────────────
 
 export function computeFunnel(
-  curTxs:      RawTx[],
-  curContacts: RawContact[],
-  curEvents:   RawCheckoutEvent[],
-  prevTxs:     RawTx[],
-  prevContacts: RawContact[],
-  prevEvents:  RawCheckoutEvent[],
+  curTxs:          RawTx[],
+  curContactCount: number,
+  curEvents:       RawCheckoutEvent[],
+  prevTxs:         RawTx[],
+  prevContactCount: number,
+  prevEvents:      RawCheckoutEvent[],
 ): FunnelStage[] {
   const ev = (type: string, src: RawCheckoutEvent[]) =>
     src.filter((e) => e.event_type === type).length
@@ -85,8 +81,8 @@ export function computeFunnel(
     },
     {
       stage: 'Iniciou conversa',
-      value: curContacts.length,
-      prev:  prevContacts.length,
+      value: curContactCount,
+      prev:  prevContactCount,
     },
     {
       stage: 'Adicionou ao carrinho',
