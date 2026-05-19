@@ -275,6 +275,15 @@ DashboardLayout (components/dashboard/Layout.tsx)
 - Gateway salvo na tabela `gateways`
 - Ao fechar ou completar, seta a flag no localStorage e chama `refreshBotsCount()`
 
+### Step Gateway — credenciais reais
+
+- Mapa `GATEWAY_CREDENTIAL` no componente: define `label`, `placeholder` e `help` por gateway
+- Ao selecionar um gateway, exibe campo `<input type="password">` para o token/access key
+- Se preenchido: salva `credentials: { token }` + `status: 'active'`
+- Se pulado/vazio: salva `credentials: {}` + `status: 'pending'`
+- Trocar de gateway limpa o campo de credencial
+- Gateways suportados: `pushinpay`, `mercadopago`, `pagarme`, `stripe`
+
 ---
 
 ## 8. BUSCA GLOBAL (Topbar)
