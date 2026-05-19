@@ -36,7 +36,14 @@ export function WithdrawalsSection({ data, onNew }: { data: Withdrawal[]; onNew:
                   </td>
                   <td className="py-2.5 px-2 text-text">{w.account}</td>
                   <td className="py-2.5 px-2 text-right tnum font-semibold text-text">{fmtBRLdec(w.amount)}</td>
-                  <td className="py-2.5 px-2"><Badge tone={st.tone}>{st.label}</Badge></td>
+                  <td className="py-2.5 px-2">
+                    <Badge tone={st.tone}>{st.label}</Badge>
+                    {w.status === 'failed' && w.notes && (
+                      <div className="text-[10.5px] text-danger mt-0.5 leading-tight max-w-[160px]">
+                        {w.notes}
+                      </div>
+                    )}
+                  </td>
                   <td className="py-2.5 pl-2 pr-4 text-text-muted tnum">
                     {w.status === 'completed' ? fmtDateTime(w.concluded) : '—'}
                   </td>

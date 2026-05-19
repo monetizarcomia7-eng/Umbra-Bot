@@ -9,7 +9,7 @@ import { exportCSV } from '@/lib/csv'
 import { useAnalytics } from '@/hooks/use-analytics'
 import type {
   FinanceData, RawTransaction, RawWithdrawal, RawFinanceBot, RawFinanceFlow, RawInvoice,
-  Transaction, Withdrawal, Invoice, TxDetail,
+  RawFinanceSummary, Transaction, Withdrawal, Invoice, TxDetail,
 } from './types'
 import { financeMock } from './mock-data'
 import { txTypeMap, txStatusMap, wdStatusMap, invStatusMap } from './constants'
@@ -45,17 +45,27 @@ function buildLiveData(
   bots:          RawFinanceBot[],
   flows:         RawFinanceFlow[],
   rawInvoices:   RawInvoice[],
+  dbSummary:     RawFinanceSummary | null,
 ): FinanceData {
   const botMap  = new Map(bots.map((b)  => [b.id, b.username ? `@${b.username}` : b.name]))
   const flowMap = new Map(flows.map((f) => [f.id, f.name]))
 
   const txRows: Transaction[] = rows.map((row) => {
-    const isRefund = row.status === 'refunded' || row.status === 'cancelled'
-    const gross    = Number(row.amount)
-    const fee      = Number(row.fee ?? 0)
-    const net      = netOf(row)
+    // Usa coluna type do banco quando disponível; fallback para heurística de status
+    const dbType   = row.type as string | null
+    const isRefund = dbType === 'refund'
+                  || row.status === 'refunded'
+                  || row.status === 'cancelled'
+    const txType: Transaction['type'] =
+      dbType === 'fee'        ? 'fee'
+      : dbType === 'commission' ? 'commission'
+      : isRefund              ? 'refund'
+      : 'sale'
 
-    // Popula detalhe para todas as vendas aprovadas com dados reais do banco
+    const gross = Number(row.amount)
+    const fee   = Number(row.fee ?? 0)
+    const net   = netOf(row)
+
     const detail: TxDetail | undefined = (!isRefund && row.status === 'approved') ? {
       customer:    row.customer_name  || '—',
       email:       row.customer_email || '—',
@@ -75,7 +85,7 @@ function buildLiveData(
     return {
       id:     String(row.id),
       dt:     String(row.created_at),
-      type:   isRefund ? 'refund' : 'sale',
+      type:   txType,
       desc:   String(row.product_name || 'Venda'),
       value:  isRefund ? -Math.abs(gross) : net,
       status: row.status === 'approved' ? 'available'
@@ -92,21 +102,50 @@ function buildLiveData(
     account:   w.account_label,
     status:    w.status,
     concluded: w.concluded_at ?? '',
+    notes:     w.notes ?? null,
   }))
 
-  const approved = rows.filter((r) => r.status === 'approved')
-  const pending  = rows.filter((r) => r.status === 'pending')
+  // ── Summary cards ──────────────────────────────────────────
+  // Usa a RPC finance_summary quando disponível (sempre preciso,
+  // independente do limite de 500 rows carregadas).
+  // Fallback: computa dos dados carregados (pode ser impreciso
+  // se o usuário atingiu o limite de 500 transações).
+  let summaryValues: {
+    saldoDisponivel: number
+    aLiberar: number
+    totalRecebido: number
+    comissoesPlataforma: number
+  }
 
-  // Saldo = soma líquida de aprovadas − total já sacado (pendente ou concluído)
-  const totalApprovedNet = approved.reduce((s, r) => s + netOf(r), 0)
-  const totalWithdrawn   = rawWithdrawals
-    .filter((w) => w.status === 'pending' || w.status === 'completed')
-    .reduce((s, w) => s + Number(w.amount), 0)
-  const saldoDisponivel  = Math.max(0, totalApprovedNet - totalWithdrawn)
+  if (dbSummary) {
+    summaryValues = {
+      saldoDisponivel:     Number(dbSummary.saldo_disponivel),
+      aLiberar:            Number(dbSummary.a_liberar),
+      totalRecebido:       Number(dbSummary.total_recebido),
+      comissoesPlataforma: Number(dbSummary.comissoes_plataforma),
+    }
+  } else {
+    // Fallback: calcula dos dados carregados (pode ser incompleto com >500 txs)
+    const approved = rows.filter((r) => r.status === 'approved')
+    const pending  = rows.filter((r) => r.status === 'pending')
+    const totalApprovedNet = approved.reduce((s, r) => s + netOf(r), 0)
+    const totalWithdrawn   = rawWithdrawals
+      .filter((w) => w.status === 'pending' || w.status === 'completed')
+      .reduce((s, w) => s + Number(w.amount), 0)
+    summaryValues = {
+      saldoDisponivel:     Math.max(0, totalApprovedNet - totalWithdrawn),
+      aLiberar:            pending.reduce((s, r) => s + netOf(r), 0),
+      totalRecebido:       approved.reduce((s, r) => s + Number(r.amount), 0),
+      comissoesPlataforma: approved.reduce((s, r) => s + Number(r.fee ?? 0), 0),
+    }
+  }
 
-  // Deltas reais: período atual vs período anterior equivalente
+  // ── Deltas — período atual vs anterior (calculados dos rows carregados) ──
+  // Os deltas podem ser imprecisos se limitReached=true, mas o banner avisa.
   let deltas = { saldo: 0, liberar: 0, total: 0, comissoes: 0 }
   if (period !== 'all' && rows.length > 0) {
+    const approved = rows.filter((r) => r.status === 'approved')
+    const pending  = rows.filter((r) => r.status === 'pending')
     const days      = period === '7d' ? 7 : period === '30d' ? 30 : 90
     const now       = Date.now()
     const curStart  = new Date(now - days * 86_400_000)
@@ -144,7 +183,6 @@ function buildLiveData(
     }
   }
 
-  // Faturas: dados reais se existirem; mock para demonstração enquanto billing não está ativo
   const invoices: Invoice[] = rawInvoices.length > 0
     ? rawInvoices.map((inv) => ({
         id:     inv.id,
@@ -158,10 +196,7 @@ function buildLiveData(
   return {
     ...financeMock,
     summary: {
-      saldoDisponivel,
-      aLiberar:            pending.reduce((s, r) => s + netOf(r), 0),
-      totalRecebido:       approved.reduce((s, r) => s + Number(r.amount), 0),
-      comissoesPlataforma: approved.reduce((s, r) => s + Number(r.fee ?? 0), 0),
+      ...summaryValues,
       deltas,
     },
     transactions: txRows,
@@ -184,6 +219,7 @@ export function FinanceDashboard({
   initialBots,
   initialFlows,
   initialInvoices,
+  initialSummary,
   limitReached,
 }: {
   initialTransactions: RawTransaction[]
@@ -191,6 +227,7 @@ export function FinanceDashboard({
   initialBots:         RawFinanceBot[]
   initialFlows:        RawFinanceFlow[]
   initialInvoices:     RawInvoice[]
+  initialSummary:      RawFinanceSummary | null
   limitReached:        boolean
 }) {
   const router = useRouter()
@@ -202,9 +239,9 @@ export function FinanceDashboard({
   const m = useMemo(
     () => buildLiveData(
       initialTransactions, initialWithdrawals, period,
-      initialBots, initialFlows, initialInvoices,
+      initialBots, initialFlows, initialInvoices, initialSummary,
     ),
-    [initialTransactions, initialWithdrawals, period, initialBots, initialFlows, initialInvoices],
+    [initialTransactions, initialWithdrawals, period, initialBots, initialFlows, initialInvoices, initialSummary],
   )
 
   const since       = periodSince(period)
@@ -238,8 +275,8 @@ export function FinanceDashboard({
       track('csv_exported', { section: 'financeiro_transacoes', rows: filteredTxs.length, period })
     } else if (tab === 'withdraws') {
       exportCSV(`saques_${today}.csv`,
-        ['ID', 'Solicitado em', 'Conta', 'Valor (R$)', 'Status', 'Concluído'],
-        filteredWds.map((w) => [w.id, w.date, w.account, w.amount, wdStatusMap[w.status]?.label ?? w.status, w.concluded ?? '']),
+        ['ID', 'Solicitado em', 'Conta', 'Valor (R$)', 'Status', 'Concluído', 'Observação'],
+        filteredWds.map((w) => [w.id, w.date, w.account, w.amount, wdStatusMap[w.status]?.label ?? w.status, w.concluded ?? '', w.notes ?? '']),
       )
       track('csv_exported', { section: 'financeiro_saques', rows: filteredWds.length, period })
     } else {
@@ -268,7 +305,7 @@ export function FinanceDashboard({
         <div className="flex items-center gap-2.5 px-4 py-2.5 bg-warning-soft border border-warning/30 rounded-xl text-[12.5px] text-warning mb-4">
           <AlertTriangle size={14} className="shrink-0" />
           <span>
-            Exibindo as <strong>500</strong> transações mais recentes. Totais podem estar incompletos para históricos maiores.
+            Exibindo as <strong>500</strong> transações mais recentes. Os totais nos cards são precisos, mas os percentuais de variação (%) e a tabela podem estar incompletos.
           </span>
         </div>
       )}

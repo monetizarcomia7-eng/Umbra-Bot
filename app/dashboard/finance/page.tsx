@@ -1,7 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { FinanceDashboard } from '@/components/dashboard/finance/FinanceDashboard'
 import type {
-  RawTransaction, RawWithdrawal, RawFinanceBot, RawFinanceFlow, RawInvoice,
+  RawTransaction, RawWithdrawal, RawFinanceBot, RawFinanceFlow, RawInvoice, RawFinanceSummary,
 } from '@/components/dashboard/finance/types'
 
 const TX_LIMIT = 500
@@ -15,16 +15,16 @@ export default async function FinancePage() {
 
   const uid = user.id
 
-  const [txRes, wdRes, botsRes, flowsRes, invRes] = await Promise.all([
+  const [txRes, wdRes, botsRes, flowsRes, invRes, summaryRes] = await Promise.all([
     supabase
       .from('transactions')
-      .select('id, amount, net, fee, status, product_name, customer_name, customer_email, gateway, bot_id, flow_id, utm_source, utm_campaign, created_at')
+      .select('id, amount, net, fee, status, type, product_name, customer_name, customer_email, gateway, bot_id, flow_id, utm_source, utm_campaign, created_at')
       .eq('user_id', uid)
       .order('created_at', { ascending: false })
       .limit(TX_LIMIT),
     supabase
       .from('withdrawals')
-      .select('id, amount, account_id, account_label, status, created_at, concluded_at')
+      .select('id, amount, account_id, account_label, status, created_at, concluded_at, notes')
       .eq('user_id', uid)
       .order('created_at', { ascending: false })
       .limit(WD_LIMIT),
@@ -43,6 +43,7 @@ export default async function FinancePage() {
       .eq('user_id', uid)
       .order('created_at', { ascending: false })
       .limit(24),
+    supabase.rpc('finance_summary', { p_user_id: uid }),
   ])
 
   const limitReached = (txRes.data?.length ?? 0) >= TX_LIMIT
@@ -54,6 +55,7 @@ export default async function FinancePage() {
       initialBots={(botsRes.data        as unknown as RawFinanceBot[])   ?? []}
       initialFlows={(flowsRes.data      as unknown as RawFinanceFlow[])  ?? []}
       initialInvoices={(invRes.data     as unknown as RawInvoice[])      ?? []}
+      initialSummary={(summaryRes.data  as unknown as RawFinanceSummary) ?? null}
       limitReached={limitReached}
     />
   )

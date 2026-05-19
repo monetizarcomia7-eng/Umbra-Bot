@@ -1,11 +1,12 @@
 -- ============================================================
 -- Umbra Bot — SQL PENDENTE (rodar no Supabase SQL Editor)
--- Migrações 037 a 043 — Analytics + SEGURANÇA flows RLS + Invoices
+-- Migrações 037 a 045 — Analytics + SEGURANÇA flows RLS + Invoices
+--                       + Dados e Persistência (044 e 045)
 --
 -- CRÍTICO: migração 040 fecha a vulnerabilidade de privacidade
 -- na tabela flows (RLS usando (true) → auth.uid() = user_id).
 --
--- Ordem de execução: 037 → 038 → 039 → 040 → 041 → 042 → 043
+-- Ordem de execução: 037 → 038 → 039 → 040 → 041 → 042 → 043 → 044 → 045
 -- Todos os comandos são idempotentes (if not exists / or replace).
 -- ============================================================
 
@@ -341,3 +342,71 @@ create policy "invoices_owner" on public.invoices
   for all
   using  (auth.uid() = user_id)
   with check (auth.uid() = user_id);
+
+
+-- ────────────────────────────────────────────────────────────
+-- MIGRATION 044 — withdrawals.notes + transactions.type
+-- ────────────────────────────────────────────────────────────
+
+-- Coluna notes em withdrawals (motivo de falha / observação do admin)
+alter table public.withdrawals
+  add column if not exists notes text;
+
+-- Coluna type em transactions (sale | fee | commission | refund)
+alter table public.transactions
+  add column if not exists type text not null default 'sale'
+    check (type in ('sale', 'fee', 'commission', 'refund'));
+
+create index if not exists transactions_type_idx
+  on public.transactions (user_id, type)
+  where type <> 'sale';
+
+
+-- ────────────────────────────────────────────────────────────
+-- MIGRATION 045 — Função: finance_summary(p_user_id)
+--
+-- Retorna os 4 KPIs financeiros calculados no banco, usando
+-- profiles.balance (trigger, mig 029) para saldo disponível.
+-- Elimina a imprecisão causada pelo limite de 500 rows no client.
+-- ────────────────────────────────────────────────────────────
+
+create or replace function public.finance_summary(p_user_id uuid)
+returns json
+language sql
+stable
+security invoker
+set search_path = public
+as $$
+  select json_build_object(
+    'saldo_disponivel',
+      greatest(0, coalesce(
+        (select balance from public.profiles where id = p_user_id),
+        0
+      )),
+    'a_liberar',
+      coalesce((
+        select sum(coalesce(net, amount - coalesce(fee, 0)))
+        from public.transactions
+        where user_id = p_user_id
+          and status  = 'pending'
+      ), 0),
+    'total_recebido',
+      coalesce((
+        select sum(amount)
+        from public.transactions
+        where user_id = p_user_id
+          and status  = 'approved'
+      ), 0),
+    'comissoes_plataforma',
+      coalesce((
+        select sum(coalesce(fee, 0))
+        from public.transactions
+        where user_id = p_user_id
+          and status  = 'approved'
+      ), 0)
+  )
+$$;
+
+grant execute
+  on function public.finance_summary(uuid)
+  to authenticated;

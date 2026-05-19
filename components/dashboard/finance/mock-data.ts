@@ -34,12 +34,12 @@ export const financeMock: FinanceData = {
       detail: { customer: 'Thiago Lopes',         email: 'tlopes@hotmail.com',    product: 'E-book Estratégias',      gateway: 'Pushinpay',    method: 'Pix',        gross: 20.00,   gatewayFee: 0.73,  platformFee: 0.60,  net: 18.67,  bot: '@vendas_curso_bot',   flow: 'Bem-vindo + Oferta'      } },
   ],
   withdrawals: [
-    { id: 'wd_011', date: '2026-05-16T18:45', amount: 12480.00, account: 'Conta BB · final 8842', status: 'completed', concluded: '2026-05-17T09:22' },
-    { id: 'wd_010', date: '2026-04-30T14:21', amount: 18750.00, account: 'Conta BB · final 8842', status: 'completed', concluded: '2026-05-02T08:14' },
-    { id: 'wd_009', date: '2026-04-15T11:08', amount: 5200.00,  account: 'Nubank · final 0297',   status: 'completed', concluded: '2026-04-16T10:30' },
-    { id: 'wd_008', date: '2026-03-30T16:42', amount: 22100.00, account: 'Conta BB · final 8842', status: 'completed', concluded: '2026-04-01T09:05' },
-    { id: 'wd_007', date: '2026-03-08T10:15', amount: 3500.00,  account: 'Nubank · final 0297',   status: 'failed',    concluded: '2026-03-08T14:42' },
-    { id: 'wd_006', date: '2026-02-28T13:30', amount: 14800.00, account: 'Conta BB · final 8842', status: 'completed', concluded: '2026-03-02T08:18' },
+    { id: 'wd_011', date: '2026-05-16T18:45', amount: 12480.00, account: 'Conta BB · final 8842', status: 'completed', concluded: '2026-05-17T09:22', notes: null },
+    { id: 'wd_010', date: '2026-04-30T14:21', amount: 18750.00, account: 'Conta BB · final 8842', status: 'completed', concluded: '2026-05-02T08:14', notes: null },
+    { id: 'wd_009', date: '2026-04-15T11:08', amount: 5200.00,  account: 'Nubank · final 0297',   status: 'completed', concluded: '2026-04-16T10:30', notes: null },
+    { id: 'wd_008', date: '2026-03-30T16:42', amount: 22100.00, account: 'Conta BB · final 8842', status: 'completed', concluded: '2026-04-01T09:05', notes: null },
+    { id: 'wd_007', date: '2026-03-08T10:15', amount: 3500.00,  account: 'Nubank · final 0297',   status: 'failed',    concluded: '2026-03-08T14:42', notes: 'Chave PIX inválida ou encerrada.' },
+    { id: 'wd_006', date: '2026-02-28T13:30', amount: 14800.00, account: 'Conta BB · final 8842', status: 'completed', concluded: '2026-03-02T08:18', notes: null },
   ],
   invoices: [
     { id: 'inv_2026_05', period: 'Maio/2026',      value: 2184.30, due: '2026-06-10', status: 'pending' },

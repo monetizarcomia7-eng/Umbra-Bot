@@ -15,6 +15,7 @@ export interface Transaction {
 export interface Withdrawal {
   id: string; date: string; amount: number; account: string
   status: 'completed' | 'pending' | 'failed'; concluded: string
+  notes: string | null
 }
 
 export interface Invoice {
@@ -53,6 +54,7 @@ export interface RawTransaction {
   net: number | null
   fee: number | null
   status: string
+  type: string | null
   product_name: string | null
   customer_name: string | null
   customer_email: string | null
@@ -68,6 +70,7 @@ export interface RawWithdrawal {
   id: string; amount: number; account_id: string; account_label: string
   status: 'pending' | 'completed' | 'failed'
   created_at: string; concluded_at: string | null
+  notes: string | null
 }
 
 export interface RawFinanceBot {
@@ -88,4 +91,11 @@ export interface RawInvoice {
   due_date: string
   status: 'paid' | 'pending' | 'overdue'
   created_at: string
+}
+
+export interface RawFinanceSummary {
+  saldo_disponivel:     number
+  a_liberar:            number
+  total_recebido:       number
+  comissoes_plataforma: number
 }
