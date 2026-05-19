@@ -4,6 +4,7 @@ import React, { useState } from 'react'
 import { Bot, CreditCard, CheckCircle2, ArrowRight, X, AlertCircle, Loader2, Zap } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { useAnalytics } from '@/hooks/use-analytics'
+import { saveBotAction } from '@/app/actions/bots'
 
 interface Props {
   userId: string
@@ -90,15 +91,7 @@ function BotStep({ userId, onNext, onSkip }: { userId: string; onNext: () => voi
     setError(null)
     setLoading(true)
     try {
-      const supabase = createClient()
-      const { error: dbError } = await supabase.from('bots').insert({
-        user_id: userId,
-        name: name.trim(),
-        token: token.trim(),
-        status: 'offline',
-        username: '',
-      })
-      if (dbError) throw dbError
+      await saveBotAction(userId, name.trim(), token.trim())
       onNext()
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Erro ao salvar bot.')

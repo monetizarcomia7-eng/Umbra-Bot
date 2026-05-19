@@ -1,17 +1,26 @@
 'use client'
 
-import React, { useState, useMemo, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { DashboardLayout } from '@/components/dashboard/Layout'
 import { PageHeader } from '@/components/dashboard/PageHeader'
 import { Button } from '@/components/dashboard/Button'
-import { TrendingUp, ShoppingBag, Target, Bot, ArrowUpRight, ArrowDownRight, CheckCircle2, Circle, ArrowRight } from 'lucide-react'
-import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts'
+import { useDashboard } from '@/providers/DashboardProvider'
+import {
+  TrendingUp, ShoppingBag, Target, Bot,
+  ArrowUpRight, ArrowDownRight, CheckCircle2, Circle, ArrowRight,
+} from 'lucide-react'
+import {
+  ResponsiveContainer, AreaChart, Area,
+  XAxis, YAxis, CartesianGrid, Tooltip,
+} from 'recharts'
 import { cn } from '@/lib/utils'
 import { createClient } from '@/lib/supabase/client'
 import { OnboardingWizard } from '@/components/dashboard/OnboardingWizard'
 
 type Period = '7d' | '30d' | '90d'
+
+interface ChartPoint { day: string; value: number }
 
 interface KpiItem {
   id: string
@@ -22,43 +31,52 @@ interface KpiItem {
   Icon: React.ElementType
 }
 
-interface ChartPoint { day: string; value: number }
+interface RealKpi { revenue: number; sales: number; botsActive: number }
+interface RealFlow { id: number; name: string; sales: number; conv: number; color: string }
 
-function genChartData(days: number): ChartPoint[] {
-  return Array.from({ length: days }, (_, i) => {
-    const base  = 4200 + i * (95 * 30 / days)
-    const noise = Math.sin(i * 0.9) * 700 + (i % 6 === 0 ? 1200 : 0)
-    return { day: String(i + 1).padStart(2, '0'), value: Math.round(base + noise) }
-  })
-}
-
-const KPI_BY_PERIOD: Record<Period, KpiItem[]> = {
-  '7d': [
-    { id: 'revenue',    label: 'Receita (7 d)',     value: 'R$ 42.180,00',   delta: '+9,2%',  trend: 'up',   Icon: TrendingUp  },
-    { id: 'sales',      label: 'Novas vendas',       value: '294',            delta: '+6,4%',  trend: 'up',   Icon: ShoppingBag },
-    { id: 'conversion', label: 'Taxa de conversão',  value: '7,14%',          delta: '+0,3%',  trend: 'up',   Icon: Target      },
-    { id: 'bots',       label: 'Bots ativos',        value: '14',             delta: '+2',     trend: 'up',   Icon: Bot         },
-  ],
-  '30d': [
-    { id: 'revenue',    label: 'Receita (30 d)',    value: 'R$ 184.320,00',  delta: '+12,4%', trend: 'up',   Icon: TrendingUp  },
-    { id: 'sales',      label: 'Novas vendas',      value: '1.284',          delta: '+8,1%',  trend: 'up',   Icon: ShoppingBag },
-    { id: 'conversion', label: 'Taxa de conversão', value: '6,82%',          delta: '–0,4%',  trend: 'down', Icon: Target      },
-    { id: 'bots',       label: 'Bots ativos',       value: '14',             delta: '+2',     trend: 'up',   Icon: Bot         },
-  ],
-  '90d': [
-    { id: 'revenue',    label: 'Receita (90 d)',    value: 'R$ 527.840,00',  delta: '+18,7%', trend: 'up',   Icon: TrendingUp  },
-    { id: 'sales',      label: 'Novas vendas',      value: '3.812',          delta: '+14,3%', trend: 'up',   Icon: ShoppingBag },
-    { id: 'conversion', label: 'Taxa de conversão', value: '6,61%',          delta: '–0,8%',  trend: 'down', Icon: Target      },
-    { id: 'bots',       label: 'Bots ativos',       value: '14',             delta: '+2',     trend: 'up',   Icon: Bot         },
-  ],
-}
-
-const topFlows = [
-  { id: 1, name: 'Funil VIP → Mentoria',    sales: 287, conv: 9.4, color: 'var(--primary)' },
-  { id: 2, name: 'Upsell Pós-compra',       sales: 198, conv: 7.1, color: 'var(--success)' },
-  { id: 3, name: 'Carrinho abandonado 24h', sales: 142, conv: 5.8, color: 'var(--warning)' },
-  { id: 4, name: 'Lançamento Black',        sales: 96,  conv: 4.2, color: 'var(--danger)'  },
+const ONBOARDING_STEPS = [
+  { label: 'Criar conta',                    href: null,                    done: true  },
+  { label: 'Conectar seu primeiro bot',       href: '/dashboard/bots',       done: false },
+  { label: 'Configurar gateway de pagamento', href: '/dashboard/gateways',   done: false },
+  { label: 'Criar seu primeiro fluxo de venda', href: '/dashboard/flows',   done: false },
 ]
+
+/* ── Skeleton ────────────────────────────────────────────────────────── */
+
+function KpiSkeleton() {
+  return (
+    <div className="bg-surface border border-border rounded-xl p-4 animate-pulse">
+      <div className="flex items-start justify-between mb-3">
+        <div className="h-3 w-24 bg-surface-2 rounded" />
+        <div className="w-7 h-7 rounded-md bg-surface-2" />
+      </div>
+      <div className="h-7 w-28 bg-surface-2 rounded mb-3" />
+      <div className="h-4 w-16 bg-surface-2 rounded" />
+    </div>
+  )
+}
+
+function ChartSkeleton() {
+  return <div className="h-[240px] bg-surface-2 rounded-lg animate-pulse" />
+}
+
+function FlowSkeleton() {
+  return (
+    <div className="space-y-3.5 animate-pulse">
+      {[1, 2, 3].map((i) => (
+        <div key={i}>
+          <div className="flex justify-between mb-1.5">
+            <div className="h-3 w-32 bg-surface-2 rounded" />
+            <div className="h-3 w-16 bg-surface-2 rounded" />
+          </div>
+          <div className="h-1.5 bg-surface-2 rounded-full" />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/* ── KPI Card ────────────────────────────────────────────────────────── */
 
 function KpiCard({ label, value, delta, trend, Icon }: KpiItem) {
   const positive = trend === 'up'
@@ -71,24 +89,29 @@ function KpiCard({ label, value, delta, trend, Icon }: KpiItem) {
         </div>
       </div>
       <div className="text-[24px] font-semibold tnum tracking-tight text-text leading-none">{value}</div>
-      <div className="text-[11.5px] mt-2.5 flex items-center gap-1.5">
-        <span className={cn(
-          'inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md tnum font-medium',
-          positive ? 'bg-success-soft text-success' : 'bg-danger-soft text-danger',
-        )}>
-          {positive ? <ArrowUpRight size={11} /> : <ArrowDownRight size={11} />}
-          {delta}
-        </span>
-        <span className="text-text-muted">vs. período anterior</span>
-      </div>
+      {delta && (
+        <div className="text-[11.5px] mt-2.5 flex items-center gap-1.5">
+          <span className={cn(
+            'inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md tnum font-medium',
+            positive ? 'bg-success-soft text-success' : 'bg-danger-soft text-danger',
+          )}>
+            {positive ? <ArrowUpRight size={11} /> : <ArrowDownRight size={11} />}
+            {delta}
+          </span>
+          <span className="text-text-muted">vs. período anterior</span>
+        </div>
+      )}
     </div>
   )
 }
 
-function RevenueChart({ data }: { data: ChartPoint[] }) {
+/* ── Revenue Chart ───────────────────────────────────────────────────── */
+
+function RevenueChart({ data, loading }: { data: ChartPoint[]; loading: boolean }) {
   const [mounted, setMounted] = React.useState(false)
   React.useEffect(() => setMounted(true), [])
-  if (!mounted) return <div style={{ height: 240 }} />
+
+  if (!mounted || loading) return <ChartSkeleton />
 
   const interval = data.length <= 7 ? 0 : data.length <= 30 ? 4 : 13
 
@@ -139,19 +162,16 @@ function RevenueChart({ data }: { data: ChartPoint[] }) {
   )
 }
 
-const ONBOARDING_STEPS = [
-  { label: 'Criar conta',             href: null,                  done: true  },
-  { label: 'Conectar seu primeiro bot', href: '/dashboard/bots',   done: false },
-  { label: 'Configurar gateway de pagamento', href: '/dashboard/gateways', done: false },
-  { label: 'Criar seu primeiro fluxo de venda', href: '/dashboard/flows', done: false },
-]
+/* ── Empty State ─────────────────────────────────────────────────────── */
 
 function EmptyState() {
   return (
     <div className="flex-1 flex items-center justify-center py-16 px-4">
       <div className="w-full max-w-[520px] text-center">
-        <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-5"
-          style={{ background: 'var(--primary-soft, #ede9fe)' }}>
+        <div
+          className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-5"
+          style={{ background: 'var(--primary-soft, #ede9fe)' }}
+        >
           <Bot size={28} style={{ color: 'var(--primary, #7c3aed)' }} />
         </div>
         <h2 className="text-xl font-bold mb-2" style={{ color: 'var(--text, #0f172a)' }}>
@@ -161,16 +181,21 @@ function EmptyState() {
           Você está a 3 passos de começar a vender no Telegram no piloto automático.
           Conecte seu primeiro bot para ver os dados reais aqui.
         </p>
-
         <div className="text-left space-y-3 mb-8">
           {ONBOARDING_STEPS.map((step, i) => (
-            <div key={i} className="flex items-center gap-3 rounded-xl px-4 py-3"
-              style={{ background: 'var(--surface, #fff)', border: '1px solid var(--border, #e2e8f0)' }}>
+            <div
+              key={i}
+              className="flex items-center gap-3 rounded-xl px-4 py-3"
+              style={{ background: 'var(--surface, #fff)', border: '1px solid var(--border, #e2e8f0)' }}
+            >
               {step.done
                 ? <CheckCircle2 size={18} className="shrink-0 text-emerald-500" />
                 : <Circle size={18} className="shrink-0" style={{ color: 'var(--border, #e2e8f0)' }} />
               }
-              <span className="flex-1 text-sm font-medium" style={{ color: step.done ? 'var(--text-muted, #64748b)' : 'var(--text, #0f172a)' }}>
+              <span
+                className="flex-1 text-sm font-medium"
+                style={{ color: step.done ? 'var(--text-muted, #64748b)' : 'var(--text, #0f172a)' }}
+              >
                 {step.label}
               </span>
               {step.done && (
@@ -181,10 +206,11 @@ function EmptyState() {
             </div>
           ))}
         </div>
-
-        <Link href="/dashboard/bots"
+        <Link
+          href="/dashboard/bots"
           className="inline-flex items-center gap-2 h-11 px-6 rounded-xl text-sm font-semibold text-white transition-all hover:opacity-90 active:scale-[0.98]"
-          style={{ background: 'var(--primary, #7c3aed)' }}>
+          style={{ background: 'var(--primary, #7c3aed)' }}
+        >
           Conectar meu bot agora
           <ArrowRight size={16} />
         </Link>
@@ -193,43 +219,42 @@ function EmptyState() {
   )
 }
 
-interface RealKpi { revenue: number; sales: number; botsActive: number }
-interface RealFlow { id: number; name: string; sales: number; conv: number; color: string }
+/* ── Page ────────────────────────────────────────────────────────────── */
+
+const fmtBRL = (v: number) =>
+  new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 2 }).format(v)
 
 export default function DashboardPage() {
+  const { user, userLoaded, botsCount, refreshBotsCount } = useDashboard()
   const [period, setPeriod] = useState<Period>('30d')
-  const [botsCount,     setBotsCount]     = useState<number | null>(null)
-  const [userId,        setUserId]        = useState('')
-  const [showWizard,    setShowWizard]    = useState(false)
+  const [showWizard, setShowWizard] = useState(false)
+
+  const [kpiLoading,   setKpiLoading]   = useState(true)
+  const [chartLoading, setChartLoading] = useState(true)
   const [realKpi,       setRealKpi]       = useState<RealKpi | null>(null)
-  const [realChartData, setRealChartData] = useState<ChartPoint[] | null>(null)
-  const [realFlows,     setRealFlows]     = useState<RealFlow[] | null>(null)
+  const [realChartData, setRealChartData] = useState<ChartPoint[]>([])
+  const [realFlows,     setRealFlows]     = useState<RealFlow[]>([])
 
+  // Decide whether to show onboarding wizard (once, per user)
   useEffect(() => {
-    const supabase = createClient()
+    if (!userLoaded || botsCount === null || !user.id) return
+    const seen = localStorage.getItem(`umbra_onboarding_seen_${user.id}`)
+    if (botsCount === 0 && !seen) setShowWizard(true)
+  }, [userLoaded, botsCount, user.id])
 
-    supabase.auth.getUser().then(({ data }) => {
-      const uid = data.user?.id
-      if (!uid) return
-      setUserId(uid)
-
-      supabase
-        .from('bots')
-        .select('id', { count: 'exact', head: true })
-        .then(({ count }) => {
-          const n = count ?? 0
-          setBotsCount(n)
-          const seen = localStorage.getItem(`umbra_onboarding_seen_${uid}`)
-          if (n === 0 && !seen) setShowWizard(true)
-        })
-    })
-  }, [])
-
-  // Fetch real KPIs, chart data and top flows from transactions table
+  // Fetch real KPIs whenever period or botsCount changes
   useEffect(() => {
-    if (botsCount === null || botsCount === 0) return
+    if (botsCount === null || botsCount === 0) {
+      setKpiLoading(false)
+      setChartLoading(false)
+      return
+    }
+
+    setKpiLoading(true)
+    setChartLoading(true)
+
     const days = period === '7d' ? 7 : period === '30d' ? 30 : 90
-    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
+    const since = new Date(Date.now() - days * 86_400_000).toISOString()
     const supabase = createClient()
 
     Promise.all([
@@ -242,27 +267,26 @@ export default function DashboardPage() {
     ]).then(([txRes, botsRes]) => {
       const txs = txRes.data ?? []
 
-      // KPIs
       setRealKpi({
         revenue:    txs.reduce((s, t) => s + Number(t.net ?? t.amount ?? 0), 0),
         sales:      txs.length,
         botsActive: botsRes.count ?? 0,
       })
+      setKpiLoading(false)
 
-      // Chart — agrupa receita por dia
       const byDay: Record<string, number> = {}
       for (const tx of txs) {
         const key = String(tx.created_at).slice(0, 10)
         byDay[key] = (byDay[key] ?? 0) + Number(tx.net ?? tx.amount ?? 0)
       }
       const points: ChartPoint[] = Array.from({ length: days }, (_, i) => {
-        const d   = new Date(Date.now() - (days - 1 - i) * 86400000)
+        const d   = new Date(Date.now() - (days - 1 - i) * 86_400_000)
         const key = d.toISOString().slice(0, 10)
         return { day: String(i + 1).padStart(2, '0'), value: byDay[key] ?? 0 }
       })
       setRealChartData(points)
+      setChartLoading(false)
 
-      // Top produtos/fluxos — agrupa por product_name
       const flowMap: Record<string, number> = {}
       for (const tx of txs) {
         const name = String(tx.product_name || 'Sem nome')
@@ -273,25 +297,34 @@ export default function DashboardPage() {
         .sort((a, b) => b[1] - a[1])
         .slice(0, 4)
         .map(([name, sales], i) => ({ id: i + 1, name, sales, conv: 0, color: COLORS[i] }))
-      if (flows.length > 0) setRealFlows(flows)
+      setRealFlows(flows)
     })
   }, [botsCount, period])
 
-  const chartData = useMemo(() => genChartData(period === '7d' ? 7 : period === '30d' ? 30 : 90), [period])
-  const kpis      = KPI_BY_PERIOD[period]
-  const activeFlows = realFlows ?? topFlows
-  const maxSales  = Math.max(...activeFlows.map((f) => f.sales))
-
-  const fmtBRL = (v: number) =>
-    new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 2 }).format(v)
-
   const displayKpis: KpiItem[] = realKpi ? [
-    { id: 'revenue',    label: `Receita (${period})`,  value: fmtBRL(realKpi.revenue),          delta: '',      trend: 'up',   Icon: TrendingUp  },
+    { id: 'revenue',    label: `Receita (${period})`,  value: fmtBRL(realKpi.revenue),               delta: '', trend: 'up',   Icon: TrendingUp  },
     { id: 'sales',      label: 'Novas vendas',          value: realKpi.sales.toLocaleString('pt-BR'), delta: '', trend: 'up',   Icon: ShoppingBag },
-    { id: 'conversion', label: 'Taxa de conversão',     value: '—',                              delta: '',      trend: 'up',   Icon: Target      },
-    { id: 'bots',       label: 'Bots ativos',           value: String(realKpi.botsActive),       delta: '',      trend: 'up',   Icon: Bot         },
-  ] : kpis
+    { id: 'conversion', label: 'Taxa de conversão',     value: '—',                                   delta: '', trend: 'up',   Icon: Target      },
+    { id: 'bots',       label: 'Bots ativos',           value: String(realKpi.botsActive),            delta: '', trend: 'up',   Icon: Bot         },
+  ] : []
 
+  const maxSales = realFlows.length > 0 ? Math.max(...realFlows.map((f) => f.sales)) : 1
+
+  // Loading: context not yet resolved
+  if (!userLoaded || botsCount === null) {
+    return (
+      <DashboardLayout>
+        <PageHeader title="Dashboard" subtitle="Visão geral da sua operação em tempo real." />
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+            {[1, 2, 3, 4].map((i) => <KpiSkeleton key={i} />)}
+          </div>
+        </div>
+      </DashboardLayout>
+    )
+  }
+
+  // No bots yet — show empty state (wizard handled separately)
   if (botsCount === 0 && !showWizard) {
     return (
       <DashboardLayout>
@@ -303,15 +336,13 @@ export default function DashboardPage() {
 
   return (
     <DashboardLayout>
-      {showWizard && userId && (
+      {showWizard && user.id && (
         <OnboardingWizard
-          userId={userId}
+          userId={user.id}
           onComplete={() => {
-            if (userId) localStorage.setItem(`umbra_onboarding_seen_${userId}`, 'true')
+            localStorage.setItem(`umbra_onboarding_seen_${user.id}`, 'true')
             setShowWizard(false)
-            const supabase = createClient()
-            supabase.from('bots').select('id', { count: 'exact', head: true })
-              .then(({ count }) => setBotsCount(count ?? 0))
+            refreshBotsCount()
           }}
         />
       )}
@@ -328,10 +359,15 @@ export default function DashboardPage() {
       />
 
       <div className="space-y-4">
+        {/* KPI cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-          {displayKpis.map((k) => <KpiCard key={k.id} {...k} />)}
+          {kpiLoading
+            ? [1, 2, 3, 4].map((i) => <KpiSkeleton key={i} />)
+            : displayKpis.map((k) => <KpiCard key={k.id} {...k} />)
+          }
         </div>
 
+        {/* Chart + top produtos */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
           <div className="lg:col-span-2 bg-surface border border-border rounded-xl p-5">
             <div className="flex items-center justify-between mb-4">
@@ -358,35 +394,36 @@ export default function DashboardPage() {
                 ))}
               </div>
             </div>
-            <RevenueChart data={realChartData ?? chartData} />
+            <RevenueChart data={realChartData} loading={chartLoading} />
           </div>
 
           <div className="bg-surface border border-border rounded-xl p-5">
             <div className="text-[14px] font-semibold text-text">Top produtos</div>
             <div className="text-[12px] text-text-muted mb-4">
-              {realFlows ? `Últimos ${period === '7d' ? 7 : period === '30d' ? 30 : 90} dias · dados reais` : 'Últimos 7 dias'}
+              Últimos {period === '7d' ? 7 : period === '30d' ? 30 : 90} dias · dados reais
             </div>
-            <div className="space-y-3.5">
-              {activeFlows.map((f) => (
-                <div key={f.id}>
-                  <div className="flex items-center justify-between text-[12.5px] mb-1.5">
-                    <span className="truncate font-medium text-text">{f.name}</span>
-                    <span className="tnum text-text-muted shrink-0 ml-2">{f.sales} vendas</span>
-                  </div>
-                  <div className="h-1.5 bg-surface-2 rounded-full overflow-hidden">
-                    <div
-                      className="h-full rounded-full"
-                      style={{ width: `${maxSales > 0 ? (f.sales / maxSales) * 100 : 0}%`, background: f.color }}
-                    />
-                  </div>
-                  {f.conv > 0 && (
-                    <div className="text-[11px] text-text-muted mt-1 tnum">
-                      Conversão {String(f.conv).replace('.', ',')}%
+            {chartLoading ? (
+              <FlowSkeleton />
+            ) : realFlows.length === 0 ? (
+              <p className="text-[12.5px] text-text-muted">Nenhuma venda no período.</p>
+            ) : (
+              <div className="space-y-3.5">
+                {realFlows.map((f) => (
+                  <div key={f.id}>
+                    <div className="flex items-center justify-between text-[12.5px] mb-1.5">
+                      <span className="truncate font-medium text-text">{f.name}</span>
+                      <span className="tnum text-text-muted shrink-0 ml-2">{f.sales} vendas</span>
                     </div>
-                  )}
-                </div>
-              ))}
-            </div>
+                    <div className="h-1.5 bg-surface-2 rounded-full overflow-hidden">
+                      <div
+                        className="h-full rounded-full"
+                        style={{ width: `${(f.sales / maxSales) * 100}%`, background: f.color }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </div>

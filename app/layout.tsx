@@ -4,6 +4,7 @@ import { ThemeProvider } from 'next-themes'
 import { Analytics } from '@vercel/analytics/react'
 import { SpeedInsights } from '@vercel/speed-insights/next'
 import { PostHogProvider } from '@/providers/PostHogProvider'
+import { ServiceWorkerRegistrar } from './ServiceWorkerRegistrar'
 
 export const metadata: Metadata = {
   title: 'Umbra Bot - Automação e Vendas no Telegram',
@@ -16,6 +17,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body suppressHydrationWarning>
         <ThemeProvider attribute="data-theme" defaultTheme="system" enableSystem>
           <PostHogProvider>
+            <ServiceWorkerRegistrar />
             {children}
           </PostHogProvider>
         </ThemeProvider>

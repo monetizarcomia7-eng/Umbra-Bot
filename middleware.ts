@@ -8,6 +8,19 @@ const SECURITY_HEADERS: Record<string, string> = {
   'Permissions-Policy':        'camera=(), microphone=(), geolocation=()',
   'X-DNS-Prefetch-Control':    'on',
   'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
+  'Content-Security-Policy': [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: https: blob:",
+    "font-src 'self' data:",
+    "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://*.posthog.com https://api.mercadopago.com https://api.telegram.org https://vercel.live",
+    "worker-src 'self' blob:",
+    "object-src 'none'",
+    "frame-ancestors 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+  ].join('; '),
 }
 
 function applySecurityHeaders(res: NextResponse): NextResponse {

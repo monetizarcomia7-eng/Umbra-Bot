@@ -1,13 +1,14 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import crypto from 'crypto'
+import { decryptToken } from '@/lib/crypto'
 
 // Verifies Mercado Pago webhook signature.
 // MP sends: x-signature: ts=<ts>,v1=<hmac>
 // We compute: HMAC-SHA256(secret, "id:<payment_id>;request-id:<x-request-id>;ts:<ts>")
 function verifyMpSignature(request: NextRequest, rawBody: string, paymentId: string): boolean {
   const secret = process.env.MERCADOPAGO_WEBHOOK_SECRET
-  if (!secret) return true // not configured — skip verification in dev
+  if (!secret) return process.env.NODE_ENV !== 'production' // block in prod if unconfigured
 
   const signature = request.headers.get('x-signature')
   const requestId = request.headers.get('x-request-id') ?? ''
@@ -110,7 +111,7 @@ export async function POST(request: NextRequest) {
 
       if (bot?.token) {
         await sendTelegramMessage(
-          bot.token,
+          decryptToken(bot.token),
           tx.customer_telegram_id,
           `✅ <b>Pagamento confirmado!</b>\n\nProduto: <b>${tx.product_name}</b>\nValor: <b>${amount}</b>\n\nObrigado pela sua compra! 🎉`,
         )

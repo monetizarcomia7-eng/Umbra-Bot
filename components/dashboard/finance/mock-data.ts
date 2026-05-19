@@ -1,0 +1,52 @@
+import type { FinanceData } from './types'
+
+export const financeMock: FinanceData = {
+  summary: {
+    saldoDisponivel:    24380.42,
+    aLiberar:            8742.18,
+    totalRecebido:     184320.00,
+    comissoesPlataforma: 5529.60,
+    deltas: { saldo: 12.4, liberar: -3.2, total: 12.4, comissoes: 8.1 },
+  },
+  contas: [
+    { id: 'bb',     label: 'Conta BB · Ag 1234 · final 8842', bank: 'Banco do Brasil', kind: 'PJ'  },
+    { id: 'nubank', label: 'Nubank · final 0297',              bank: 'Nubank',          kind: 'PJ'  },
+    { id: 'pix',    label: 'Pix · CPF 123.***.***-45',         bank: 'Chave Pix',       kind: 'CPF' },
+  ],
+  transactions: [
+    { id: 'tx_2418', dt: '2026-05-18T14:32', type: 'sale',       desc: 'Mentoria Premium Anual',          value: 1297.00, status: 'available',
+      detail: { customer: 'João da Silva',        email: 'joao.silva@gmail.com',  product: 'Mentoria Premium Anual',  gateway: 'Pushinpay',    method: 'Pix',        gross: 1297.00, gatewayFee: 47.45, platformFee: 38.91, net: 1210.64, bot: '@mentoria_vip_bot',   flow: 'Funil VIP — Lançamento'  } },
+    { id: 'tx_2417', dt: '2026-05-18T13:15', type: 'fee',        desc: 'Taxa Pushinpay · #tx_2418',       value: -47.45,  status: 'available'  },
+    { id: 'tx_2416', dt: '2026-05-18T11:42', type: 'commission', desc: 'Comissão afiliado · Ana Lima',    value: -129.70, status: 'available'  },
+    { id: 'tx_2415', dt: '2026-05-18T10:05', type: 'sale',       desc: 'Curso Intensivo 90 dias',         value: 147.00,  status: 'pending',
+      detail: { customer: 'Maria Souza',          email: 'maria.s@outlook.com',   product: 'Curso Intensivo 90 dias', gateway: 'Mercado Pago', method: 'Cartão 12x', gross: 147.00,  gatewayFee: 6.91,  platformFee: 4.41,  net: 135.68, bot: '@vendas_curso_bot',   flow: 'Bem-vindo + Oferta'      } },
+    { id: 'tx_2414', dt: '2026-05-17T18:21', type: 'sale',       desc: 'Pack Templates Pro',              value: 70.00,   status: 'available',
+      detail: { customer: 'Pedro Castro',         email: 'pcastro@empresa.com',   product: 'Pack Templates Pro',      gateway: 'Pushinpay',    method: 'Pix',        gross: 70.00,   gatewayFee: 2.56,  platformFee: 2.10,  net: 65.34,  bot: '@upsell_pos_bot',     flow: 'Upsell pós-compra'       } },
+    { id: 'tx_2413', dt: '2026-05-17T16:08', type: 'refund',     desc: 'Estorno · #ord_8842',             value: -297.00, status: 'completed'  },
+    { id: 'tx_2412', dt: '2026-05-17T09:21', type: 'sale',       desc: 'Consultoria Individual',          value: 675.00,  status: 'available',
+      detail: { customer: 'Luana Andrade',        email: 'luana@studio.co',       product: 'Consultoria Individual',  gateway: 'Stripe',       method: 'Cartão',     gross: 675.00,  gatewayFee: 30.38, platformFee: 20.25, net: 624.37, bot: '@mentoria_vip_bot',   flow: 'Funil VIP — Lançamento'  } },
+    { id: 'tx_2411', dt: '2026-05-16T22:14', type: 'sale',       desc: 'Curso Intensivo 90 dias',         value: 147.00,  status: 'available',
+      detail: { customer: 'Rafael Mendes',        email: 'rmendes@gmail.com',     product: 'Curso Intensivo 90 dias', gateway: 'Pushinpay',    method: 'Pix',        gross: 147.00,  gatewayFee: 5.37,  platformFee: 4.41,  net: 137.22, bot: '@vendas_curso_bot',   flow: 'Carrinho abandonado 24h' } },
+    { id: 'tx_2410', dt: '2026-05-16T18:45', type: 'withdraw',   desc: 'Saque · Conta BB · final 8842',  value: -12480.00, status: 'completed' },
+    { id: 'tx_2409', dt: '2026-05-16T15:28', type: 'sale',       desc: 'Mentoria Premium Anual',          value: 1297.00, status: 'available',
+      detail: { customer: 'Bianca Ramos',         email: 'bia.r@uol.com.br',      product: 'Mentoria Premium Anual',  gateway: 'Pushinpay',    method: 'Pix',        gross: 1297.00, gatewayFee: 47.45, platformFee: 38.91, net: 1210.64, bot: '@mentoria_vip_bot',   flow: 'Funil VIP — Lançamento'  } },
+    { id: 'tx_2408', dt: '2026-05-16T11:03', type: 'sale',       desc: 'E-book Estratégias',              value: 20.00,   status: 'available',
+      detail: { customer: 'Thiago Lopes',         email: 'tlopes@hotmail.com',    product: 'E-book Estratégias',      gateway: 'Pushinpay',    method: 'Pix',        gross: 20.00,   gatewayFee: 0.73,  platformFee: 0.60,  net: 18.67,  bot: '@vendas_curso_bot',   flow: 'Bem-vindo + Oferta'      } },
+  ],
+  withdrawals: [
+    { id: 'wd_011', date: '2026-05-16T18:45', amount: 12480.00, account: 'Conta BB · final 8842', status: 'completed', concluded: '2026-05-17T09:22' },
+    { id: 'wd_010', date: '2026-04-30T14:21', amount: 18750.00, account: 'Conta BB · final 8842', status: 'completed', concluded: '2026-05-02T08:14' },
+    { id: 'wd_009', date: '2026-04-15T11:08', amount: 5200.00,  account: 'Nubank · final 0297',   status: 'completed', concluded: '2026-04-16T10:30' },
+    { id: 'wd_008', date: '2026-03-30T16:42', amount: 22100.00, account: 'Conta BB · final 8842', status: 'completed', concluded: '2026-04-01T09:05' },
+    { id: 'wd_007', date: '2026-03-08T10:15', amount: 3500.00,  account: 'Nubank · final 0297',   status: 'failed',    concluded: '2026-03-08T14:42' },
+    { id: 'wd_006', date: '2026-02-28T13:30', amount: 14800.00, account: 'Conta BB · final 8842', status: 'completed', concluded: '2026-03-02T08:18' },
+  ],
+  invoices: [
+    { id: 'inv_2026_05', period: 'Maio/2026',      value: 2184.30, due: '2026-06-10', status: 'pending' },
+    { id: 'inv_2026_04', period: 'Abril/2026',     value: 1947.50, due: '2026-05-10', status: 'paid'    },
+    { id: 'inv_2026_03', period: 'Março/2026',     value: 1622.80, due: '2026-04-10', status: 'paid'    },
+    { id: 'inv_2026_02', period: 'Fevereiro/2026', value: 1284.10, due: '2026-03-10', status: 'paid'    },
+    { id: 'inv_2026_01', period: 'Janeiro/2026',   value: 947.20,  due: '2026-02-10', status: 'paid'    },
+    { id: 'inv_2025_12', period: 'Dezembro/2025',  value: 1834.60, due: '2026-01-10', status: 'paid'    },
+  ],
+}

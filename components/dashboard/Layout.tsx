@@ -1,22 +1,14 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React from 'react'
 import { Sidebar } from './Sidebar'
 import { Topbar } from './Topbar'
 import { useKeyboardShortcuts } from '@/hooks/use-keyboard-shortcuts'
+import { DashboardProvider } from '@/providers/DashboardProvider'
 
-export function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const [mobileOpen, setMobileOpen] = useState(false)
-
-  // Global keyboard shortcuts (⌘K=search, b=bots, f=finance, c=customers, a=activity)
+function LayoutShell({ children }: { children: React.ReactNode }) {
+  const [mobileOpen, setMobileOpen] = React.useState(false)
   useKeyboardShortcuts()
-
-  // Register service worker for Web Push
-  useEffect(() => {
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js').catch(() => {/* silent in dev */})
-    }
-  }, [])
 
   return (
     <div className="flex h-screen overflow-hidden bg-bg text-text">
@@ -30,5 +22,13 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
         </main>
       </div>
     </div>
+  )
+}
+
+export function DashboardLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <DashboardProvider>
+      <LayoutShell>{children}</LayoutShell>
+    </DashboardProvider>
   )
 }

@@ -1,9 +1,9 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
+import { useDashboard } from '@/providers/DashboardProvider'
 import {
   LayoutDashboard, BarChart3, Wallet, Activity, Users, UserPlus,
   AlertTriangle, Bot, GitBranch, Shuffle, Megaphone, Send, Wrench,
@@ -179,16 +179,7 @@ function NavGroup({
 export function Sidebar({ mobileOpen, setMobileOpen }: SidebarProps) {
   const pathname = usePathname()
   const [collapsed, setCollapsed] = useState(false)
-  const [alertCount, setAlertCount] = useState(0)
-
-  useEffect(() => {
-    const supabase = createClient()
-    supabase
-      .from('alerts')
-      .select('id', { count: 'exact', head: true })
-      .eq('resolved', false)
-      .then(({ count }) => setAlertCount(count ?? 0))
-  }, [])
+  const { alertCount } = useDashboard()
 
   const topNav: NavItemDef[] = BASE_TOP_NAV.map((item) =>
     item.id === 'alerts' && alertCount > 0
@@ -274,7 +265,7 @@ export function Sidebar({ mobileOpen, setMobileOpen }: SidebarProps) {
 
         <div className="p-2 border-t border-border shrink-0">
           <Link
-            href="/logout"
+            href="/dashboard/profile"
             title={collapsed ? 'Sair da Conta' : undefined}
             className={cn(
               'w-full flex items-center rounded-lg text-[13.5px] transition-colors',

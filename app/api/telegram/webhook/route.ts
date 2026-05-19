@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { decryptToken } from '@/lib/crypto'
 
 interface TelegramMessage {
   message_id: number
@@ -100,7 +101,7 @@ export async function POST(request: NextRequest) {
   // Handle /start command
   if (msg.text?.startsWith('/start')) {
     await sendMessage(
-      bot.token,
+      decryptToken(bot.token),
       chatId,
       `Olá, <b>${firstName}</b>! 👋\n\nSeja bem-vindo ao <b>${bot.name}</b>. Em breve você receberá mais informações.`,
     )

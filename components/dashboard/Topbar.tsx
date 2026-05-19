@@ -9,33 +9,18 @@ import {
   Zap, BookOpen, GraduationCap, AlertTriangle, Link2,
 } from 'lucide-react'
 import { useTheme } from 'next-themes'
-import { useRouter } from 'next/navigation'
 import { cn } from '@/lib/utils'
 import { createClient } from '@/lib/supabase/client'
-import { useAnalytics } from '@/hooks/use-analytics'
+import { useDashboard } from '@/providers/DashboardProvider'
 
 export interface TopbarProps {
   onMobileMenu: () => void
 }
 
-interface AlertRow {
-  id: string
-  title: string
-  description: string
-  severity: 'critical' | 'warning' | 'info'
-  created_at: string
-}
-
-interface UserInfo {
-  id: string
-  name: string
-  email: string
-  initials: string
-  plan: 'free' | 'pro' | 'enterprise'
-}
-
-function getInitials(name: string) {
-  return name.split(' ').filter(Boolean).slice(0, 2).map((p) => p[0]).join('').toUpperCase() || '?'
+const PLAN_LABEL: Record<string, string> = {
+  free: 'Plano Free',
+  pro: 'Plano Pro',
+  enterprise: 'Enterprise',
 }
 
 function relativeTime(iso: string): string {
@@ -47,12 +32,6 @@ function relativeTime(iso: string): string {
   if (hrs < 24) return `há ${hrs} h`
   if (hrs < 48) return 'ontem'
   return new Date(iso).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
-}
-
-const PLAN_LABEL: Record<string, string> = {
-  free: 'Plano Free',
-  pro: 'Plano Pro',
-  enterprise: 'Enterprise',
 }
 
 function MenuItem({
@@ -74,12 +53,8 @@ function MenuItem({
       <span className="flex-1 text-left">{label}</span>
     </>
   )
-  if (href) {
-    return <Link href={href} className={cls}>{content}</Link>
-  }
-  return (
-    <button onClick={onClick} className={cls}>{content}</button>
-  )
+  if (href) return <Link href={href} className={cls}>{content}</Link>
+  return <button onClick={onClick} className={cls}>{content}</button>
 }
 
 type SearchResultType =
@@ -124,8 +99,10 @@ function SearchDropdown({ results, loading, query, onClose }: {
   })).filter((g) => g.items.length > 0)
 
   return (
-    <div className="absolute left-0 top-full mt-1.5 w-full bg-surface border border-border rounded-xl z-50 overflow-hidden"
-      style={{ boxShadow: 'var(--shadow-lg)' }}>
+    <div
+      className="absolute left-0 top-full mt-1.5 w-full bg-surface border border-border rounded-xl z-50 overflow-hidden"
+      style={{ boxShadow: 'var(--shadow-lg)' }}
+    >
       {loading ? (
         <div className="flex items-center justify-center gap-2 py-6 text-[12.5px] text-text-muted">
           <Loader2 size={14} className="animate-spin" /> Buscando…
@@ -169,7 +146,7 @@ function NotificationsDropdown({
   alerts,
   onMarkAllRead,
 }: {
-  alerts: AlertRow[]
+  alerts: { id: string; title: string; description: string; severity: string; created_at: string }[]
   onMarkAllRead: () => void
 }) {
   return (
@@ -210,21 +187,26 @@ function NotificationsDropdown({
         ))}
       </div>
       <div className="px-2 py-1.5 border-t border-border">
-        <button className="w-full text-center text-[11.5px] font-medium text-primary hover:bg-surface-2 rounded-md py-1.5">
+        <Link
+          href="/dashboard/alerts"
+          className="block w-full text-center text-[11.5px] font-medium text-primary hover:bg-surface-2 rounded-md py-1.5"
+        >
           Ver todas as notificações
-        </button>
+        </Link>
       </div>
     </div>
   )
 }
 
-function UserDropdown({ user, onLogout }: { user: UserInfo; onLogout: () => void }) {
+function UserDropdown({ onLogout }: { onLogout: () => void }) {
+  const { user } = useDashboard()
   return (
     <div
       className="absolute right-0 top-full mt-2 w-[240px] bg-surface border border-border rounded-xl overflow-hidden z-50 p-1"
       style={{ boxShadow: 'var(--shadow-lg)' }}
     >
-      <Link href="/dashboard/profile"
+      <Link
+        href="/dashboard/profile"
         className="block px-3 py-2.5 border-b border-border mb-1 hover:bg-surface-2 transition-colors rounded-t-xl"
       >
         <div className="text-[13px] font-semibold text-text leading-tight">{user.name}</div>
@@ -245,12 +227,9 @@ function UserDropdown({ user, onLogout }: { user: UserInfo; onLogout: () => void
 
 export function Topbar({ onMobileMenu }: TopbarProps) {
   const { theme, setTheme } = useTheme()
-  const router = useRouter()
   const [mounted, setMounted] = useState(false)
   const [notifOpen, setNotifOpen] = useState(false)
   const [userOpen, setUserOpen] = useState(false)
-  const [user, setUser] = useState<UserInfo>({ id: '', name: '', email: '', initials: '', plan: 'free' })
-  const [alerts, setAlerts] = useState<AlertRow[]>([])
   const notifRef = useRef<HTMLDivElement>(null)
   const userRef = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
@@ -259,16 +238,35 @@ export function Topbar({ onMobileMenu }: TopbarProps) {
   const [searchResults, setSearchResults] = useState<SearchResult[]>([])
   const [searchLoading, setSearchLoading] = useState(false)
   const [searchOpen,    setSearchOpen]    = useState(false)
-  const searchWrapRef = useRef<HTMLDivElement>(null)
+  const searchWrapRef   = useRef<HTMLDivElement>(null)
+  const searchVersionRef = useRef(0)
 
-  const { identify, reset } = useAnalytics()
+  const { user, alerts, markAllAlertsRead, logout } = useDashboard()
+
+  type BotRow         = { id: string; name: string | null; username: string | null; status: string | null }
+  type ContactRow     = { id: string; name: string | null; email: string | null }
+  type TxRow          = { id: string; product_name: string | null; customer_name: string | null; amount: string | number }
+  type FlowRow        = { id: string; name: string; description: string | null; status: string | null }
+  type BroadcastRow   = { id: string; title: string; bot: string | null; status: string | null }
+  type RedirectRow    = { id: string; slug: string; destination_label: string | null; status: string | null }
+  type CampaignRow    = { id: string; name: string; description: string | null; status: string | null }
+  type AffiliateRow   = { id: string; name: string; email: string | null; status: string | null }
+  type GatewayRow     = { id: string; name: string; connected: boolean | null }
+  type BiolinkRow     = { id: string; name: string | null; slug: string; status: string | null }
+  type WebhookRow     = { id: string; name: string; url: string | null; status: string | null }
+  type ArticleRow     = { id: string; title: string; excerpt: string | null; category: string | null }
+  type CourseRow      = { id: string; title: string; subtitle: string | null; instructor: string | null }
+  type AlertRow       = { id: string; title: string; description: string | null; severity: string }
+
+  type DbResult<T> = PromiseSettledResult<{ data: T[] | null }>
+  const ok = <T,>(r: DbResult<T>): T[] => r.status === 'fulfilled' ? (r.value.data ?? []) : []
 
   const runSearch = useCallback(async (q: string) => {
     if (q.trim().length < 2) { setSearchResults([]); setSearchLoading(false); return }
+    const version = ++searchVersionRef.current
     setSearchLoading(true)
     const supabase = createClient()
-    const t = q.trim()
-    const w = `%${t}%`
+    const w = `%${q.trim()}%`
 
     const [
       botsR, contactsR, txR, flowsR, broadcastsR,
@@ -291,38 +289,24 @@ export function Topbar({ onMobileMenu }: TopbarProps) {
       supabase.from('alerts').select('id,title,description,severity').or(`title.ilike.${w},description.ilike.${w}`).limit(2),
     ])
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const ok = (r: PromiseSettledResult<any>) => r.status === 'fulfilled' ? (r.value.data ?? []) : []
+    // Discard stale results if a newer search was triggered while awaiting
+    if (version !== searchVersionRef.current) return
 
     const results: SearchResult[] = [
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ...ok(botsR).map((b: any) => ({ id: b.id, type: 'bot' as const, title: b.name || 'Bot', subtitle: b.username ? `@${b.username}` : b.status ?? '', href: '/dashboard/bots' })),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ...ok(contactsR).map((c: any) => ({ id: c.id, type: 'contact' as const, title: c.name || c.email || 'Cliente', subtitle: c.email ?? '', href: '/dashboard/customers' })),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ...ok(txR).map((x: any) => ({ id: x.id, type: 'transaction' as const, title: x.product_name || 'Transação', subtitle: `${x.customer_name ?? ''} · R$ ${Number(x.amount).toFixed(2)}`.trim().replace(/^·\s*/, ''), href: '/dashboard/finance' })),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ...ok(flowsR).map((f: any) => ({ id: f.id, type: 'flow' as const, title: f.name, subtitle: f.description || f.status, href: '/dashboard/flows' })),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ...ok(broadcastsR).map((b: any) => ({ id: b.id, type: 'broadcast' as const, title: b.title, subtitle: b.bot || b.status, href: '/dashboard/broadcasts' })),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ...ok(redirectsR).map((r: any) => ({ id: r.id, type: 'redirect' as const, title: r.destination_label || r.slug, subtitle: `/${r.slug}`, href: '/dashboard/redirects' })),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ...ok(campaignsR).map((c: any) => ({ id: c.id, type: 'campaign' as const, title: c.name, subtitle: c.description || c.status, href: '/dashboard/remarketing' })),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ...ok(affiliatesR).map((a: any) => ({ id: a.id, type: 'affiliate' as const, title: a.name, subtitle: a.email, href: '/dashboard/affiliates' })),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ...ok(gatewaysR).map((g: any) => ({ id: g.id, type: 'gateway' as const, title: g.name, subtitle: g.connected ? 'Conectado' : 'Desconectado', href: '/dashboard/gateways' })),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ...ok(biolinksR).map((b: any) => ({ id: b.id, type: 'biolink' as const, title: b.name || b.slug, subtitle: `umbra.bio/${b.slug}`, href: '/dashboard/biolink' })),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ...ok(webhooksR).map((w: any) => ({ id: w.id, type: 'webhook' as const, title: w.name, subtitle: w.url, href: '/dashboard/webhooks' })),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ...ok(articlesR).map((a: any) => ({ id: a.id, type: 'article' as const, title: a.title, subtitle: a.category || a.excerpt?.slice(0, 60) || '', href: '/dashboard/guide' })),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ...ok(coursesR).map((c: any) => ({ id: c.id, type: 'course' as const, title: c.title, subtitle: c.instructor || c.subtitle, href: '/dashboard/academy' })),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ...ok(alertsR).map((a: any) => ({ id: a.id, type: 'alert' as const, title: a.title, subtitle: a.description?.slice(0, 60) || a.severity, href: '/dashboard/alerts' })),
+      ...ok<BotRow>(botsR as DbResult<BotRow>).map((b) => ({ id: b.id, type: 'bot' as const, title: b.name || 'Bot', subtitle: b.username ? `@${b.username}` : b.status ?? '', href: '/dashboard/bots' })),
+      ...ok<ContactRow>(contactsR as DbResult<ContactRow>).map((c) => ({ id: c.id, type: 'contact' as const, title: c.name || c.email || 'Cliente', subtitle: c.email ?? '', href: '/dashboard/customers' })),
+      ...ok<TxRow>(txR as DbResult<TxRow>).map((x) => ({ id: x.id, type: 'transaction' as const, title: x.product_name || 'Transação', subtitle: `${x.customer_name ?? ''} · R$ ${Number(x.amount).toFixed(2)}`.trim().replace(/^·\s*/, ''), href: '/dashboard/finance' })),
+      ...ok<FlowRow>(flowsR as DbResult<FlowRow>).map((f) => ({ id: f.id, type: 'flow' as const, title: f.name, subtitle: f.description || f.status || '', href: '/dashboard/flows' })),
+      ...ok<BroadcastRow>(broadcastsR as DbResult<BroadcastRow>).map((b) => ({ id: b.id, type: 'broadcast' as const, title: b.title, subtitle: b.bot || b.status || '', href: '/dashboard/broadcasts' })),
+      ...ok<RedirectRow>(redirectsR as DbResult<RedirectRow>).map((r) => ({ id: r.id, type: 'redirect' as const, title: r.destination_label || r.slug, subtitle: `/${r.slug}`, href: '/dashboard/redirects' })),
+      ...ok<CampaignRow>(campaignsR as DbResult<CampaignRow>).map((c) => ({ id: c.id, type: 'campaign' as const, title: c.name, subtitle: c.description || c.status || '', href: '/dashboard/remarketing' })),
+      ...ok<AffiliateRow>(affiliatesR as DbResult<AffiliateRow>).map((a) => ({ id: a.id, type: 'affiliate' as const, title: a.name, subtitle: a.email || '', href: '/dashboard/affiliates' })),
+      ...ok<GatewayRow>(gatewaysR as DbResult<GatewayRow>).map((g) => ({ id: g.id, type: 'gateway' as const, title: g.name, subtitle: g.connected ? 'Conectado' : 'Desconectado', href: '/dashboard/gateways' })),
+      ...ok<BiolinkRow>(biolinksR as DbResult<BiolinkRow>).map((b) => ({ id: b.id, type: 'biolink' as const, title: b.name || b.slug, subtitle: `umbra.bio/${b.slug}`, href: '/dashboard/biolink' })),
+      ...ok<WebhookRow>(webhooksR as DbResult<WebhookRow>).map((w) => ({ id: w.id, type: 'webhook' as const, title: w.name, subtitle: w.url || '', href: '/dashboard/webhooks' })),
+      ...ok<ArticleRow>(articlesR as DbResult<ArticleRow>).map((a) => ({ id: a.id, type: 'article' as const, title: a.title, subtitle: a.category || a.excerpt?.slice(0, 60) || '', href: '/dashboard/guide' })),
+      ...ok<CourseRow>(coursesR as DbResult<CourseRow>).map((c) => ({ id: c.id, type: 'course' as const, title: c.title, subtitle: c.instructor || c.subtitle || '', href: '/dashboard/academy' })),
+      ...ok<AlertRow>(alertsR as DbResult<AlertRow>).map((a) => ({ id: a.id, type: 'alert' as const, title: a.title, subtitle: a.description?.slice(0, 60) || a.severity, href: '/dashboard/alerts' })),
     ]
 
     setSearchResults(results)
@@ -335,77 +319,14 @@ export function Topbar({ onMobileMenu }: TopbarProps) {
   }, [searchQuery, runSearch])
 
   useEffect(() => {
+    setMounted(true)
+  }, [])
+
+  useEffect(() => {
     function handler(e: MouseEvent) {
       if (searchWrapRef.current && !searchWrapRef.current.contains(e.target as Node)) {
         setSearchOpen(false)
       }
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [])
-
-  useEffect(() => {
-    setMounted(true)
-    const supabase = createClient()
-
-    supabase.auth.getUser().then(async ({ data }) => {
-      if (!data.user) return
-
-      const name = (data.user.user_metadata?.full_name as string | undefined)
-        || data.user.email?.split('@')[0]
-        || 'Usuário'
-
-      const uid = data.user.id
-
-      // Fetch profile (plan)
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('plan')
-        .eq('id', uid)
-        .single()
-
-      setUser({
-        id: uid,
-        name,
-        email: data.user.email ?? '',
-        initials: getInitials(name),
-        plan: (profile?.plan as UserInfo['plan']) ?? 'free',
-      })
-
-      identify(uid, { email: data.user.email, name })
-
-      // Fetch unresolved alerts
-      const { data: alertData } = await supabase
-        .from('alerts')
-        .select('id, title, description, severity, created_at')
-        .eq('resolved', false)
-        .order('created_at', { ascending: false })
-        .limit(10)
-
-      setAlerts((alertData as AlertRow[]) ?? [])
-    })
-  }, [])
-
-  async function handleMarkAllRead() {
-    if (alerts.length === 0) return
-    const supabase = createClient()
-    await supabase
-      .from('alerts')
-      .update({ resolved: true, resolved_at: new Date().toISOString() })
-      .in('id', alerts.map((a) => a.id))
-    setAlerts([])
-  }
-
-  async function handleLogout() {
-    const supabase = createClient()
-    await supabase.auth.signOut()
-    reset()
-    router.push('/login')
-    router.refresh()
-  }
-
-  useEffect(() => {
-    function handler(e: MouseEvent) {
       if (notifRef.current && !notifRef.current.contains(e.target as Node)) setNotifOpen(false)
       if (userRef.current  && !userRef.current.contains(e.target as Node))  setUserOpen(false)
     }
@@ -489,7 +410,7 @@ export function Topbar({ onMobileMenu }: TopbarProps) {
             )}
           </button>
           {notifOpen && (
-            <NotificationsDropdown alerts={alerts} onMarkAllRead={handleMarkAllRead} />
+            <NotificationsDropdown alerts={alerts} onMarkAllRead={markAllAlertsRead} />
           )}
         </div>
 
@@ -507,7 +428,7 @@ export function Topbar({ onMobileMenu }: TopbarProps) {
             </div>
             <ChevronDown size={13} className="hidden lg:inline text-text-muted" />
           </button>
-          {userOpen && <UserDropdown user={user} onLogout={handleLogout} />}
+          {userOpen && <UserDropdown onLogout={logout} />}
         </div>
       </div>
     </header>
