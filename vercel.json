@@ -10,7 +10,7 @@
     },
     {
       "path": "/api/cron/check-bots",
-      "schedule": "*/30 * * * *"
+      "schedule": "0 8 * * *"
     }
   ]
 }
