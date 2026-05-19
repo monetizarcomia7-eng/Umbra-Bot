@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useState, useEffect, useRef } from 'react'
+import Link from 'next/link'
 import { Search, Bell, Sun, Moon, ChevronDown, Settings, HelpCircle, LogOut, User, Menu } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { useRouter } from 'next/navigation'
@@ -50,24 +51,29 @@ const PLAN_LABEL: Record<string, string> = {
 }
 
 function MenuItem({
-  icon: Icon, label, danger, onClick,
+  icon: Icon, label, danger, href, onClick,
 }: {
   icon: React.ElementType
   label: string
   danger?: boolean
+  href?: string
   onClick?: () => void
 }) {
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        'w-full flex items-center gap-2.5 px-3 py-2 text-[13px] focus:outline-none rounded-md',
-        danger ? 'text-danger hover:bg-danger-soft' : 'text-text hover:bg-surface-2',
-      )}
-    >
+  const cls = cn(
+    'w-full flex items-center gap-2.5 px-3 py-2 text-[13px] focus:outline-none rounded-md',
+    danger ? 'text-danger hover:bg-danger-soft' : 'text-text hover:bg-surface-2',
+  )
+  const content = (
+    <>
       <Icon size={15} className={danger ? '' : 'text-text-muted'} />
       <span className="flex-1 text-left">{label}</span>
-    </button>
+    </>
+  )
+  if (href) {
+    return <Link href={href} className={cls}>{content}</Link>
+  }
+  return (
+    <button onClick={onClick} className={cls}>{content}</button>
   )
 }
 
@@ -130,17 +136,19 @@ function UserDropdown({ user, onLogout }: { user: UserInfo; onLogout: () => void
       className="absolute right-0 top-full mt-2 w-[240px] bg-surface border border-border rounded-xl overflow-hidden z-50 p-1"
       style={{ boxShadow: 'var(--shadow-lg)' }}
     >
-      <div className="px-3 py-2.5 border-b border-border mb-1">
+      <Link href="/dashboard/profile"
+        className="block px-3 py-2.5 border-b border-border mb-1 hover:bg-surface-2 transition-colors rounded-t-xl"
+      >
         <div className="text-[13px] font-semibold text-text leading-tight">{user.name}</div>
         <div className="text-[11.5px] text-text-muted leading-tight mt-0.5">{user.email}</div>
         <div className="mt-2 inline-flex items-center gap-1.5 text-[10.5px] font-medium text-text-muted bg-surface-2 border border-border rounded-md px-1.5 py-0.5">
           <span className="w-1.5 h-1.5 rounded-full bg-success" />
           {PLAN_LABEL[user.plan] ?? 'Plano Free'}
         </div>
-      </div>
-      <MenuItem icon={User}       label="Perfil" />
-      <MenuItem icon={Settings}   label="Configurações" />
-      <MenuItem icon={HelpCircle} label="Suporte" />
+      </Link>
+      <MenuItem icon={User}       label="Perfil"        href="/dashboard/profile" />
+      <MenuItem icon={Settings}   label="Configurações" href="/dashboard/profile" />
+      <MenuItem icon={HelpCircle} label="Suporte"       href="/dashboard/guide" />
       <div className="h-px bg-border my-1" />
       <MenuItem icon={LogOut} label="Sair" danger onClick={onLogout} />
     </div>
