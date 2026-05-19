@@ -6,7 +6,7 @@ import { rateLimit } from '@/lib/rate-limit'
 
 const withdrawalSchema = z.object({
   amount:        z.number({ error: 'Valor deve ser um número.' }).positive('Valor deve ser maior que zero.'),
-  account_id:    z.string().min(1, 'Conta de destino obrigatória.').max(100),
+  account_id:    z.string().uuid(),
   account_label: z.string().min(1, 'Rótulo da conta obrigatório.').max(200),
 })
 
