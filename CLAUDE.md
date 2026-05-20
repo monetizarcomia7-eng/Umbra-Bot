@@ -22,8 +22,9 @@ umbra-bot/
 │   ├── page.tsx                  # Redirect para /dashboard
 │   ├── globals.css               # Design tokens (light/dark), Tailwind v4
 │   ├── actions/
-│   │   └── bots.ts               # Server Action: salva bot com token criptografado (AES-256-GCM)
-│   │                             # userId lido do servidor via supabase.auth.getUser() — sem IDOR
+│   │   └── bots.ts               # 6 Server Actions: validateBotTokenAction (getMe real), saveBotAction (AES-256-GCM),
+│   │                             # registerWebhookAction (decryptToken + status='online'), getBotTokenAction,
+│   │                             # updateBotAction, deleteBotAction — userId sempre do servidor (sem IDOR)
 │   ├── (auth)/
 │   │   ├── login/page.tsx        # Login com email + Google OAuth
 │   │   ├── register/page.tsx     # Registro com email + Google OAuth
@@ -34,7 +35,7 @@ umbra-bot/
 │   ├── api/
 │   │   ├── telegram/
 │   │   │   ├── webhook/route.ts  # Recebe updates do Telegram (descriptografa token)
-│   │   │   └── register/route.ts # Registra webhook no Telegram
+│   │   │   └── register/route.ts # Registra webhook no Telegram (decryptToken + status='online')
 │   │   ├── payments/
 │   │   │   ├── pix/route.ts      # Cria pagamento PIX (Mercado Pago) + Sentry + analytics
 │   │   │   │                     # Lê cookie 'umbra_aff' → valida afiliado (.eq user_id, IDOR-safe) → salva affiliate_id
@@ -90,7 +91,9 @@ umbra-bot/
 │       ├── page.tsx              # Server Component async — busca KPIs 30d no servidor, passa initialData ao DashboardClient
 │       ├── _components/
 │       │   └── DashboardClient.tsx  # Client Component — KPIs reais + deltas + gráfico + top produtos
-│       ├── bots/                 # Gerenciar bots (mock)
+│       ├── bots/                 # Gerenciar bots — dados reais (SSR + Realtime)
+│       │   ├── page.tsx          # Server Component: SSR bots (sem token) + flows em paralelo
+│       │   └── BotsClient.tsx    # Client Component: CRUD, Realtime, AddBotModal, tabs, TokenReveal
 │       ├── finance/              # Financeiro — Server Component + módulo finance/
 │       ├── activity/             # Feed de eventos — dados reais do Supabase
 │       │   ├── page.tsx          # Server Component: busca 25 eventos + bots em paralelo (SSR)
@@ -412,7 +415,18 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Afiliados — Webhook MP: credita sales++ e commission via RPC credit_affiliate_sale ao aprovar pagamento | ✅ Implementado |
 | Afiliados — migração 058: transactions.affiliate_id + RPC credit_affiliate_sale (security definer, anon) | ✅ Implementada |
 | Afiliados — link de afiliado: BASE_URL removido, url derivada de appUrl (sem https:// duplicado) | ✅ Corrigido |
-| Bots — CRUD real | ❌ Ainda mock |
+| Bots — Server Component + BotsClient + 6 server actions (dados reais) | ✅ Funcional |
+| Bots — validateBotTokenAction: valida token real via Telegram getMe | ✅ Implementado |
+| Bots — saveBotAction: AES-256-GCM + user_id server-side (sem IDOR) | ✅ Implementado |
+| Bots — registerWebhookAction: decryptToken + status='online' + bot_connected PostHog | ✅ Implementado |
+| Bots — getBotTokenAction: token descriptografado sob demanda (clique "Revelar") | ✅ Implementado |
+| Bots — updateBotAction: patch com verificação de propriedade (user_id) | ✅ Implementado |
+| Bots — deleteBotAction: DELETE com verificação de propriedade (user_id) | ✅ Implementado |
+| Bots — Realtime: canal 'bots-realtime' filtrado por user_id (UPDATE em tempo real) | ✅ Implementado |
+| Bots — TokenReveal: token só descriptografado ao clicar "Revelar" (server action) | ✅ Implementado |
+| Bots — FlowTab: fluxos reais do banco (sem mock FLOWS) | ✅ Implementado |
+| Bots — Otimista: rollback ao falhar update/delete | ✅ Implementado |
+| Bots — register/route.ts: bugs corrigidos (decryptToken + status='online') | ✅ Corrigido |
 | Gateways — configuração real de credenciais | ❌ Ainda mock |
 | Clientes — Server Component SSR + dados reais (sem mock) | ✅ Funcional |
 | Clientes — colunas origin, first_purchase, last_purchase, avg_ticket (mig 052) | ✅ Implementado |
@@ -1608,7 +1622,97 @@ get_public_affiliate_program(p_user_id uuid) → json
 
 ---
 
-## 18. MÓDULO DE NOTIFICAÇÕES
+## 18. MÓDULO DE BOTS
+
+### Arquivos
+
+```
+app/dashboard/bots/
+  ├── page.tsx       # Server Component — busca bots (sem token) + flows em paralelo; passa ao BotsClient
+  └── BotsClient.tsx # Client Component — lista, detalhe, CRUD, Realtime, modais, tabs
+
+app/actions/bots.ts  # 6 Server Actions (todas autenticadas + rate-limit)
+  ├── validateBotTokenAction(token)     # Chama getMe, verifica is_bot, retorna { username, firstName, telegramId }
+  ├── saveBotAction(params)             # encryptToken + INSERT com user_id do servidor
+  ├── registerWebhookAction(botId)      # decryptToken + setWebhook + status='online' + PostHog
+  ├── getBotTokenAction(botId)          # decryptToken — chamado só ao clicar "Revelar"
+  ├── updateBotAction(id, patch)        # UPDATE com .eq('user_id', user.id)
+  └── deleteBotAction(id)              # DELETE com .eq('user_id', user.id)
+```
+
+### Fluxo de dados
+
+```
+BotsPage (Server Component)
+  ├── Promise.all em paralelo:
+  │     ├── bots: id, name, username, status, leads, sales, conversion, revenue,
+  │     │         active_flow_id, color, telegram_id, webhook_url, last_sync, added_at,
+  │     │         description, welcome_message, fallback_message
+  │     │         ← token NUNCA incluído no select (segurança)
+  │     └── flows: id, name, description, status
+  └── passa como props:
+        initialBots: RawBotRow[]
+        flows: FlowData[]
+        userId: string
+
+BotsClient (Client Component)
+  ├── bots state: initialBots.map(mapRaw) — nunca usa MOCK_BOTS
+  ├── Supabase Realtime:
+  │     canal 'bots-realtime', event UPDATE, tabela bots
+  │     filtro: user_id=eq.${userId}
+  │     UPDATE → atualiza inline no array (detecta eventos do cron check-bots)
+  ├── setBotState(id, patch): atualiza state local apenas (pós-registerWebhookAction)
+  ├── updateBot(id, patch): otimista + updateBotAction + rollback em falha
+  ├── deleteBot(id): otimista + deleteBotAction + rollback + refreshBotsCount()
+  ├── handleBotAdded(bot): prepend ao state + refreshBotsCount()
+  ├── AddBotModal:
+  │     Passo 1 — input token → validateBotTokenAction (real Telegram getMe)
+  │     Passo 2 — config (nome, descrição, flow) + preview do bot
+  │     Passo 3 — confirmação + saveBotAction + registerWebhookAction (best-effort)
+  │     Sem setTimeout mock / sem Math.random() / sem UUID falso
+  ├── TokenReveal: getBotTokenAction chamado só no clique do olho (token off-client até lá)
+  ├── RegisterWebhookButton: chama registerWebhookAction para bots offline
+  ├── GeneralTab: webhook warning quando webhookUrl vazio + RegisterWebhookButton inline
+  ├── FlowTab: usa flows prop (dados reais do banco) — sem mock FLOWS
+  └── Toast system: { msg, type: 'success' | 'error' }
+```
+
+### Status válidos do campo bots.status
+
+```sql
+-- migration 006
+check (status in ('online', 'offline', 'banned', 'paused'))
+-- 'active' é INVÁLIDO e viola o CHECK constraint
+-- registerWebhookAction e register/route.ts usam status='online' (corrigido)
+```
+
+### Fluxo de adição de bot (AddBotModal)
+
+1. Usuário cola token → `validateBotTokenAction` → Telegram `getMe` → exibe nome + @username
+2. Usuário preenche nome/descrição/flow → `saveBotAction` → `encryptToken` + INSERT → retorna `{ id }` real
+3. `registerWebhookAction(id)` → `decryptToken` → `setWebhook` → status='online'
+4. Se webhook falhar: bot salvo como 'offline'; usuário pode retentar via RegisterWebhookButton na aba Geral
+
+### Dois tipos de atualização de estado
+
+```typescript
+// Local only (após ação que já atualizou o DB):
+setBotState(id, { status: 'online', webhookUrl })
+
+// Local + DB (com rollback):
+updateBot(patch)  // → otimista → updateBotAction → catch: rollback ao snapshot
+```
+
+### Segurança
+
+- Token **nunca** incluído no `select()` da página — zero exposição ao cliente por padrão
+- `getBotTokenAction` valida propriedade com `.eq('user_id', user.id)` antes de descriptografar
+- `saveBotAction` e `registerWebhookAction` leem `user_id` do servidor (sem IDOR)
+- Rate limit: 10 validações de token / 10 min por usuário; 10 registros de webhook / 10 min
+
+---
+
+## 19. MÓDULO DE NOTIFICAÇÕES
 
 ### Arquivos
 

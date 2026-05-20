@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { decryptToken } from '@/lib/crypto'
 import { rateLimit } from '@/lib/rate-limit'
 import { captureEvent } from '@/lib/analytics-server'
 
@@ -43,8 +44,9 @@ export async function POST(request: NextRequest) {
 
   const webhookUrl = `${appUrl}/api/telegram/webhook?bot_id=${bot.id}`
 
+  const plainToken = decryptToken(bot.token as string)
   const telegramRes = await fetch(
-    `https://api.telegram.org/bot${bot.token}/setWebhook`,
+    `https://api.telegram.org/bot${plainToken}/setWebhook`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -61,10 +63,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: telegramData.description }, { status: 400 })
   }
 
-  // Update bot status to active
+  // Update bot status to online and record webhook URL
   await supabase
     .from('bots')
-    .update({ status: 'active' })
+    .update({ status: 'online', webhook_url: webhookUrl, last_sync: new Date().toISOString() })
     .eq('id', bot.id)
 
   // Count user's bots to detect first connection
@@ -72,7 +74,7 @@ export async function POST(request: NextRequest) {
     .from('bots')
     .select('id', { count: 'exact', head: true })
     .eq('user_id', user.id)
-    .eq('status', 'active')
+    .eq('status', 'online')
 
   await captureEvent(user.id, 'bot_connected', {
     is_first_bot: (count ?? 0) === 1,
