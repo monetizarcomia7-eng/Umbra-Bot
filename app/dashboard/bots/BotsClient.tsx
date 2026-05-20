@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useState, useEffect, useMemo, useRef } from 'react'
+import { useRouter } from 'next/navigation'
 import {
   Bot, Search, X, ArrowUpRight, Plus, BookOpen,
   ChevronLeft, ExternalLink, Pause, Play, Settings, MessageSquare, GitBranch,
@@ -397,6 +398,7 @@ function BotCard({ bot, flows, onOpen }: { bot: BotData; flows: FlowData[]; onOp
 function BotsList({ bots, flows, onOpen, onAddClick }: {
   bots: BotData[]; flows: FlowData[]; onOpen: (id: string) => void; onAddClick: () => void
 }) {
+  const router = useRouter()
   const [search, setSearch]   = useState('')
   const [statusF, setStatusF] = useState('Todos os status')
 
@@ -429,7 +431,7 @@ function BotsList({ bots, flows, onOpen, onAddClick }: {
         subtitle={`${bots.length} ${bots.length === 1 ? 'bot conectado' : 'bots conectados'} · ${fmtNum(totals.totalLeads)} leads · ${fmtNum(totals.totalSales)} vendas`}
         actions={
           <>
-            <Btn variant="secondary" onClick={() => {}}><BookOpen size={14} /> Documentação</Btn>
+            <Btn variant="secondary" onClick={() => router.push('/dashboard/docs')}><BookOpen size={14} /> Documentação</Btn>
             <Btn variant="primary" onClick={onAddClick}><Plus size={14} /> Conectar novo bot</Btn>
           </>
         }
