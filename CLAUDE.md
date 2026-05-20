@@ -64,16 +64,26 @@ umbra-bot/
 │   │   │   │                                 # createAdminClient (bypassa RLS — cron não tem sessão de usuário)
 │   │   │   │                                 # disconnect → insere activity_event + alert critical (bot_offline, source='cron')
 │   │   │   │                                 # reconnect  → insere activity_event + auto-resolve alert (resolved_by='sistema (auto)')
-│   │   │   └── process-remarketing/route.ts  # GET: enfileira contatos elegíveis + envia mensagens pendentes
-│   │   │                                     # Protegido por CRON_SECRET — chamado via cron-job.org (1x/hora)
-│   │   │                                     # Task 1: findEligibleContactIds por trigger_type + audience → INSERT remarketing_executions
-│   │   │                                     # Task 2: SELECT pending WHERE scheduled_at<=now → sendTelegramMessage → sent/failed
-│   │   │                                     # Agenda próxima etapa (step_index+1) com scheduled_at = now + delay
-│   │   │                                     # Atualiza total_sent via RPC increment_campaign_sent (atômico)
+│   │   │   ├── process-remarketing/route.ts  # GET: enfileira contatos elegíveis + envia mensagens pendentes
+│   │   │   │                                     # Protegido por CRON_SECRET — chamado via cron-job.org (1x/hora)
+│   │   │   │                                     # Task 1: findEligibleContactIds por trigger_type + audience → INSERT remarketing_executions
+│   │   │   │                                     # Task 2: SELECT pending WHERE scheduled_at<=now → sendTelegramMessage → sent/failed
+│   │   │   │                                     # Agenda próxima etapa (step_index+1) com scheduled_at = now + delay
+│   │   │   │                                     # Atualiza total_sent via RPC increment_campaign_sent (atômico)
+│   │   │   └── process-broadcasts/route.ts   # GET: processa 1 broadcast agendado por rodada (CRON_SECRET)
+│   │   │                                     # Protegido por CRON_SECRET — chamado via cron-job.org (a cada 15 min)
+│   │   │                                     # CAS lock: UPDATE WHERE status='scheduled' evita duplo-processamento
+│   │   │                                     # Segmentação idêntica ao /api/broadcasts/send (all/leads/buyers/tag:)
+│   │   │                                     # Rate limit 35ms/msg, cancellation check a cada 50 msgs
+│   │   │                                     # Registra no cron_log fire-and-forget + Sentry captureCheckIn
 │   │   ├── push/
 │   │   │   ├── subscribe/route.ts
 │   │   │   └── notify/route.ts
-│   │   ├── broadcasts/send/route.ts
+│   │   ├── broadcasts/send/route.ts          # POST: envia broadcast imediato (auth + rate limit 5/hora)
+│   │   │                                    # substituteVars {nome}/{bot}/{data}/{produto}/{valor}
+│   │   │                                    # Segmenta por audience (all/leads/buyers/tag:XYZ)
+│   │   │                                    # cancellation check a cada 50 msgs (status='canceled'→break)
+│   │   │                                    # Atualiza sent/delivered/failed em tempo real no banco
 │   │   ├── finance/
 │   │   │   ├── balance/route.ts  # GET: saldo fresco via RPC finance_summary (usado pelo WithdrawModal)
 │   │   │   └── transactions/route.ts # GET: paginação "carregar mais" (?offset=N, limit 500)
@@ -163,7 +173,13 @@ umbra-bot/
 │       │                             # ExecutionHistoryCard: histórico de remarketing_executions lazy
 │       │                             # Aviso mudanças não salvas: dirty check ao clicar Voltar
 │       │                             # Prévia oculta em xl: (sidebar já exibe)
-│       ├── broadcasts/           # Disparador (mock)
+│       ├── broadcasts/           # Disparador — dados reais do Supabase (SSR + Realtime)
+│       │   ├── page.tsx          # Server Component: SSR broadcasts (limit 50) + bots + RPC audience counts em paralelo
+│       │   └── BroadcastsClient.tsx # Client Component: CRUD real, Realtime UPDATE+INSERT, BotPicker real,
+│       │                            # AudiencePicker dinâmico (all/leads/buyers/tag:), paginação .range()
+│       │                            # sendBroadcastNow → POST /api/broadcasts/send (fire-and-forget)
+│       │                            # cancelBroadcast → UPDATE status='canceled', deleteBroadcast → DELETE
+│       │                            # now=Date.now() real, sem Math.random(), progresso via Realtime
 │       ├── tools/                # Ferramentas (mock)
 │       ├── gateways/             # Gateways (mock)
 │       ├── tracking/             # Trackeamento (mock)
@@ -251,7 +267,7 @@ umbra-bot/
 │   └── 11-faq/                   # perguntas-frequentes (20 perguntas organizadas por tema)
 ├── supabase/migrations/          # 69 migrações SQL (000 a 069)
 ├── vercel.json                   # 4 Cron jobs Vercel (Hobby só executa 2 — os primeiros da lista): process-withdrawals (06:00 UTC) + cleanup-activity (02:00 UTC) + check-bots + cleanup-alerts
-│                                 # Cron adicional via cron-job.org (gratuito, 1x/hora): process-remarketing
+│                                 # Crons adicionais via cron-job.org (gratuitos): process-remarketing (1x/hora) + process-broadcasts (a cada 15 min)
 ├── sentry.*.config.ts            # Sentry (client com Replay / server com tracePropagation)
 ├── instrumentation.ts            # Next.js hook para Sentry server
 ├── middleware.ts                 # Auth guard + security headers + CSP (unsafe-eval só em dev)
@@ -436,7 +452,19 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Webhook MP (valida secret em prod, descriptografa token) | ✅ Implementado |
 | Tabela withdrawals + API /api/withdrawals (zod + Sentry) | ✅ Implementado |
 | Cron job para processar saques pendentes (vercel.json, horário) | ✅ Implementado |
-| Broadcasts (disparador em massa) | ✅ Implementado |
+| Broadcasts — Server Component SSR + BroadcastsClient (dados reais, sem mock) | ✅ Funcional |
+| Broadcasts — CRUD real (criar/salvar/cancelar/deletar) com .eq('user_id') IDOR-safe | ✅ Implementado |
+| Broadcasts — BotPicker: bots reais do banco (sem SENDER_BOTS hardcoded) | ✅ Implementado |
+| Broadcasts — AudiencePicker dinâmico via RPC broadcasts_audience_counts (all/leads/buyers/tag:) | ✅ Implementado |
+| Broadcasts — sendBroadcastNow: chama POST /api/broadcasts/send real (sem simulação) | ✅ Implementado |
+| Broadcasts — progresso em tempo real via Supabase Realtime (sem Math.random()) | ✅ Implementado |
+| Broadcasts — cancelamento mid-flight: UPDATE status='canceled' → API verifica a cada 50 msgs | ✅ Implementado |
+| Broadcasts — cron process-broadcasts: agenda broadcasts (CRON_SECRET, cron-job.org 15 min) | ✅ Implementado |
+| Broadcasts — CAS lock no cron: UPDATE WHERE status='scheduled' evita duplo-processamento | ✅ Implementado |
+| Broadcasts — substituição de variáveis {nome}/{bot}/{data}/{produto}/{valor} | ✅ Implementado |
+| Broadcasts — segmentação por tag: audience='tag:VIP' usa .contains('tags', ['VIP']) | ✅ Implementado |
+| Broadcasts — migração 070: user_id NOT NULL + índice cron + RPC broadcasts_audience_counts | ✅ Criada |
+| Broadcasts — paginação: limit 50 no SSR + "Carregar mais" client-side (.range()) | ✅ Implementado |
 | Web Push (VAPID) | ✅ Implementado |
 | Rate limiting (Upstash Redis + fallback) | ✅ Funcional |
 | Sentry (client Replay + server tracePropagation + captureException) | ✅ Configurado |
