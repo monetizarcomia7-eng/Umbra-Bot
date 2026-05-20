@@ -5,7 +5,7 @@ import * as Sentry from '@sentry/nextjs'
 
 // GET /api/cron/process-broadcasts
 // Processa broadcasts com status='scheduled' cujo scheduled_for já chegou.
-// Protegido por CRON_SECRET — chamar via cron-job.org (1x a cada 15 min) ou Vercel Cron.
+// Protegido por CRON_SECRET — chamar via cron-job.org (1x a cada 15 min).
 //
 // Limitações:
 //   - Processa 1 broadcast por rodada para evitar timeout serverless (300s)
@@ -15,6 +15,7 @@ import * as Sentry from '@sentry/nextjs'
 const RATE_LIMIT_MS = 35  // ~28 msgs/s — abaixo do limite Telegram
 
 interface BroadcastButton { label: string; url: string }
+interface MediaAttachment  { kind: 'image' | 'video' | 'file'; url?: string; label?: string }
 
 async function sleep(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms))
@@ -35,16 +36,38 @@ async function sendTgMsg(
   chatId: string,
   text: string,
   buttons: BroadcastButton[],
+  media?: MediaAttachment | null,
 ): Promise<boolean> {
-  const body: Record<string, unknown> = { chat_id: chatId, text, parse_mode: 'HTML' }
-
-  if (buttons.length > 0) {
-    body.reply_markup = {
-      inline_keyboard: [buttons.map((b) => ({ text: b.label, url: b.url }))],
-    }
-  }
+  const keyboard = buttons.length > 0
+    ? { inline_keyboard: [buttons.map((b) => ({ text: b.label, url: b.url }))] }
+    : undefined
 
   try {
+    if (media?.url) {
+      const methodMap = { image: 'sendPhoto', video: 'sendVideo', file: 'sendDocument' } as const
+      const fieldMap  = { image: 'photo',     video: 'video',     file: 'document'     } as const
+      const method    = methodMap[media.kind] ?? 'sendDocument'
+      const field     = fieldMap[media.kind]  ?? 'document'
+
+      const body: Record<string, unknown> = {
+        chat_id:    chatId,
+        [field]:    media.url,
+        caption:    text,
+        parse_mode: 'HTML',
+      }
+      if (keyboard) body.reply_markup = keyboard
+
+      const res = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      return res.ok
+    }
+
+    const body: Record<string, unknown> = { chat_id: chatId, text, parse_mode: 'HTML' }
+    if (keyboard) body.reply_markup = keyboard
+
     const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -79,12 +102,12 @@ export async function GET(request: Request) {
     return NextResponse.json({ ok: true, processed: 0, message: 'Nenhum broadcast agendado' })
   }
 
-  // Marca como 'sending' imediatamente para evitar re-processamento
+  // Marca como 'sending' imediatamente (CAS — evita duplo-processamento)
   const { error: lockErr } = await supabase
     .from('broadcasts')
     .update({ status: 'sending', started_at: now })
     .eq('id', due.id)
-    .eq('status', 'scheduled') // CAS — garante que não foi pego por outra instância
+    .eq('status', 'scheduled')
 
   if (lockErr) {
     return NextResponse.json({ ok: true, processed: 0, message: 'Broadcast já processado por outra instância' })
@@ -123,7 +146,7 @@ export async function GET(request: Request) {
     contactsQuery = contactsQuery.eq('orders_count', 0)
   } else if (aud.startsWith('tag:')) {
     const tag = aud.slice(4)
-    contactsQuery = (contactsQuery as unknown as typeof contactsQuery & { contains: (col: string, val: string[]) => typeof contactsQuery }).contains('tags', [tag])
+    contactsQuery = contactsQuery.filter('tags', 'cs', `{${tag}}`)
   }
 
   if (due.bot_id) {
@@ -146,19 +169,19 @@ export async function GET(request: Request) {
 
   let sent = 0, delivered = 0, failed = 0
   const buttons: BroadcastButton[] = (due.buttons ?? []) as BroadcastButton[]
+  const media = due.media as MediaAttachment | null
 
   for (const contact of contacts) {
     if (!contact.telegram_id) continue
 
     const text = substituteVars(due.message ?? '', contact.first_name ?? '', botName)
-    const ok   = await sendTgMsg(decrypted, contact.telegram_id, text, buttons)
+    const ok   = await sendTgMsg(decrypted, contact.telegram_id, text, buttons, media)
 
     if (ok) delivered++
     else    failed++
     sent++
 
     if (sent % 50 === 0) {
-      // Verifica cancelamento + atualiza progresso
       const { data: cur } = await supabase
         .from('broadcasts')
         .select('status')
@@ -188,17 +211,17 @@ export async function GET(request: Request) {
     })
     .eq('id', due.id)
 
-  // Registra no cron_log
+  // Registra no cron_log (fire-and-forget)
   await supabase
     .from('cron_log')
     .insert({
-      job_name:   'process-broadcasts',
-      started_at: now,
-      finished_at: new Date().toISOString(),
+      job_name:      'process-broadcasts',
+      started_at:    now,
+      finished_at:   new Date().toISOString(),
       rows_affected: sent,
-      notes: `broadcast_id=${due.id} status=${finalStatus} sent=${sent} delivered=${delivered} failed=${failed}`,
+      notes:         `broadcast_id=${due.id} status=${finalStatus} sent=${sent} delivered=${delivered} failed=${failed}`,
     })
-    .then(() => {}) // fire-and-forget — cron_log pode não existir ainda
+    .then(() => {})
 
   Sentry.captureCheckIn?.({ checkInId: due.id, monitorSlug: 'process-broadcasts', status: 'ok' })
 

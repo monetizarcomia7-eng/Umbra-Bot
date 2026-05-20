@@ -7,17 +7,14 @@ import * as Sentry from '@sentry/nextjs'
 
 const RATE_LIMIT_MS = 35 // ~28 mensagens/segundo — abaixo do limite do Telegram (30/s)
 
-interface BroadcastButton { label: string; url: string }
+interface BroadcastButton  { label: string; url: string }
+interface MediaAttachment  { kind: 'image' | 'video' | 'file'; url?: string; label?: string }
 
 async function sleep(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms))
 }
 
-function substituteVars(
-  text: string,
-  firstName: string,
-  botName: string,
-): string {
+function substituteVars(text: string, firstName: string, botName: string): string {
   const nome = (firstName ?? '').trim() || 'você'
   return text
     .replace(/\{nome\}/g,    nome)
@@ -32,16 +29,40 @@ async function sendTgMsg(
   chatId: string,
   text: string,
   buttons: BroadcastButton[],
+  media?: MediaAttachment | null,
 ): Promise<boolean> {
-  const body: Record<string, unknown> = { chat_id: chatId, text, parse_mode: 'HTML' }
-
-  if (buttons.length > 0) {
-    body.reply_markup = {
-      inline_keyboard: [buttons.map((b) => ({ text: b.label, url: b.url }))],
-    }
-  }
+  const keyboard = buttons.length > 0
+    ? { inline_keyboard: [buttons.map((b) => ({ text: b.label, url: b.url }))] }
+    : undefined
 
   try {
+    // Com mídia (URL real fornecida)
+    if (media?.url) {
+      const methodMap = { image: 'sendPhoto', video: 'sendVideo', file: 'sendDocument' } as const
+      const fieldMap  = { image: 'photo',     video: 'video',     file: 'document'     } as const
+      const method    = methodMap[media.kind] ?? 'sendDocument'
+      const field     = fieldMap[media.kind]  ?? 'document'
+
+      const body: Record<string, unknown> = {
+        chat_id:    chatId,
+        [field]:    media.url,
+        caption:    text,
+        parse_mode: 'HTML',
+      }
+      if (keyboard) body.reply_markup = keyboard
+
+      const res = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      return res.ok
+    }
+
+    // Somente texto
+    const body: Record<string, unknown> = { chat_id: chatId, text, parse_mode: 'HTML' }
+    if (keyboard) body.reply_markup = keyboard
+
     const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -55,7 +76,6 @@ async function sendTgMsg(
 
 // POST /api/broadcasts/send
 // Body: { broadcast_id: string }
-// Busca o broadcast no banco, envia para todos os contatos com rate limiting.
 // Timeout máximo Vercel: 300s — suporta até ~8.500 contatos por execução.
 export async function POST(request: NextRequest) {
   const supabase = await createClient()
@@ -127,16 +147,16 @@ export async function POST(request: NextRequest) {
     contactsQuery = contactsQuery.eq('orders_count', 0)
   } else if (aud.startsWith('tag:')) {
     const tag = aud.slice(4)
-    contactsQuery = (contactsQuery as unknown as typeof contactsQuery & { contains: (col: string, val: string[]) => typeof contactsQuery }).contains('tags', [tag])
+    contactsQuery = contactsQuery.filter('tags', 'cs', `{${tag}}`)
   }
   // aud === 'all' → sem filtro extra
 
-  // Filtra por bot se broadcast tem bot_id (contatos associados ao bot)
+  // Filtra por bot se broadcast tem bot_id
   if (broadcast.bot_id) {
     contactsQuery = contactsQuery.eq('bot_id', broadcast.bot_id)
   }
 
-  // Filtros avançados do campo filters JSONB
+  // Filtros avançados (filters JSONB: registered_after, registered_before)
   const filters = (broadcast.filters ?? {}) as Record<string, string>
   if (filters.registered_after)  contactsQuery = contactsQuery.gte('created_at', filters.registered_after)
   if (filters.registered_before) contactsQuery = contactsQuery.lte('created_at', filters.registered_before)
@@ -155,7 +175,7 @@ export async function POST(request: NextRequest) {
   await supabase
     .from('broadcasts')
     .update({
-      status: 'sending',
+      status:     'sending',
       started_at: new Date().toISOString(),
       sent: 0, delivered: 0, failed: 0,
     })
@@ -163,12 +183,13 @@ export async function POST(request: NextRequest) {
 
   let sent = 0, delivered = 0, failed = 0
   const buttons: BroadcastButton[] = (broadcast.buttons ?? []) as BroadcastButton[]
+  const media = broadcast.media as MediaAttachment | null
 
   for (const contact of contacts) {
     if (!contact.telegram_id) continue
 
     const text = substituteVars(broadcast.message ?? '', contact.first_name ?? '', botName)
-    const ok   = await sendTgMsg(decrypted, contact.telegram_id, text, buttons)
+    const ok   = await sendTgMsg(decrypted, contact.telegram_id, text, buttons, media)
 
     if (ok) delivered++
     else    failed++

@@ -52,7 +52,7 @@ export interface AudienceCounts {
 
 /* ── Tipos internos ──────────────────────────────────────────────── */
 
-interface MediaAttachment { kind: 'image' | 'video' | 'file'; label: string }
+interface MediaAttachment { kind: 'image' | 'video' | 'file'; label: string; url?: string }
 interface BroadcastButton { label: string; url: string }
 type BroadcastStatus = 'draft' | 'scheduled' | 'sending' | 'done' | 'failed' | 'canceled'
 
@@ -404,6 +404,64 @@ function AudiencePicker({
   )
 }
 
+/* ── MediaUrlInput ───────────────────────────────────────────────── */
+
+function MediaUrlInput({ onSet }: { onSet: (m: MediaAttachment) => void }) {
+  const [kind, setKind] = useState<'image' | 'video' | 'file'>('image')
+  const [url,  setUrl]  = useState('')
+
+  const opts = [
+    { k: 'image' as const, icon: 'image', label: 'Imagem' },
+    { k: 'video' as const, icon: 'film',  label: 'Vídeo'  },
+    { k: 'file'  as const, icon: 'file',  label: 'Documento' },
+  ]
+
+  function handleSet() {
+    const trimmed = url.trim()
+    if (!trimmed) return
+    const labelMap = { image: 'Imagem', video: 'Vídeo', file: 'Documento' }
+    onSet({ kind, label: labelMap[kind], url: trimmed })
+    setUrl('')
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="flex gap-1.5">
+        {opts.map(o => (
+          <button
+            key={o.k}
+            type="button"
+            onClick={() => setKind(o.k)}
+            className={`flex-1 h-8 inline-flex items-center justify-center gap-1.5 text-[11.5px] font-medium rounded-md border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${kind === o.k ? 'border-primary bg-primary-soft text-primary' : 'border-border bg-surface text-text-muted hover:bg-surface-2 hover:text-text'}`}
+          >
+            <Icon name={o.icon} size={12} />
+            {o.label}
+          </button>
+        ))}
+      </div>
+      <div className="flex gap-1.5">
+        <input
+          type="url"
+          value={url}
+          onChange={e => setUrl(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleSet() } }}
+          placeholder="https://…"
+          className="flex-1 h-9 px-2.5 bg-surface border border-border rounded-md text-[12px] font-mono text-text placeholder:text-text-subtle focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50"
+        />
+        <button
+          type="button"
+          onClick={handleSet}
+          disabled={!url.trim()}
+          className="h-9 px-3 bg-primary text-primary-fg rounded-md text-[12px] font-medium hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity"
+        >
+          Adicionar
+        </button>
+      </div>
+      <div className="text-[10.5px] text-text-muted">Cole a URL pública da mídia. Suporte: Telegram CDN, S3, Cloudflare R2.</div>
+    </div>
+  )
+}
+
 /* ── MessageComposer ─────────────────────────────────────────────── */
 
 function MessageComposer({
@@ -478,7 +536,10 @@ function MessageComposer({
             </div>
             <div className="flex-1 min-w-0">
               <div className="text-[12.5px] font-medium text-text truncate">{media.label}</div>
-              <div className="text-[11px] text-text-muted">{media.kind === 'image' ? 'Imagem' : media.kind === 'video' ? 'Vídeo' : 'Documento'}</div>
+              {media.url
+                ? <div className="text-[10.5px] text-text-muted font-mono truncate">{media.url}</div>
+                : <div className="text-[11px] text-text-muted">{media.kind === 'image' ? 'Imagem' : media.kind === 'video' ? 'Vídeo' : 'Documento'}</div>
+              }
             </div>
             {!disabled && (
               <button onClick={() => setMedia(null)} className="w-7 h-7 inline-flex items-center justify-center rounded-md text-text-muted hover:bg-danger-soft hover:text-danger">
@@ -487,20 +548,7 @@ function MessageComposer({
             )}
           </div>
         ) : (
-          !disabled && (
-            <div className="flex gap-1.5">
-              {([['image', 'Imagem', 'jpg'], ['film', 'Vídeo', 'mp4'], ['file', 'Documento', 'pdf']] as const).map(([icon, label, ext]) => (
-                <button
-                  key={icon}
-                  onClick={() => setMedia({ kind: icon === 'image' ? 'image' : icon === 'film' ? 'video' : 'file', label: `${label}-${Date.now() % 1000}.${ext}` })}
-                  className="flex-1 h-10 inline-flex items-center justify-center gap-1.5 text-[12px] font-medium text-text-muted hover:text-text bg-surface border border-dashed border-border rounded-lg hover:bg-surface-2 hover:border-border-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                >
-                  <Icon name={icon} size={13} />
-                  {label}
-                </button>
-              ))}
-            </div>
-          )
+          !disabled && <MediaUrlInput onSet={setMedia} />
         )}
       </div>
 
@@ -614,6 +662,38 @@ function SchedulePicker({ mode, setMode, scheduledFor, setScheduledFor }: {
   )
 }
 
+/* ── BestPracticesModal ──────────────────────────────────────────── */
+
+function BestPracticesModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const tips = [
+    { icon: 'users',         title: 'Segmente com precisão',          body: 'Envie apenas para quem tem interesse real. Disparos genéricos aumentam bloqueios e reduzem a taxa de entrega.' },
+    { icon: 'message-square', title: 'Personalize a mensagem',         body: 'Use {nome}, {produto} e {bot} para criar mensagens mais próximas. Mensagens personalizadas têm até 30% mais engajamento.' },
+    { icon: 'clock',          title: 'Escolha o horário certo',        body: 'Agende disparos entre 8h e 21h (horário do seu público). Evite madrugadas e finais de semana para produtos B2B.' },
+    { icon: 'activity',       title: 'Respeite o limite do Telegram',  body: 'O Telegram bloqueia bots que enviam muito rápido. O Umbra Bot já limita automaticamente a ~28 msgs/segundo.' },
+    { icon: 'check-circle-2', title: 'Teste antes de enviar',          body: 'Crie um segmento de teste (tag: "teste") com sua própria conta. Verifique a prévia antes de disparar para toda a base.' },
+    { icon: 'alert-triangle', title: 'Cuide da frequência',            body: 'Evite mais de 1-2 disparos por semana para o mesmo público. Excesso de mensagens leva a bloqueios e prejudica disparos futuros.' },
+  ]
+  return (
+    <Modal open={open} onClose={onClose} title="Boas práticas de disparo" size="lg"
+      footer={<Btn variant="primary" onClick={onClose}>Entendido</Btn>}
+    >
+      <div className="space-y-4">
+        {tips.map(t => (
+          <div key={t.title} className="flex gap-3">
+            <div className="w-7 h-7 rounded-md bg-primary-soft text-primary flex items-center justify-center shrink-0 mt-0.5">
+              <Icon name={t.icon} size={13} />
+            </div>
+            <div>
+              <div className="text-[13px] font-semibold text-text mb-0.5">{t.title}</div>
+              <div className="text-[12.5px] text-text-muted leading-relaxed">{t.body}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </Modal>
+  )
+}
+
 /* ── PreviewBroadcast ────────────────────────────────────────────── */
 
 function PreviewBroadcast({ message, media, buttons, botLabel }: {
@@ -634,8 +714,13 @@ function PreviewBroadcast({ message, media, buttons, botLabel }: {
           <div className="max-w-[300px] bg-surface border border-border rounded-2xl rounded-bl-sm overflow-hidden">
             {media && (
               <div className="bg-surface-2 h-32 flex items-center justify-center text-text-muted relative overflow-hidden">
-                <Icon name={media.kind === 'image' ? 'image' : media.kind === 'video' ? 'film' : 'file'} size={28} />
-                <div className="absolute bottom-1.5 left-2 right-2 text-[10px] font-mono text-text-subtle truncate">{media.label}</div>
+                {media.url && media.kind === 'image'
+                  ? <img src={media.url} alt="prévia" className="absolute inset-0 w-full h-full object-cover" onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                  : <Icon name={media.kind === 'image' ? 'image' : media.kind === 'video' ? 'film' : 'file'} size={28} />
+                }
+                <div className="absolute bottom-1.5 left-2 right-2 text-[10px] font-mono text-text-subtle truncate bg-black/30 px-1 rounded">
+                  {media.url ?? media.label}
+                </div>
               </div>
             )}
             <div className="px-3 py-2 text-[12.5px] text-text whitespace-pre-wrap leading-snug">
@@ -741,10 +826,10 @@ function SummaryLine({ icon, label, value, tnum }: {
 
 /* ── BroadcastRow ────────────────────────────────────────────────── */
 
-function BroadcastRow({ b, now, botName, audienceLabel, onOpen, onCancel }: {
+function BroadcastRow({ b, now, botName, audienceLabel, onOpen, onCancel, onDuplicate }: {
   b: Broadcast; now: number
   botName: string; audienceLabel: string
-  onOpen: () => void; onCancel: (id: string) => void
+  onOpen: () => void; onCancel: (id: string) => void; onDuplicate: (id: string) => void
 }) {
   const st       = STATUS_MAP[b.status]
   const progress = b.audienceCount > 0 ? (b.sent / b.audienceCount) * 100 : 0
@@ -849,6 +934,15 @@ function BroadcastRow({ b, now, botName, audienceLabel, onOpen, onCancel }: {
               Desagendar
             </button>
           )}
+          {(b.status === 'done' || b.status === 'draft' || b.status === 'failed' || b.status === 'canceled') && (
+            <button
+              onClick={() => onDuplicate(b.id)}
+              title="Duplicar"
+              className="h-7 px-2 text-[11px] font-medium text-text-muted hover:bg-surface-2 hover:text-text rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            >
+              Copiar
+            </button>
+          )}
           <ChevronRight size={14} className="text-text-muted" />
         </div>
       </td>
@@ -863,6 +957,7 @@ interface EditorProps {
   now:             number
   bots:            RawBotOption[]
   audienceOptions: AudienceOption[]
+  userId:          string
   onBack:          () => void
   onSave:          (b: Broadcast) => Promise<void>
   onSendNow:       (b: Broadcast) => Promise<void>
@@ -872,9 +967,11 @@ interface EditorProps {
 }
 
 function BroadcastEditor({
-  broadcast, now, bots, audienceOptions,
+  broadcast, now, bots, audienceOptions, userId,
   onBack, onSave, onSendNow, onSchedule, onCancel, onDelete,
 }: EditorProps) {
+  const supabase = createClient()
+
   const [title,        setTitle]        = useState(broadcast.title)
   const [botId,        setBotId]        = useState(broadcast.botId)
   const [audience,     setAudience]     = useState(broadcast.audience)
@@ -883,16 +980,40 @@ function BroadcastEditor({
   const [buttons,      setButtons]      = useState<BroadcastButton[]>(broadcast.buttons)
   const [scheduleMode, setScheduleMode] = useState<'now' | 'later'>(broadcast.scheduledFor ? 'later' : 'now')
   const [scheduledFor, setScheduledFor] = useState(broadcast.scheduledFor ?? Date.now() + 3600 * 1000)
+  const [regAfter,     setRegAfter]     = useState(broadcast.filters?.registered_after  ?? '')
+  const [regBefore,    setRegBefore]    = useState(broadcast.filters?.registered_before ?? '')
   const [confirmOpen,  setConfirmOpen]  = useState(false)
   const [deleteOpen,   setDeleteOpen]   = useState(false)
   const [saving,       setSaving]       = useState(false)
   const [sending,      setSending]      = useState(false)
   const [toast,        setToast]        = useState('')
+  const [localCounts,  setLocalCounts]  = useState<AudienceCounts | null>(null)
+
+  // Atualiza contagens ao trocar de bot
+  useEffect(() => {
+    if (!botId) { setLocalCounts(null); return }
+    supabase
+      .rpc('broadcasts_audience_counts', { p_user_id: userId, p_bot_id: botId })
+      .then(({ data }) => { if (data) setLocalCounts(data as unknown as AudienceCounts) })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [botId, userId])
+
+  const effectiveOptions = useMemo<AudienceOption[]>(() => {
+    if (!localCounts) return audienceOptions
+    return [
+      { id: 'all',    label: 'Todos os contatos',             count: localCounts.all,    icon: 'users'        },
+      { id: 'leads',  label: 'Apenas leads (não compradores)', count: localCounts.leads,  icon: 'user'         },
+      { id: 'buyers', label: 'Apenas compradores',             count: localCounts.buyers, icon: 'shopping-bag' },
+      ...Object.entries(localCounts.tags ?? {}).map(([tag, cnt]) => ({
+        id: `tag:${tag}`, label: `Tag: ${tag}`, count: cnt as number, icon: 'tag',
+      })),
+    ]
+  }, [localCounts, audienceOptions])
 
   const editable = broadcast.status === 'draft' || broadcast.status === 'scheduled'
   const selBot   = bots.find(b => b.id === botId)
   const bLabel   = selBot ? (selBot.username ? `@${selBot.username}` : selBot.name) : '—'
-  const audOpt   = audienceOptions.find(a => a.id === audience)
+  const audOpt   = effectiveOptions.find(a => a.id === audience)
   const audCount = audOpt?.count ?? 0
   const eta      = Math.max(1, Math.ceil(audCount / 1800))
 
@@ -902,7 +1023,10 @@ function BroadcastEditor({
   }
 
   function buildPatch(extra: Partial<Broadcast> = {}): Broadcast {
-    return { ...broadcast, title, botId, bot: bLabel, audience, audienceCount: audCount, message, media, buttons, scheduledFor: scheduleMode === 'later' ? scheduledFor : null, ...extra }
+    const filters: Record<string, string> = {}
+    if (regAfter.trim())  filters.registered_after  = regAfter.trim()
+    if (regBefore.trim()) filters.registered_before = regBefore.trim()
+    return { ...broadcast, title, botId, bot: bLabel, audience, audienceCount: audCount, message, media, buttons, scheduledFor: scheduleMode === 'later' ? scheduledFor : null, filters, ...extra }
   }
 
   async function handleSaveDraft() {
@@ -1021,7 +1145,7 @@ function BroadcastEditor({
               action={<Badge tone="primary">{fmtNum(audCount)}</Badge>}
             >
               <div className="mt-2">
-                <AudiencePicker value={audience} onChange={editable ? setAudience : () => {}} options={audienceOptions} />
+                <AudiencePicker value={audience} onChange={editable ? setAudience : () => {}} options={effectiveOptions} />
               </div>
             </Card>
 
@@ -1034,6 +1158,37 @@ function BroadcastEditor({
                   disabled={!editable}
                 />
               </div>
+            </Card>
+
+            <Card title="Filtros avançados" subtitle="Restrinja o público por data de cadastro (opcional)">
+              <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10.5px] uppercase tracking-wider font-semibold text-text-subtle mb-1.5">Cadastrado após</label>
+                  <input
+                    type="date"
+                    value={regAfter}
+                    onChange={e => setRegAfter(e.target.value)}
+                    disabled={!editable}
+                    className="w-full h-9 px-3 bg-surface border border-border rounded-lg text-[12.5px] font-mono text-text focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50 disabled:opacity-60"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10.5px] uppercase tracking-wider font-semibold text-text-subtle mb-1.5">Cadastrado antes de</label>
+                  <input
+                    type="date"
+                    value={regBefore}
+                    onChange={e => setRegBefore(e.target.value)}
+                    disabled={!editable}
+                    className="w-full h-9 px-3 bg-surface border border-border rounded-lg text-[12.5px] font-mono text-text focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50 disabled:opacity-60"
+                  />
+                </div>
+              </div>
+              {(regAfter || regBefore) && (
+                <div className="mt-2.5 text-[11px] text-text-muted flex items-center gap-1.5">
+                  <Info size={12} className="text-primary shrink-0" />
+                  Apenas contatos cadastrados {regAfter ? `a partir de ${regAfter}` : ''}{regAfter && regBefore ? ' e ' : ''}{regBefore ? `até ${regBefore}` : ''} receberão o disparo.
+                </div>
+              )}
             </Card>
 
             {editable && (
@@ -1134,7 +1289,7 @@ interface FilterState { search: string; status: string; bot: string }
 
 function BroadcastList({
   broadcasts, now, bots, audienceOptions,
-  onOpen, onCancel, onCreate, hasMore, onLoadMore, loadingMore,
+  onOpen, onCancel, onCreate, onDuplicate, hasMore, onLoadMore, loadingMore,
 }: {
   broadcasts:    Broadcast[]
   now:           number
@@ -1143,12 +1298,14 @@ function BroadcastList({
   onOpen:        (id: string) => void
   onCancel:      (id: string) => Promise<void>
   onCreate:      () => Promise<void>
+  onDuplicate:   (id: string) => Promise<void>
   hasMore:       boolean
   onLoadMore:    () => Promise<void>
   loadingMore:   boolean
 }) {
-  const [filters,  setFilters]  = useState<FilterState>({ search: '', status: 'Todos', bot: 'Todos os bots' })
-  const [creating, setCreating] = useState(false)
+  const [filters,   setFilters]  = useState<FilterState>({ search: '', status: 'Todos', bot: 'Todos os bots' })
+  const [creating,  setCreating] = useState(false)
+  const [bestOpen,  setBestOpen] = useState(false)
 
   const botMap = useMemo(() => {
     const m = new Map<string, string>()
@@ -1205,7 +1362,7 @@ function BroadcastList({
         subtitle="Mensagens em massa para sua base — agendadas, segmentadas e respeitando os limites do Telegram."
         actions={
           <div className="flex items-center gap-2">
-            <Btn variant="secondary" icon="book-open">Boas práticas</Btn>
+            <Btn variant="secondary" icon="book-open" onClick={() => setBestOpen(true)}>Boas práticas</Btn>
             <Btn variant="primary" icon="send" onClick={handleCreate} loading={creating} disabled={bots.length === 0}>
               Novo disparo
             </Btn>
@@ -1321,6 +1478,7 @@ function BroadcastList({
                     audienceLabel={audLabelMap.get(b.audience) ?? b.audience}
                     onOpen={() => onOpen(b.id)}
                     onCancel={onCancel}
+                    onDuplicate={onDuplicate}
                   />
                 ))}
               </tbody>
@@ -1336,6 +1494,8 @@ function BroadcastList({
           </Btn>
         </div>
       )}
+
+      <BestPracticesModal open={bestOpen} onClose={() => setBestOpen(false)} />
     </>
   )
 }
@@ -1499,6 +1659,34 @@ export default function BroadcastsClient({
       .eq('user_id', userId)
   }, [userId, supabase])
 
+  const duplicateBroadcast = useCallback(async (id: string) => {
+    const source = broadcasts.find(b => b.id === id)
+    if (!source) return
+
+    const { data, error } = await supabase
+      .from('broadcasts')
+      .insert({
+        user_id:        userId,
+        title:          `${source.title} (cópia)`,
+        bot_id:         source.botId || null,
+        bot:            source.bot,
+        audience:       source.audience,
+        audience_count: source.audienceCount,
+        message:        source.message,
+        media:          source.media,
+        buttons:        source.buttons,
+        status:         'draft',
+        sent:           0, delivered: 0, failed: 0,
+        filters:        source.filters,
+      })
+      .select('id, title, bot_id, bot, audience, audience_count, status, sent, delivered, failed, scheduled_for, started_at, finished_at, failure_reason, message, media, buttons, filters, created_at, updated_at')
+      .single()
+
+    if (!error && data) {
+      setBroadcasts(prev => [mapRaw(data as unknown as RawBroadcast), ...prev])
+    }
+  }, [broadcasts, userId, supabase])
+
   const loadMore = useCallback(async () => {
     setLoadingMore(true)
     const { data } = await supabase
@@ -1533,6 +1721,7 @@ export default function BroadcastsClient({
       now={now}
       bots={bots}
       audienceOptions={audienceOptions}
+      userId={userId}
       onBack={() => setEditingId(null)}
       onSave={saveBroadcast}
       onSendNow={sendBroadcastNow}
@@ -1549,6 +1738,7 @@ export default function BroadcastsClient({
       onOpen={setEditingId}
       onCancel={cancelBroadcast}
       onCreate={createBroadcast}
+      onDuplicate={duplicateBroadcast}
       hasMore={hasMore}
       onLoadMore={loadMore}
       loadingMore={loadingMore}
