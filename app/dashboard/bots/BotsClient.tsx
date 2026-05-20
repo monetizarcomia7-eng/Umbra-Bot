@@ -8,7 +8,7 @@ import {
   Eye, EyeOff, Copy, Check, AlertCircle, ChevronDown, ChevronRight,
   ShieldCheck, Webhook, Trash2, Save, Users, ShoppingBag, Target,
   CircleDollarSign, Info, ArrowLeft, CheckCircle2, Loader2, TriangleAlert,
-  ArrowUp, ArrowDown, Pencil,
+  Camera, ArrowUp, ArrowDown, Pencil,
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { useDashboard } from '@/providers/DashboardProvider'
@@ -22,6 +22,7 @@ import {
   deleteBotAction,
   getBotTelegramProfileAction,
   saveBotTelegramProfileAction,
+  setBotPhotoAction,
 } from '@/app/actions/bots'
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
@@ -790,12 +791,21 @@ function TelegramProfileModal({ bot, open, onClose }: {
   const [short,        setShort]        = useState('')
   const [cmds,         setCmds]         = useState<Array<{ command: string; description: string }>>([])
   const [photoDataUrl, setPhotoDataUrl] = useState<string | null>(null)
+  const [newPhoto,     setNewPhoto]     = useState<File | null>(null)
+  const [preview,      setPreview]      = useState<string | null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  // Revoga URL de objeto ao trocar ou desmontar
+  useEffect(() => {
+    return () => { if (preview) URL.revokeObjectURL(preview) }
+  }, [preview])
 
   // Carrega perfil do Telegram ao abrir
   useEffect(() => {
     if (!open) return
     let cancelled = false
     setLoading(true); setError('')
+    setNewPhoto(null); setPreview(null)
 
     getBotTelegramProfileAction(bot.id)
       .then(p => {
@@ -812,9 +822,29 @@ function TelegramProfileModal({ bot, open, onClose }: {
     return () => { cancelled = true }
   }, [open, bot.id])
 
+  function onFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (!['image/jpeg', 'image/png', 'image/gif'].includes(file.type)) {
+      setError('Formato inválido. Use JPG, PNG ou GIF.'); return
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      setError('Imagem muito grande. Máximo 10MB.'); return
+    }
+    setError('')
+    setNewPhoto(file)
+    setPreview(URL.createObjectURL(file))
+    e.target.value = ''
+  }
+
   async function save() {
     setSaving(true); setError('')
+    let photoErr = ''
     try {
+      if (newPhoto) {
+        const rp = await setBotPhotoAction(bot.id, newPhoto)
+        if (!rp.ok) photoErr = rp.error ?? 'Erro ao atualizar foto.'
+      }
       const r = await saveBotTelegramProfileAction(bot.id, {
         name:             name.trim(),
         description:      desc,
@@ -823,6 +853,8 @@ function TelegramProfileModal({ bot, open, onClose }: {
       })
       if (!r.ok) {
         setError(r.error ?? 'Erro ao salvar no Telegram.')
+      } else if (photoErr) {
+        setError('Texto salvo! Foto não atualizada: ' + photoErr)
       } else {
         onClose()
       }
@@ -848,6 +880,8 @@ function TelegramProfileModal({ bot, open, onClose }: {
   function removeCmd(idx: number) {
     setCmds(prev => prev.filter((_, i) => i !== idx))
   }
+
+  const displayPhoto = preview ?? photoDataUrl
 
   return (
     <Modal
@@ -880,24 +914,31 @@ function TelegramProfileModal({ bot, open, onClose }: {
             </div>
           )}
 
-          {/* Foto de perfil — somente leitura (Bot API não permite alterar foto de bots regulares) */}
+          {/* Foto de perfil */}
           <div>
             <div className="text-[12.5px] font-medium text-text mb-2">Foto de perfil</div>
             <div className="flex items-center gap-4">
-              <div className="relative w-20 h-20 rounded-xl overflow-hidden bg-surface-2 border border-border shrink-0">
-                {photoDataUrl ? (
-                  <img src={photoDataUrl} alt="Foto do bot" className="w-full h-full object-cover" />
+              <button
+                type="button"
+                onClick={() => fileRef.current?.click()}
+                className="relative w-20 h-20 rounded-xl overflow-hidden bg-surface-2 border-2 border-dashed border-border hover:border-primary transition-colors group shrink-0"
+              >
+                {displayPhoto ? (
+                  <img src={displayPhoto} alt="Foto do bot" className="w-full h-full object-cover" />
                 ) : (
                   <Bot size={28} className="absolute inset-0 m-auto text-text-muted" />
                 )}
-              </div>
+                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                  <Camera size={18} className="text-white" />
+                </div>
+              </button>
               <div className="text-[11.5px] text-text-muted leading-relaxed">
-                <div className="font-medium text-text text-[12.5px] mb-1">Foto do bot</div>
-                Para alterar a foto, abra o <strong className="text-text">BotFather</strong> no Telegram,
-                selecione o bot e envie o comando{' '}
-                <span className="font-mono text-[11px] bg-surface-2 border border-border px-1 py-0.5 rounded">/setuserpic</span>.
+                <div className="font-medium text-text text-[12.5px] mb-1">Alterar foto de perfil</div>
+                Clique na imagem para selecionar. JPG, PNG ou GIF — máximo 10MB.
+                {newPhoto && <div className="text-success mt-1 text-[11px]">Nova foto: {newPhoto.name}</div>}
               </div>
             </div>
+            <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/gif" className="hidden" onChange={onFileChange} />
           </div>
 
           {/* @Username (somente leitura) */}

@@ -349,8 +349,9 @@ export async function saveBotTelegramProfileAction(
 }
 
 // ─── setBotPhotoAction ─────────────────────────────────────────────────────────
-// Define a foto de perfil do bot no Telegram via multipart upload.
-// Retorna { ok, error } em vez de lançar — evita sanitização do Next.js em produção.
+// Define a foto de perfil do bot via MTProto (GramJS).
+// O Bot API HTTP não expõe setMyPhoto para bots regulares — apenas o MTProto funciona.
+// Requer TELEGRAM_API_ID e TELEGRAM_API_HASH (my.telegram.org).
 export async function setBotPhotoAction(botId: string, photo: File): Promise<{ ok: boolean; error?: string }> {
   try {
     const supabase = await createClient()
@@ -365,6 +366,11 @@ export async function setBotPhotoAction(botId: string, photo: File): Promise<{ o
     if (photo.size > 10 * 1024 * 1024)
       return { ok: false, error: 'Imagem muito grande. Máximo 10MB.' }
 
+    const apiId   = parseInt(process.env.TELEGRAM_API_ID   ?? '0')
+    const apiHash =           process.env.TELEGRAM_API_HASH ?? ''
+    if (!apiId || !apiHash)
+      return { ok: false, error: 'Variáveis TELEGRAM_API_ID e TELEGRAM_API_HASH não configuradas.' }
+
     const { data: bot } = await supabase
       .from('bots')
       .select('token')
@@ -373,19 +379,30 @@ export async function setBotPhotoAction(botId: string, photo: File): Promise<{ o
       .single()
 
     if (!bot?.token) return { ok: false, error: 'Bot não encontrado.' }
-    const token = decryptToken(bot.token as string)
+    const plainToken = decryptToken(bot.token as string)
 
-    const fd  = new FormData()
-    const buf = await photo.arrayBuffer()
-    fd.append('photo', new Blob([buf], { type: photo.type }), photo.name)
+    // Importações dinâmicas — GramJS é grande, carrega só quando necessário
+    const { TelegramClient, Api } = await import('telegram')
+    const { StringSession }       = await import('telegram/sessions')
+    const { CustomFile }          = await import('telegram/client/uploads')
 
-    const res = await fetch(`https://api.telegram.org/bot${token}/setMyPhoto`, {
-      method: 'POST',
-      body: fd,
-      cache: 'no-store',
+    const client = new TelegramClient(
+      new StringSession(''),
+      apiId,
+      apiHash,
+      { connectionRetries: 3 },
+    )
+
+    await client.start({ botAuthToken: plainToken })
+
+    const buf  = Buffer.from(await photo.arrayBuffer())
+    const file = await client.uploadFile({
+      file:    new CustomFile(photo.name, buf.length, photo.name, buf),
+      workers: 1,
     })
-    const d = await res.json() as { ok: boolean; description?: string }
-    if (!d.ok) return { ok: false, error: d.description ?? 'Telegram recusou a foto.' }
+
+    await client.invoke(new Api.photos.UploadProfilePhoto({ file }))
+    await client.disconnect()
 
     return { ok: true }
   } catch (e) {
