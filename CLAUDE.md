@@ -448,6 +448,12 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Fluxos — Undo/Redo (Ctrl+Z / Ctrl+Y): stack de histórico com MAX_HISTORY=50, refs para evitar stale closures | ✅ Implementado |
 | Fluxos — Realtime na listagem: canal 'flows-realtime' (UPDATE/INSERT/DELETE) filtrado por user_id | ✅ Implementado |
 | Fluxos — Seleção múltipla: Shift+click, box select com Shift+drag, multi-drag, Delete remove todos | ✅ Implementado |
+| Fluxos — Snap to grid: posições arredondadas para múltiplos de 20px ao arrastar nós | ✅ Implementado |
+| Fluxos — Descrição editável no editor: campo textarea em Configurações do fluxo (⚙️), salvo no banco | ✅ Implementado |
+| Fluxos — Editar conexão: EdgePanel ao selecionar aresta — "Redirecionar destino" ou "Remover conexão" | ✅ Implementado |
+| Fluxos — Nós Imagem e Link: novos tipos em categoria Mídia no editor + inspector + preview | ✅ Implementado |
+| Fluxos — Gatilho configurável: trigger_type (start/keyword) + keywords[] em Configurações do fluxo | ✅ Implementado |
+| Fluxos — migração 063: colunas trigger_type e keywords na tabela flows | ✅ Implementado |
 | Afiliados — Server Component SSR + Client Component (dados reais) | ✅ Funcional |
 | Afiliados — CRUD real (add/edit/pause/archive/delete) + confirmação modal | ✅ Implementado |
 | Afiliados — link de afiliado copiável (slug-based) | ✅ Implementado |
@@ -2215,6 +2221,8 @@ interface FlowEdgeType { id, source, target, sourceHandle?, label? }
 | `offer` | Comercial | 1 | Produto com preço e CTA |
 | `tag` | CRM | 1 | Adiciona/remove tag do contato |
 | `handoff` | CRM | 0 | Encaminha para time humano (terminal) |
+| `image` | Mídia | 1 | Envia imagem com URL + legenda opcional |
+| `link` | Mídia | 1 | Envia botão inline com URL (Telegram InlineKeyboard) |
 
 **Handles dinâmicos (buttons):** `outputs = -1` no `nodeTypes` sinaliza contagem variável.
 `getButtonHandleX(idx, count)` distribui as posições X uniformemente de `padding=30` até `NODE_W-30`.
@@ -2272,10 +2280,7 @@ if (!name.trim()) {
 | Item | Prioridade |
 |---|---|
 | Confirmação ao sair com mudanças não salvas | 🔴 Alta |
-| Snap to grid (Math.round ao arrastar) | 🟡 Média |
-| Editar descrição dentro do editor | 🟡 Média |
-| Nós de Imagem e Link (Telegram InlineKeyboard) | 🟡 Média |
 | Copiar/colar nó (Ctrl+C/V) | 🟢 Baixa |
 | Export/Import JSON | 🟢 Baixa |
-| Gatilho por palavra-chave (ativar fluxo sem /start) | 🟢 Baixa |
 | Estatísticas reais (executions++ no webhook) | 🟢 Baixa |
+| Executar fluxo pelo webhook ao detectar keyword (webhook/route.ts) | 🟢 Baixa |

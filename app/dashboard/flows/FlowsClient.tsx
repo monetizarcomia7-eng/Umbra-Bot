@@ -10,6 +10,7 @@ import {
   MessageSquare, HelpCircle, MousePointerClick, Split, Clock,
   ShoppingBag, Tag, UserRound, Loader2, AlertCircle, Bot,
   Flag, Copy, ChevronRight, Undo2, Redo2,
+  Image as LucideImage, Link2, Settings, Hash,
 } from 'lucide-react'
 
 // ─── Public types (imported by page.tsx) ───────────────────────────────────────
@@ -51,6 +52,9 @@ interface NodeData {
   tag?: string
   team?: string
   message?: string
+  imageUrl?: string
+  caption?: string
+  url?: string
 }
 
 interface FlowNodeType {
@@ -83,6 +87,8 @@ interface FlowMeta {
 interface FlowEditorData extends FlowMeta {
   nodes: FlowNodeType[]
   edges: FlowEdgeType[]
+  triggerType: 'start' | 'keyword'
+  keywords: string[]
 }
 
 // ─── Mappers ───────────────────────────────────────────────────────────────────
@@ -114,6 +120,8 @@ function mapRawFull(r: Record<string, unknown>): FlowEditorData {
     description: (r.description as string) ?? '',
     nodes: (r.nodes as FlowNodeType[]) ?? [],
     edges: (r.edges as FlowEdgeType[]) ?? [],
+    triggerType: ((r.trigger_type as string) === 'keyword' ? 'keyword' : 'start'),
+    keywords: (r.keywords as string[]) ?? [],
   }
 }
 
@@ -148,6 +156,8 @@ const nodeTypes: Record<string, NodeTypeDef> = {
   offer:     { label: 'Oferta',      Icon: ShoppingBag,       color: 'var(--success)',         category: 'Comercial',  description: 'Apresenta um produto com botão de compra.',                          defaultData: { product: 'Mentoria Premium', price: 1297, cta: 'Comprar agora' }, outputs: 1 },
   tag:       { label: 'Aplicar tag', Icon: Tag,               color: 'oklch(0.60 0.13 200)',   category: 'CRM',        description: 'Adiciona ou remove uma tag do contato.',                             defaultData: { action: 'add', tag: 'VIP' },                                      outputs: 1 },
   handoff:   { label: 'Humano',      Icon: UserRound,         color: 'var(--danger)',          category: 'CRM',        description: 'Encaminha o atendimento para o time humano.',                        defaultData: { team: 'Suporte', message: 'Um humano vai te atender em instantes.' }, outputs: 0 },
+  image:     { label: 'Imagem',      Icon: LucideImage,       color: 'oklch(0.55 0.12 280)',   category: 'Mídia',      description: 'Envia uma imagem com legenda opcional.',                             defaultData: { imageUrl: '', caption: '' },                                      outputs: 1 },
+  link:      { label: 'Link/Botão',  Icon: Link2,             color: 'oklch(0.52 0.18 250)',   category: 'Mídia',      description: 'Envia um botão inline com URL (Telegram InlineKeyboard).',           defaultData: { text: 'Clique aqui!', url: '' },                                  outputs: 1 },
 }
 
 const flowStatusMap: Record<string, { label: string; tone: string }> = {
@@ -251,9 +261,14 @@ function getNodePreview(node: FlowNodeType): string {
     case 'offer':     return `${node.data.product} · ${fmtBRLdec(node.data.price || 0)}`
     case 'tag':       return `${node.data.action === 'add' ? 'Adicionar' : 'Remover'} tag "${node.data.tag}"`
     case 'handoff':   return `Encaminhar para ${node.data.team}`
+    case 'image':     return node.data.caption || (node.data.imageUrl ? 'Imagem com URL' : 'Imagem (sem URL)')
+    case 'link':      return `${node.data.text || 'Botão'} → ${node.data.url || 'sem URL'}`
     default: return ''
   }
 }
+
+const GRID_SIZE = 20
+function snapGrid(v: number) { return Math.round(v / GRID_SIZE) * GRID_SIZE }
 
 function bezierPath(sx: number, sy: number, tx: number, ty: number) {
   const dy = ty - sy
@@ -900,6 +915,26 @@ function Inspector({ node, onUpdate, onClose, onDelete }: {
             <InspField label="Mensagem de transição"><textarea rows={3} value={node.data.message ?? ''} onChange={e => setData({ message: e.target.value })} className={inspTextarea} /></InspField>
           </>
         )}
+        {node.type === 'image' && (
+          <>
+            <InspField label="URL da imagem">
+              <input value={node.data.imageUrl ?? ''} onChange={e => setData({ imageUrl: e.target.value })} placeholder="https://exemplo.com/foto.jpg" className={inspInput} />
+            </InspField>
+            <InspField label="Legenda (opcional)">
+              <textarea rows={2} value={node.data.caption ?? ''} onChange={e => setData({ caption: e.target.value })} placeholder="Descrição da imagem…" className={inspTextarea} />
+            </InspField>
+          </>
+        )}
+        {node.type === 'link' && (
+          <>
+            <InspField label="Texto do botão">
+              <input value={node.data.text ?? ''} onChange={e => setData({ text: e.target.value })} className={inspInput} />
+            </InspField>
+            <InspField label="URL do link">
+              <input value={node.data.url ?? ''} onChange={e => setData({ url: e.target.value })} placeholder="https://…" className={inspInput} />
+            </InspField>
+          </>
+        )}
 
         <div className="pt-3 border-t border-border">
           <button onClick={() => onDelete(node.id)} className="w-full h-8 inline-flex items-center justify-center gap-1.5 text-[12px] font-medium text-danger hover:bg-danger-soft rounded-md">
@@ -984,9 +1019,11 @@ interface CanvasProps {
   connecting: { nodeId: string; handle: number } | null
   setConnecting: React.Dispatch<React.SetStateAction<{ nodeId: string; handle: number } | null>>
   containerRef: React.RefObject<HTMLDivElement | null>
+  reconnectEdgeId: string | null
+  onReconnectEdge: (edgeId: string, targetId: string) => void
 }
 
-function Canvas({ nodes, edges, vp, setVp, selectedIds, selectedEdgeId, onSelectNode, onSelectNodes, onSelectEdge, onUpdateNode, onUpdateNodes, onAddEdge, onDragEnd, connecting, setConnecting, containerRef }: CanvasProps) {
+function Canvas({ nodes, edges, vp, setVp, selectedIds, selectedEdgeId, onSelectNode, onSelectNodes, onSelectEdge, onUpdateNode, onUpdateNodes, onAddEdge, onDragEnd, connecting, setConnecting, containerRef, reconnectEdgeId, onReconnectEdge }: CanvasProps) {
   const [dragging, setDragging] = useState<{
     nodeIds: string[]
     primaryNodeId: string
@@ -1100,10 +1137,14 @@ function Canvas({ nodes, edges, vp, setVp, selectedIds, selectedEdgeId, onSelect
   function handleClick(nodeId: string, type: 'input' | 'output', outIdx = 0) {
     if (type === 'output') {
       setConnecting({ nodeId, handle: outIdx })
-    } else if (type === 'input' && connecting && connecting.nodeId !== nodeId) {
-      const exists = edges.some(e => e.source === connecting.nodeId && e.target === nodeId && (e.sourceHandle ?? 0) === connecting.handle)
-      if (!exists) onAddEdge({ id: 'e_' + Date.now(), source: connecting.nodeId, target: nodeId, sourceHandle: connecting.handle })
-      setConnecting(null)
+    } else if (type === 'input') {
+      if (reconnectEdgeId) {
+        onReconnectEdge(reconnectEdgeId, nodeId)
+      } else if (connecting && connecting.nodeId !== nodeId) {
+        const exists = edges.some(e => e.source === connecting.nodeId && e.target === nodeId && (e.sourceHandle ?? 0) === connecting.handle)
+        if (!exists) onAddEdge({ id: 'e_' + Date.now(), source: connecting.nodeId, target: nodeId, sourceHandle: connecting.handle })
+        setConnecting(null)
+      }
     }
   }
 
@@ -1132,6 +1173,12 @@ function Canvas({ nodes, edges, vp, setVp, selectedIds, selectedEdgeId, onSelect
           width: Math.abs(boxSelect.x1 - boxSelect.x0),
           height: Math.abs(boxSelect.y1 - boxSelect.y0),
         }} />
+      )}
+      {/* Banner de redirecionamento de aresta */}
+      {reconnectEdgeId && (
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 bg-warning text-white px-3 py-1.5 rounded-lg text-[12px] font-medium flex items-center gap-2" style={{ boxShadow: 'var(--shadow-lg)' }}>
+          <Link2 size={12} /> Clique na entrada do nó de destino · ESC cancela
+        </div>
       )}
     </div>
   )
@@ -1165,6 +1212,8 @@ type PreviewEntry =
   | { kind: 'offer'; product: string; price: number; cta: string }
   | { kind: 'delay'; amount: number; unit: string }
   | { kind: 'meta'; icon: React.ElementType; text: string }
+  | { kind: 'image'; url: string; caption: string }
+  | { kind: 'link'; text: string; url: string }
   | { kind: 'buttons'; text: string; options: string[]; targets: (PreviewEntry[] | null)[] }
   | { kind: 'condition'; label: string; yes: PreviewEntry[] | null; no: PreviewEntry[] | null }
 
@@ -1198,6 +1247,10 @@ function buildPreviewPath(
     } else if (node.type === 'handoff') {
       result.push({ kind: 'meta', icon: UserRound, text: `Encaminha para ${node.data.team}` })
       break
+    } else if (node.type === 'image') {
+      result.push({ kind: 'image', url: node.data.imageUrl ?? '', caption: node.data.caption ?? '' })
+    } else if (node.type === 'link') {
+      result.push({ kind: 'link', text: node.data.text ?? 'Botão', url: node.data.url ?? '' })
     } else if (node.type === 'buttons') {
       const options = node.data.options ?? []
       const targets = options.map((_: string, idx: number) => {
@@ -1245,6 +1298,33 @@ function RenderPreviewEntries({ entries }: { entries: PreviewEntry[] }) {
               <div className="text-[13px] font-semibold text-text mt-1">{entry.product}</div>
               <div className="text-[18px] font-semibold text-success mt-1">{fmtBRLdec(entry.price)}</div>
               <button className="w-full mt-2 h-8 bg-primary text-primary-fg text-[12px] font-medium rounded-md">{entry.cta}</button>
+            </div>
+          )
+        }
+        if (entry.kind === 'image') {
+          return (
+            <div key={i} className="flex justify-start">
+              <div className="max-w-[240px]">
+                <div className="w-[200px] h-[120px] bg-surface-2 border border-border rounded-lg flex items-center justify-center overflow-hidden">
+                  {entry.url
+                    ? <img src={entry.url} alt={entry.caption} className="w-full h-full object-cover" onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                    : <LucideImage size={28} className="text-text-subtle" />
+                  }
+                </div>
+                {entry.caption && (
+                  <div className="mt-1 text-[12px] leading-snug px-3 py-2 rounded-2xl rounded-bl-sm bg-surface text-text border border-border">{entry.caption}</div>
+                )}
+              </div>
+            </div>
+          )
+        }
+        if (entry.kind === 'link') {
+          return (
+            <div key={i} className="flex justify-start">
+              <a href={entry.url || '#'} target="_blank" rel="noopener noreferrer" onClick={e => e.preventDefault()}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-surface border border-primary/40 rounded-lg text-[12px] text-primary font-medium hover:bg-primary-soft/20">
+                <Link2 size={11} /> {entry.text || 'Botão'}
+              </a>
             </div>
           )
         }
@@ -1386,6 +1466,50 @@ function BotSelector({ bots, value, onChange }: {
   )
 }
 
+// ─── EdgePanel ─────────────────────────────────────────────────────────────────
+
+function EdgePanel({ edge, nodes, reconnecting, onStartReconnect, onCancelReconnect, onDelete }: {
+  edge: FlowEdgeType | undefined
+  nodes: FlowNodeType[]
+  reconnecting: boolean
+  onStartReconnect: () => void
+  onCancelReconnect: () => void
+  onDelete: () => void
+}) {
+  if (!edge) return null
+  const srcNode = nodes.find(n => n.id === edge.source)
+  const tgtNode = nodes.find(n => n.id === edge.target)
+  const srcLabel = srcNode ? (nodeTypes[srcNode.type]?.label ?? srcNode.type) : `#${edge.source.slice(-4)}`
+  const tgtLabel = tgtNode ? (nodeTypes[tgtNode.type]?.label ?? tgtNode.type) : `#${edge.target.slice(-4)}`
+  return (
+    <aside className="absolute top-3 right-3 z-20 w-[260px] bg-surface border border-border rounded-xl p-4" style={{ boxShadow: 'var(--shadow-lg)' }}>
+      <div className="text-[10.5px] uppercase tracking-wider font-semibold text-text-subtle mb-2.5">Conexão selecionada</div>
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <span className="px-2 py-0.5 bg-surface-2 border border-border rounded text-[11.5px] text-text truncate max-w-[95px]">{srcLabel}</span>
+        <ArrowUpRight size={11} className="text-text-muted shrink-0" />
+        <span className="px-2 py-0.5 bg-surface-2 border border-border rounded text-[11.5px] text-text truncate max-w-[95px]">{tgtLabel}</span>
+      </div>
+      {reconnecting ? (
+        <div className="mt-3 space-y-2">
+          <div className="text-[12px] text-primary font-medium leading-snug">Clique no nó de destino para redirecionar a conexão.</div>
+          <button onClick={onCancelReconnect} className="w-full h-8 inline-flex items-center justify-center gap-1.5 text-[12px] font-medium text-text-muted hover:bg-surface-2 rounded-md border border-border">
+            <X size={12} /> Cancelar
+          </button>
+        </div>
+      ) : (
+        <div className="mt-3 space-y-1.5">
+          <button onClick={onStartReconnect} className="w-full h-8 inline-flex items-center justify-center gap-1.5 text-[12px] font-medium text-text hover:bg-surface-2 rounded-md border border-border">
+            Redirecionar destino
+          </button>
+          <button onClick={onDelete} className="w-full h-8 inline-flex items-center justify-center gap-1.5 text-[12px] font-medium text-danger hover:bg-danger-soft rounded-md">
+            <Trash2 size={12} /> Remover conexão
+          </button>
+        </div>
+      )}
+    </aside>
+  )
+}
+
 // ─── FlowEditor ────────────────────────────────────────────────────────────────
 
 function FlowEditor({ flow, bots, onBack, onSave, onPublish, showToast }: {
@@ -1398,6 +1522,10 @@ function FlowEditor({ flow, bots, onBack, onSave, onPublish, showToast }: {
 }) {
   const [name, setName]                         = useState(flow.name)
   const [nameError, setNameError]               = useState(false)
+  const [description, setDescription]           = useState(flow.description)
+  const [triggerType, setTriggerType]           = useState<'start' | 'keyword'>(flow.triggerType ?? 'start')
+  const [keywords, setKeywords]                 = useState<string[]>(flow.keywords ?? [])
+  const [kwInput, setKwInput]                   = useState('')
   const [bot, setBot]                           = useState(flow.bot)
   const [botColor, setBotColor]                 = useState(flow.botColor)
   const [nodes, setNodes]                       = useState<FlowNodeType[]>(flow.nodes)
@@ -1405,12 +1533,14 @@ function FlowEditor({ flow, bots, onBack, onSave, onPublish, showToast }: {
   const [vp, setVp]                             = useState({ x: 40, y: 30, zoom: 0.85 })
   const [selectedNodeIds, setSelectedNodeIds]   = useState<Set<string>>(new Set())
   const [selectedEdgeId, setSelectedEdgeId]     = useState<string | null>(null)
+  const [reconnectEdgeId, setReconnectEdgeId]   = useState<string | null>(null)
   const [connecting, setConnecting]             = useState<{ nodeId: string; handle: number } | null>(null)
   const [viewportSize, setViewportSize]         = useState({ w: 800, h: 600 })
   const [saving, setSaving]                     = useState(false)
   const [publishing, setPublishing]             = useState(false)
   const [savedAt, setSavedAt]                   = useState<number | null>(null)
   const [previewOpen, setPreviewOpen]           = useState(false)
+  const [settingsOpen, setSettingsOpen]         = useState(false)
   const [canUndo, setCanUndo]                   = useState(false)
   const [canRedo, setCanRedo]                   = useState(false)
 
@@ -1512,18 +1642,23 @@ function FlowEditor({ flow, bots, onBack, onSave, onPublish, showToast }: {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Limpa modo de reconexão quando a aresta é desmarcada
+  useEffect(() => {
+    if (!selectedEdgeId) setReconnectEdgeId(null)
+  }, [selectedEdgeId])
+
   // Auto-save 30s após última edição
   useEffect(() => {
     clearTimeout(autoSaveRef.current)
     autoSaveRef.current = setTimeout(async () => {
       if (!name.trim()) return
-      const currentFlow: FlowEditorData = { ...flow, name, bot, botColor, nodes, edges }
+      const currentFlow: FlowEditorData = { ...flow, name, description, bot, botColor, nodes, edges, triggerType, keywords }
       const ok = await onSaveRef.current(currentFlow)
       if (ok) setSavedAt(Date.now())
     }, 30_000)
     return () => clearTimeout(autoSaveRef.current)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nodes, edges, name, bot, botColor])
+  }, [nodes, edges, name, description, bot, botColor, triggerType, keywords])
 
   // ── Seleção múltipla ────────────────────────────────────────────────────────
   function onSelectNode(id: string | null, shift = false) {
@@ -1565,13 +1700,21 @@ function FlowEditor({ flow, bots, onBack, onSave, onPublish, showToast }: {
 
   function updateNodes(updates: FlowNodeType[]) {
     setNodes(ns => {
-      const map = new Map(updates.map(u => [u.id, u]))
+      const map = new Map(updates.map(u => [u.id, { ...u, position: { x: snapGrid(u.position.x), y: snapGrid(u.position.y) } }]))
       return ns.map(n => map.has(n.id) ? map.get(n.id)! : n)
     })
   }
 
   function handleDragEnd() {
     pushHistory(nodesRef.current, edgesRef.current)
+  }
+
+  function onReconnectEdge(edgeId: string, newTargetId: string) {
+    const nextEdges = edgesRef.current.map(e => e.id === edgeId ? { ...e, target: newTargetId } : e)
+    setEdges(nextEdges)
+    pushHistory(nodesRef.current, nextEdges)
+    setReconnectEdgeId(null)
+    setSelectedEdgeId(null)
   }
 
   function addEdge(edge: FlowEdgeType) {
@@ -1597,7 +1740,7 @@ function FlowEditor({ flow, bots, onBack, onSave, onPublish, showToast }: {
     }
     setNameError(false)
     setSaving(true)
-    const ok = await onSave({ ...flow, name, bot, botColor, nodes, edges })
+    const ok = await onSave({ ...flow, name, description, bot, botColor, nodes, edges, triggerType, keywords })
     setSaving(false)
     if (ok) { setSavedAt(Date.now()); showToast('Rascunho salvo.', 'success') }
   }
@@ -1611,7 +1754,7 @@ function FlowEditor({ flow, bots, onBack, onSave, onPublish, showToast }: {
     }
     setNameError(false)
     setPublishing(true)
-    const ok = await onPublish({ ...flow, name, bot, botColor, nodes, edges, status: 'published' })
+    const ok = await onPublish({ ...flow, name, description, bot, botColor, nodes, edges, triggerType, keywords, status: 'published' })
     setPublishing(false)
     if (ok) setSavedAt(Date.now())
   }
@@ -1664,6 +1807,11 @@ function FlowEditor({ flow, bots, onBack, onSave, onPublish, showToast }: {
           </Badge>
           <BotSelector bots={bots} value={bot} onChange={(b, c) => { setBot(b); setBotColor(c) }} />
           <span className="hidden lg:inline text-[11px] text-text-subtle">{nodes.length} nós · {edges.length} conexões</span>
+          {triggerType === 'keyword' && keywords.length > 0 && (
+            <span className="hidden xl:inline-flex items-center gap-1 text-[11px] text-warning font-medium">
+              <Hash size={10} /> {keywords.length} palavra{keywords.length > 1 ? 's' : ''}
+            </span>
+          )}
         </div>
 
         <div className="flex items-center gap-1.5 shrink-0">
@@ -1672,6 +1820,10 @@ function FlowEditor({ flow, bots, onBack, onSave, onPublish, showToast }: {
               <Check size={12} /> Salvo
             </span>
           )}
+          <button onClick={() => setSettingsOpen(true)} title="Configurações do fluxo"
+            className="w-8 h-8 inline-flex items-center justify-center rounded-md text-text-muted hover:bg-surface-2 hover:text-text">
+            <Settings size={14} />
+          </button>
           <Btn variant="ghost" size="sm" onClick={() => setPreviewOpen(true)}><Eye size={13} /> Prévia</Btn>
           <Btn variant="secondary" size="sm" onClick={handleSave} disabled={saving || publishing}>
             {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
@@ -1697,12 +1849,14 @@ function FlowEditor({ flow, bots, onBack, onSave, onPublish, showToast }: {
           onAddEdge={addEdge}
           onDragEnd={handleDragEnd}
           connecting={connecting} setConnecting={setConnecting} containerRef={containerRef}
+          reconnectEdgeId={reconnectEdgeId}
+          onReconnectEdge={onReconnectEdge}
         />
 
         <Palette onAddNode={addNode} />
 
-        {/* Inspector — só quando 1 nó selecionado */}
-        {selectedNodeIds.size <= 1 && (
+        {/* Inspector — só quando 1 nó selecionado (e nenhuma aresta) */}
+        {selectedNodeIds.size <= 1 && !selectedEdgeId && (
           <Inspector
             node={selectedNode}
             onUpdate={updateNode}
@@ -1712,6 +1866,22 @@ function FlowEditor({ flow, bots, onBack, onSave, onPublish, showToast }: {
               const nextEdges = edgesRef.current.filter(e => e.source !== id && e.target !== id)
               setNodes(nextNodes); setEdges(nextEdges); setSelectedNodeIds(new Set())
               pushHistory(nextNodes, nextEdges)
+            }}
+          />
+        )}
+
+        {/* EdgePanel — quando uma aresta está selecionada */}
+        {selectedEdgeId && selectedNodeIds.size === 0 && (
+          <EdgePanel
+            edge={edges.find(e => e.id === selectedEdgeId)}
+            nodes={nodes}
+            reconnecting={reconnectEdgeId === selectedEdgeId}
+            onStartReconnect={() => setReconnectEdgeId(selectedEdgeId)}
+            onCancelReconnect={() => setReconnectEdgeId(null)}
+            onDelete={() => {
+              const nextEdges = edgesRef.current.filter(e => e.id !== selectedEdgeId)
+              setEdges(nextEdges); setSelectedEdgeId(null); setReconnectEdgeId(null)
+              pushHistory(nodesRef.current, nextEdges)
             }}
           />
         )}
@@ -1767,6 +1937,91 @@ function FlowEditor({ flow, bots, onBack, onSave, onPublish, showToast }: {
       <Modal open={previewOpen} onClose={() => setPreviewOpen(false)} title="Prévia do fluxo" subtitle="Simulação do caminho no Telegram" size="md"
         footer={<Btn variant="primary" onClick={() => setPreviewOpen(false)}>Fechar</Btn>}>
         <PreviewChat nodes={nodes} edges={edges} />
+      </Modal>
+
+      {/* Modal de configurações do fluxo */}
+      <Modal open={settingsOpen} onClose={() => setSettingsOpen(false)} title="Configurações do fluxo" size="md"
+        footer={<Btn variant="primary" onClick={() => setSettingsOpen(false)}>Fechar</Btn>}>
+        <div className="space-y-5">
+          {/* Descrição */}
+          <div>
+            <label className="block text-[10.5px] uppercase tracking-wider font-semibold text-text-subtle mb-1.5">Descrição</label>
+            <textarea
+              rows={3}
+              value={description}
+              onChange={e => setDescription(e.target.value)}
+              placeholder="Descreva o objetivo deste fluxo…"
+              className="w-full px-3 py-2 bg-surface border border-border rounded-lg text-[12.5px] text-text focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50 resize-none leading-snug"
+              maxLength={300}
+            />
+            <div className="text-[11px] text-text-subtle mt-1 text-right">{description.length}/300</div>
+          </div>
+
+          {/* Gatilho */}
+          <div>
+            <label className="block text-[10.5px] uppercase tracking-wider font-semibold text-text-subtle mb-2">Gatilho de ativação</label>
+            <div className="space-y-2.5">
+              <label className="flex items-start gap-3 cursor-pointer p-3 rounded-lg border border-border hover:bg-surface-2 transition-colors" style={{ borderColor: triggerType === 'start' ? 'var(--primary)' : undefined, background: triggerType === 'start' ? 'color-mix(in oklab, var(--primary) 6%, var(--surface))' : undefined }}>
+                <input type="radio" value="start" checked={triggerType === 'start'} onChange={() => setTriggerType('start')} className="mt-0.5 accent-[var(--primary)]" />
+                <div>
+                  <div className="text-[13px] font-semibold text-text">Comando /start</div>
+                  <div className="text-[11.5px] text-text-muted mt-0.5">Ativado quando o usuário inicia uma conversa com o bot pela primeira vez ou envia /start.</div>
+                </div>
+              </label>
+              <label className="flex items-start gap-3 cursor-pointer p-3 rounded-lg border border-border hover:bg-surface-2 transition-colors" style={{ borderColor: triggerType === 'keyword' ? 'var(--primary)' : undefined, background: triggerType === 'keyword' ? 'color-mix(in oklab, var(--primary) 6%, var(--surface))' : undefined }}>
+                <input type="radio" value="keyword" checked={triggerType === 'keyword'} onChange={() => setTriggerType('keyword')} className="mt-0.5 accent-[var(--primary)]" />
+                <div>
+                  <div className="text-[13px] font-semibold text-text">Palavra-chave</div>
+                  <div className="text-[11.5px] text-text-muted mt-0.5">Ativado quando o usuário envia uma mensagem contendo as palavras definidas abaixo.</div>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          {/* Palavras-chave */}
+          {triggerType === 'keyword' && (
+            <div>
+              <label className="block text-[10.5px] uppercase tracking-wider font-semibold text-text-subtle mb-1.5">Palavras-chave</label>
+              {keywords.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mb-2.5">
+                  {keywords.map((kw, i) => (
+                    <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 bg-primary-soft text-primary border border-primary/20 rounded-md text-[12px] font-medium">
+                      <Hash size={9} /> {kw}
+                      <button onClick={() => setKeywords(keywords.filter((_, j) => j !== i))} className="ml-0.5 opacity-60 hover:opacity-100"><X size={11} /></button>
+                    </span>
+                  ))}
+                </div>
+              )}
+              <div className="flex items-center gap-2">
+                <input
+                  value={kwInput}
+                  onChange={e => setKwInput(e.target.value)}
+                  onKeyDown={e => {
+                    if ((e.key === 'Enter' || e.key === ',') && kwInput.trim()) {
+                      e.preventDefault()
+                      const kw = kwInput.trim().toLowerCase()
+                      if (!keywords.includes(kw)) setKeywords(prev => [...prev, kw])
+                      setKwInput('')
+                    }
+                  }}
+                  placeholder="Digite e pressione Enter…"
+                  className="flex-1 h-9 px-3 bg-surface border border-border rounded-lg text-[12.5px] text-text focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50"
+                />
+                <button
+                  onClick={() => {
+                    const kw = kwInput.trim().toLowerCase()
+                    if (kw && !keywords.includes(kw)) { setKeywords(prev => [...prev, kw]); setKwInput('') }
+                  }}
+                  className="h-9 px-3 bg-primary text-primary-fg rounded-lg hover:bg-primary/90 inline-flex items-center justify-center">
+                  <Plus size={14} />
+                </button>
+              </div>
+              <div className="text-[11.5px] text-text-muted mt-1.5 leading-snug">
+                Ex.: &ldquo;preço&rdquo;, &ldquo;comprar&rdquo;, &ldquo;produto&rdquo;. A correspondência não diferencia maiúsculas de minúsculas.
+              </div>
+            </div>
+          )}
+        </div>
       </Modal>
     </div>
   )
@@ -1835,7 +2090,7 @@ export default function FlowsClient({ initialFlows, bots, userId }: {
     const supabase = createClient()
     supabase
       .from('flows')
-      .select('id, name, bot, bot_color, status, executions, conversion, description, updated_at, nodes, edges')
+      .select('id, name, bot, bot_color, status, executions, conversion, description, updated_at, nodes, edges, trigger_type, keywords')
       .eq('id', editingId)
       .single()
       .then(({ data, error }) => {
@@ -1894,7 +2149,7 @@ export default function FlowsClient({ initialFlows, bots, userId }: {
     // Busca o fluxo completo (com nodes e edges)
     const { data: src, error: srcErr } = await supabase
       .from('flows')
-      .select('name, bot, bot_color, description, nodes, edges')
+      .select('name, bot, bot_color, description, nodes, edges, trigger_type, keywords')
       .eq('id', id)
       .eq('user_id', userId)
       .single()
@@ -1908,14 +2163,16 @@ export default function FlowsClient({ initialFlows, bots, userId }: {
     const { data, error } = await supabase
       .from('flows')
       .insert({
-        user_id:     userId,
-        name:        `${src.name} (cópia)`,
-        bot:         src.bot,
-        bot_color:   src.bot_color,
-        description: src.description,
-        status:      'draft',
-        nodes:       src.nodes ?? [],
-        edges:       src.edges ?? [],
+        user_id:      userId,
+        name:         `${src.name} (cópia)`,
+        bot:          src.bot,
+        bot_color:    src.bot_color,
+        description:  src.description,
+        status:       'draft',
+        nodes:        src.nodes ?? [],
+        edges:        src.edges ?? [],
+        trigger_type: (src as Record<string, unknown>).trigger_type ?? 'start',
+        keywords:     (src as Record<string, unknown>).keywords ?? [],
       })
       .select('id')
       .single()
@@ -1938,6 +2195,7 @@ export default function FlowsClient({ initialFlows, bots, userId }: {
       updatedAt: Date.now(),
       description: src.description ?? '',
     }
+    // (triggerType/keywords vivem em FlowEditorData, não em FlowMeta — não precisam aqui)
     setFlows(arr => [newMeta, ...arr])
     setDuplicating(false)
     showToast('Fluxo duplicado com sucesso.', 'success')
@@ -1948,13 +2206,15 @@ export default function FlowsClient({ initialFlows, bots, userId }: {
     const { error } = await supabase
       .from('flows')
       .update({
-        name:        updated.name,
-        bot:         updated.bot,
-        bot_color:   updated.botColor,
-        status:      updated.status,
-        description: updated.description,
-        nodes:       updated.nodes,
-        edges:       updated.edges,
+        name:         updated.name,
+        bot:          updated.bot,
+        bot_color:    updated.botColor,
+        status:       updated.status,
+        description:  updated.description,
+        nodes:        updated.nodes,
+        edges:        updated.edges,
+        trigger_type: updated.triggerType,
+        keywords:     updated.keywords,
       })
       .eq('id', updated.id)
       .eq('user_id', userId)
