@@ -72,9 +72,10 @@ export async function GET(
 
   if (redirect) {
     const isBot = deviceType === 'bot'
+    // Se cloaking ativo mas decoy_url ausente, bots recebem appUrl (nunca o destino real)
     const target =
-      redirect.cloaking && isBot && redirect.decoy_url
-        ? redirect.decoy_url
+      redirect.cloaking && isBot
+        ? (redirect.decoy_url || appUrl)
         : redirect.destination
 
     const forwarded = req.headers.get('x-forwarded-for')

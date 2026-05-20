@@ -12,7 +12,7 @@ import {
   Link2, Search, Check, X, MousePointerClick, Users, TrendingUp, Download, Plus,
   CheckCircle2, ShieldAlert, ChevronUp, ChevronDown, AlertCircle, Sparkles,
   ChevronRight, AlertTriangle, ExternalLink, Pencil, Pause, Play, Copy, Trash2,
-  ArrowUpRight, ArrowDownRight, ChevronLeft, Loader2,
+  ArrowUpRight, ArrowDownRight, ChevronLeft, Loader2, Archive, RotateCcw,
 } from 'lucide-react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -54,8 +54,11 @@ interface LinkAnalytics {
   by_device: { name: string; value: number }[] | null
 }
 
+// 'loading' | 'error' | LinkAnalytics — keyed por "${id}:${period}"
+type AnalyticsState = LinkAnalytics | 'loading' | 'error'
+
 interface CreateOpts {
-  destination: string; slug: string; redirectType: number
+  destination: string; destinationLabel: string; slug: string; redirectType: number
   utm: UtmParams | null; cloaking: boolean; decoyUrl: string
 }
 
@@ -64,6 +67,7 @@ interface RedirectsClientProps {
   userId: string
   appUrl: string
   currClicks: number
+  currUnique: number
   clicksDelta: number | null
 }
 
@@ -92,16 +96,33 @@ function mapRaw(row: RawRedirect, appUrl: string): LinkItem {
   }
 }
 
+// Aplica patch (snake_case RawRedirect) sobre LinkItem (camelCase) — sem cast frágil
+function applyPatch(link: LinkItem, patch: Partial<RawRedirect>, appUrl: string): LinkItem {
+  const slug = patch.slug ?? link.slug
+  return {
+    ...link,
+    slug,
+    url: `${appUrl}/r/${slug}`,
+    destination: patch.destination ?? link.destination,
+    destinationLabel: patch.destination_label ?? patch.destination ?? link.destinationLabel,
+    redirectType: patch.redirect_type ?? link.redirectType,
+    cloaking: patch.cloaking ?? link.cloaking,
+    decoyUrl: patch.decoy_url !== undefined ? (patch.decoy_url ?? '') : link.decoyUrl,
+    utm: patch.utm !== undefined ? patch.utm : link.utm,
+    status: patch.status ?? link.status,
+  }
+}
+
 const SOURCE_COLORS: Record<string, string> = {
-  Instagram: 'oklch(0.62 0.24 25)',
-  Google:    'var(--success)',
-  YouTube:   'var(--danger)',
-  TikTok:    'oklch(0.3 0 0)',
-  WhatsApp:  'oklch(0.62 0.14 145)',
-  Facebook:  'oklch(0.5 0.2 260)',
+  Instagram:   'oklch(0.62 0.24 25)',
+  Google:      'var(--success)',
+  YouTube:     'var(--danger)',
+  TikTok:      'oklch(0.3 0 0)',
+  WhatsApp:    'oklch(0.62 0.14 145)',
+  Facebook:    'oklch(0.5 0.2 260)',
   'Twitter/X': 'oklch(0.35 0 0)',
-  Direto:    'var(--text-subtle)',
-  Outros:    'var(--text-muted)',
+  Direto:      'var(--text-subtle)',
+  Outros:      'var(--text-muted)',
 }
 
 const DEVICE_COLORS: Record<string, string> = {
@@ -334,6 +355,9 @@ function DetailsCard({ link, onStatusChange, onEdit, onDelete }: {
       <div className="space-y-2 text-[11.5px]">
         <InfoRow label="Tipo de redirect" value={`HTTP ${link.redirectType}`} mono />
         <InfoRow label="Criado em" value={fmtDateTime(link.createdAt)} />
+        {link.destinationLabel && link.destinationLabel !== link.destination && (
+          <InfoRow label="Rótulo" value={link.destinationLabel} />
+        )}
         {link.utm && (
           <>
             <InfoRow label="utm_source"   value={link.utm.source}   mono />
@@ -349,15 +373,39 @@ function DetailsCard({ link, onStatusChange, onEdit, onDelete }: {
         )}
       </div>
       <div className="flex flex-wrap items-center gap-1.5 mt-3 pt-3 border-t border-border">
+        {/* Testar link curto */}
+        <Btn variant="secondary" size="sm" onClick={() => window.open(link.url, '_blank')}>
+          <Link2 size={13} /> Testar link
+        </Btn>
+        {/* Ações de status */}
         {link.status === 'active' && (
-          <Btn variant="secondary" size="sm" onClick={() => onStatusChange(link.id, 'paused')}><Pause size={13} /> Pausar</Btn>
+          <Btn variant="secondary" size="sm" onClick={() => onStatusChange(link.id, 'paused')}>
+            <Pause size={13} /> Pausar
+          </Btn>
         )}
         {link.status === 'paused' && (
-          <Btn variant="primary" size="sm" onClick={() => onStatusChange(link.id, 'active')}><Play size={13} /> Retomar</Btn>
+          <Btn variant="primary" size="sm" onClick={() => onStatusChange(link.id, 'active')}>
+            <Play size={13} /> Retomar
+          </Btn>
         )}
-        <Btn variant="ghost" size="sm" onClick={() => window.open(link.destination, '_blank')}><ExternalLink size={13} /> Abrir</Btn>
+        {(link.status === 'active' || link.status === 'paused') && (
+          <Btn variant="ghost" size="sm" onClick={() => onStatusChange(link.id, 'archived')}>
+            <Archive size={13} /> Arquivar
+          </Btn>
+        )}
+        {link.status === 'archived' && (
+          <Btn variant="primary" size="sm" onClick={() => onStatusChange(link.id, 'active')}>
+            <RotateCcw size={13} /> Ativar
+          </Btn>
+        )}
+        {/* Abrir destino final */}
+        <Btn variant="ghost" size="sm" onClick={() => window.open(link.destination, '_blank')}>
+          <ExternalLink size={13} /> Abrir destino
+        </Btn>
         <Btn variant="ghost" size="sm" onClick={() => onEdit(link)}><Pencil size={13} /> Editar</Btn>
-        <Btn variant="ghost" size="sm" className="text-danger hover:text-danger" onClick={() => onDelete(link.id)}><Trash2 size={13} /> Apagar</Btn>
+        <Btn variant="ghost" size="sm" className="text-danger hover:text-danger" onClick={() => onDelete(link.id)}>
+          <Trash2 size={13} /> Apagar
+        </Btn>
       </div>
     </div>
   )
@@ -365,53 +413,89 @@ function DetailsCard({ link, onStatusChange, onEdit, onDelete }: {
 
 // ─── LinkStats ────────────────────────────────────────────────────────────────
 
-function LinkStats({ link, analytics, loading, onStatusChange, onEdit, onDelete }: {
+const PERIOD_OPTIONS: { label: string; value: number }[] = [
+  { label: '7 dias',  value: 7  },
+  { label: '14 dias', value: 14 },
+  { label: '30 dias', value: 30 },
+]
+
+function LinkStats({ link, analyticsMap, onLoadAnalytics, onStatusChange, onEdit, onDelete }: {
   link: LinkItem
-  analytics: LinkAnalytics | undefined
-  loading: boolean
+  analyticsMap: Record<string, AnalyticsState>
+  onLoadAnalytics: (id: string, period: number) => void
   onStatusChange: (id: string, s: LinkItem['status']) => void
   onEdit: (link: LinkItem) => void
   onDelete: (id: string) => void
 }) {
   const [mounted, setMounted] = useState(false)
+  const [period, setPeriod] = useState(14)
+
   useEffect(() => setMounted(true), [])
 
-  const byDay    = analytics?.by_day    ?? []
-  const bySource = addColors(analytics?.by_source ?? [], SOURCE_COLORS)
-  const byDevice = addColors(analytics?.by_device ?? [], DEVICE_COLORS)
-  const periodClicks = analytics?.period_clicks ?? 0
-  const periodUnique = analytics?.period_unique ?? 0
-  const rate = periodClicks > 0 ? (periodUnique / periodClicks) * 100 : 0
+  // Dispara fetch ao montar e ao trocar período
+  useEffect(() => {
+    onLoadAnalytics(link.id, period)
+  }, [link.id, period, onLoadAnalytics])
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-10 gap-2 text-text-muted text-[12.5px]">
-        <Loader2 size={16} className="animate-spin" /> Carregando analytics…
-      </div>
-    )
-  }
+  const key   = `${link.id}:${period}`
+  const state = analyticsMap[key]
+  const loading = !state || state === 'loading'
+  const isError = state === 'error'
+  const data  = state && state !== 'loading' && state !== 'error' ? state as LinkAnalytics : undefined
+
+  const byDay    = data?.by_day    ?? []
+  const bySource = addColors(data?.by_source ?? [], SOURCE_COLORS)
+  const byDevice = addColors(data?.by_device ?? [], DEVICE_COLORS)
+  const periodClicks = data?.period_clicks ?? 0
+  const periodUnique = data?.period_unique ?? 0
+  const rate = periodClicks > 0 ? (periodUnique / periodClicks) * 100 : 0
 
   return (
     <div className="space-y-4 max-w-[1100px]">
+      {/* Cabeçalho com seletor de período */}
       <div className="bg-surface border border-border rounded-lg p-4">
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
           <div>
             <div className="text-[12.5px] font-semibold text-text">Cliques por dia</div>
-            <div className="text-[10.5px] text-text-muted">Últimos 14 dias</div>
+            <div className="text-[10.5px] text-text-muted">Últimos {period} dias (excl. bots)</div>
           </div>
-          <div className="flex items-center gap-3 text-[11.5px] text-text-muted">
-            <span>Total: <span className="text-text font-semibold">{fmtNum(periodClicks)}</span></span>
-            <span>Únicos: <span className="text-text font-semibold">{fmtNum(periodUnique)}</span></span>
-            <span>Taxa: <span className="text-text font-semibold">{fmtPct(rate)}</span></span>
+          <div className="flex items-center gap-3 flex-wrap">
+            {/* Seletor de período */}
+            <div className="flex items-center bg-surface-2 border border-border rounded-lg p-0.5 gap-0.5">
+              {PERIOD_OPTIONS.map(opt => (
+                <button key={opt.value} onClick={() => setPeriod(opt.value)}
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors ${period === opt.value ? 'bg-surface text-text shadow-sm border border-border' : 'text-text-muted hover:text-text'}`}>
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            {!loading && !isError && (
+              <div className="flex items-center gap-3 text-[11.5px] text-text-muted">
+                <span>Total: <span className="text-text font-semibold">{fmtNum(periodClicks)}</span></span>
+                <span>Únicos: <span className="text-text font-semibold">{fmtNum(periodUnique)}</span></span>
+                <span>Taxa: <span className="text-text font-semibold">{fmtPct(rate)}</span></span>
+              </div>
+            )}
           </div>
         </div>
-        {byDay.length === 0 ? (
-          <div className="py-8 text-center text-[12.5px] text-text-muted">Nenhum clique nos últimos 14 dias.</div>
+
+        {loading ? (
+          <div className="flex items-center justify-center py-10 gap-2 text-text-muted text-[12.5px]">
+            <Loader2 size={16} className="animate-spin" /> Carregando analytics…
+          </div>
+        ) : isError ? (
+          <div className="flex items-center justify-center py-10 gap-2 text-danger text-[12.5px]">
+            <AlertCircle size={15} />
+            Erro ao carregar analytics.
+            <button onClick={() => onLoadAnalytics(link.id, period)} className="underline hover:no-underline">Tentar novamente</button>
+          </div>
+        ) : byDay.length === 0 ? (
+          <div className="py-8 text-center text-[12.5px] text-text-muted">Nenhum clique nos últimos {period} dias.</div>
         ) : mounted ? (
           <ResponsiveContainer width="100%" height={140}>
             <BarChart data={byDay} margin={{ top: 4, right: 4, bottom: 0, left: -10 }}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="day" tickLine={false} axisLine={false} fontSize={10} interval={1} tick={{ fill: 'var(--text-muted)' }} />
+              <XAxis dataKey="day" tickLine={false} axisLine={false} fontSize={10} interval={Math.floor(byDay.length / 7)} tick={{ fill: 'var(--text-muted)' }} />
               <YAxis tickLine={false} axisLine={false} fontSize={10} width={32} tick={{ fill: 'var(--text-muted)' }} />
               <Tooltip cursor={{ fill: 'var(--surface-2)' }}
                 contentStyle={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 11, boxShadow: 'var(--shadow-md)' }}
@@ -439,16 +523,22 @@ const statusMap: Record<string, { label: string; tone: string }> = {
   archived: { label: 'Arquivado', tone: 'muted'   },
 }
 
-function LinkRow({ link, expanded, analytics, analyticsLoading, onToggle, onStatusChange, onEdit, onDelete }: {
+function LinkRow({ link, expanded, analyticsMap, onToggle, onLoadAnalytics, onStatusChange, onEdit, onDelete }: {
   link: LinkItem; expanded: boolean
-  analytics: LinkAnalytics | undefined; analyticsLoading: boolean
+  analyticsMap: Record<string, AnalyticsState>
   onToggle: () => void
+  onLoadAnalytics: (id: string, period: number) => void
   onStatusChange: (id: string, s: LinkItem['status']) => void
   onEdit: (link: LinkItem) => void
   onDelete: (id: string) => void
 }) {
   const st = statusMap[link.status]
-  const sparkData: DailyClick[] = analytics?.by_day ?? []
+  // Sparkline usa sempre 14d (período padrão) para consistência na tabela
+  const sparkState = analyticsMap[`${link.id}:14`]
+  const sparkData: DailyClick[] = sparkState && sparkState !== 'loading' && sparkState !== 'error'
+    ? ((sparkState as LinkAnalytics).by_day ?? [])
+    : []
+  const isLoading = sparkState === 'loading'
 
   return (
     <>
@@ -460,9 +550,11 @@ function LinkRow({ link, expanded, analytics, analyticsLoading, onToggle, onStat
         </td>
         <td className="px-2 py-3 text-right whitespace-nowrap">
           <div className="flex items-center justify-end gap-3">
-            {sparkData.length > 0
-              ? <MiniSparkline data={sparkData} width={80} height={24} />
-              : <div className="w-20 h-6 bg-surface-2 rounded" />
+            {isLoading
+              ? <div className="w-20 h-6 bg-surface-2 rounded animate-pulse" />
+              : sparkData.length > 0
+                ? <MiniSparkline data={sparkData} width={80} height={24} />
+                : <div className="w-20 h-6 bg-surface-2 rounded" />
             }
             <div>
               <div className="text-[13px] font-semibold text-text leading-none">{fmtNum(link.clicks)}</div>
@@ -482,9 +574,7 @@ function LinkRow({ link, expanded, analytics, analyticsLoading, onToggle, onStat
           </div>
         </td>
         <td className="pl-2 pr-4 py-3 text-right">
-          {analyticsLoading && expanded
-            ? <Loader2 size={14} className="text-text-muted animate-spin" />
-            : expanded ? <ChevronUp size={14} className="text-text-muted" /> : <ChevronDown size={14} className="text-text-muted" />}
+          {expanded ? <ChevronUp size={14} className="text-text-muted" /> : <ChevronDown size={14} className="text-text-muted" />}
         </td>
       </tr>
       {expanded && (
@@ -492,8 +582,8 @@ function LinkRow({ link, expanded, analytics, analyticsLoading, onToggle, onStat
           <td colSpan={6} className="px-4 py-5">
             <LinkStats
               link={link}
-              analytics={analytics}
-              loading={analyticsLoading}
+              analyticsMap={analyticsMap}
+              onLoadAnalytics={onLoadAnalytics}
               onStatusChange={onStatusChange}
               onEdit={onEdit}
               onDelete={onDelete}
@@ -544,11 +634,11 @@ function CloakingSection({ enabled, onChange, decoyUrl, setDecoyUrl, acknowledge
           </div>
 
           <div>
-            <label className="block text-[11.5px] font-medium text-text mb-1.5">URL alternativo (decoy)</label>
+            <label className="block text-[11.5px] font-medium text-text mb-1.5">URL alternativo (decoy) <span className="text-danger">*</span></label>
             <input type="text" value={decoyUrl} onChange={e => setDecoyUrl(e.target.value)}
               placeholder="https://blog.minhaempresa.com.br/conteudo-aprovado"
               className="w-full h-9 px-3 bg-surface border border-border rounded-md text-[12px] font-mono text-text focus:outline-none focus:ring-2 focus:ring-danger/25 focus:border-danger/50" />
-            <p className="text-[10.5px] text-text-muted mt-1">Página mostrada para revisores, bots e crawlers do Meta/TikTok.</p>
+            <p className="text-[10.5px] text-text-muted mt-1">Página mostrada para revisores, bots e crawlers do Meta/TikTok. Obrigatório.</p>
           </div>
 
           <label className="flex items-start gap-2.5 mt-3 cursor-pointer">
@@ -567,6 +657,7 @@ function CloakingSection({ enabled, onChange, decoyUrl, setDecoyUrl, acknowledge
 
 function LinkFormFields({
   destination, setDestination,
+  destinationLabel, setDestinationLabel,
   slug, setSlug,
   showAdvanced, setShowAdvanced,
   redirectType, setRedirectType,
@@ -581,6 +672,7 @@ function LinkFormFields({
   editMode,
 }: {
   destination: string; setDestination: (v: string) => void
+  destinationLabel: string; setDestinationLabel: (v: string) => void
   slug: string; setSlug: (v: string) => void
   showAdvanced: boolean; setShowAdvanced: (v: boolean) => void
   redirectType: number; setRedirectType: (v: number) => void
@@ -596,6 +688,7 @@ function LinkFormFields({
 }) {
   return (
     <div className="space-y-4">
+      {/* URL de destino */}
       <div>
         <label className="block text-[12.5px] font-medium text-text mb-1.5">URL de destino</label>
         <input type="url" value={destination} onChange={e => setDestination(e.target.value)} autoFocus={!editMode}
@@ -603,6 +696,18 @@ function LinkFormFields({
           className="w-full h-10 px-3 bg-surface border border-border rounded-lg text-[13px] text-text placeholder:text-text-subtle font-mono focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50" />
       </div>
 
+      {/* Rótulo */}
+      <div>
+        <label className="block text-[12.5px] font-medium text-text mb-1.5">
+          Rótulo <span className="text-text-muted font-normal">(opcional)</span>
+        </label>
+        <input type="text" value={destinationLabel} onChange={e => setDestinationLabel(e.target.value)}
+          placeholder="Ex: Checkout — Black Friday"
+          className="w-full h-9 px-3 bg-surface border border-border rounded-lg text-[13px] text-text placeholder:text-text-subtle focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50" />
+        <p className="text-[10.5px] text-text-muted mt-1">Nome amigável exibido na tabela em vez da URL completa.</p>
+      </div>
+
+      {/* Slug */}
       <div>
         <div className="flex items-center justify-between mb-1.5">
           <label className="block text-[12.5px] font-medium text-text">Slug</label>
@@ -621,6 +726,7 @@ function LinkFormFields({
         </div>
       </div>
 
+      {/* Opções avançadas */}
       <button onClick={() => setShowAdvanced(!showAdvanced)} type="button"
         className="w-full inline-flex items-center justify-between text-[12.5px] font-medium text-text-muted hover:text-text rounded-md">
         <span className="inline-flex items-center gap-1.5">
@@ -632,6 +738,7 @@ function LinkFormFields({
 
       {showAdvanced && (
         <div className="space-y-3.5 pt-1">
+          {/* Tipo de redirect */}
           <div>
             <label className="block text-[12.5px] font-medium text-text mb-1.5">Tipo de redirecionamento</label>
             <div className="grid grid-cols-2 gap-2">
@@ -656,6 +763,7 @@ function LinkFormFields({
             </div>
           </div>
 
+          {/* UTM */}
           <div className="rounded-lg border border-border bg-surface">
             <div className="p-3 flex items-start justify-between gap-3 border-b border-border">
               <div>
@@ -679,6 +787,7 @@ function LinkFormFields({
             )}
           </div>
 
+          {/* Cloaking */}
           <CloakingSection
             enabled={cloaking} onChange={setCloaking}
             decoyUrl={decoyUrl} setDecoyUrl={setDecoyUrl}
@@ -697,21 +806,22 @@ function CreateLinkModal({ open, onClose, onCreate, existing, slugPrefix }: {
   onCreate: (opts: CreateOpts) => Promise<void>
   existing: LinkItem[]; slugPrefix: string
 }) {
-  const [destination, setDestination] = useState('')
-  const [slug, setSlug]               = useState('')
-  const [showAdvanced, setShowAdvanced] = useState(false)
-  const [redirectType, setRedirectType] = useState(302)
-  const [utmEnabled, setUtmEnabled]   = useState(false)
-  const [utm, setUtm]                 = useState<UtmParams>({ source: '', medium: '', campaign: '' })
-  const [cloaking, setCloaking]       = useState(false)
-  const [decoyUrl, setDecoyUrl]       = useState('')
-  const [acknowledged, setAcknowledged] = useState(false)
-  const [loading, setLoading]         = useState(false)
-  const [error, setError]             = useState('')
+  const [destination, setDestination]         = useState('')
+  const [destinationLabel, setDestinationLabel] = useState('')
+  const [slug, setSlug]                       = useState('')
+  const [showAdvanced, setShowAdvanced]       = useState(false)
+  const [redirectType, setRedirectType]       = useState(302)
+  const [utmEnabled, setUtmEnabled]           = useState(false)
+  const [utm, setUtm]                         = useState<UtmParams>({ source: '', medium: '', campaign: '' })
+  const [cloaking, setCloaking]               = useState(false)
+  const [decoyUrl, setDecoyUrl]               = useState('')
+  const [acknowledged, setAcknowledged]       = useState(false)
+  const [loading, setLoading]                 = useState(false)
+  const [error, setError]                     = useState('')
 
   useEffect(() => {
     if (open) {
-      setDestination(''); setSlug(''); setShowAdvanced(false); setRedirectType(302)
+      setDestination(''); setDestinationLabel(''); setSlug(''); setShowAdvanced(false); setRedirectType(302)
       setUtmEnabled(false); setUtm({ source: '', medium: '', campaign: '' })
       setCloaking(false); setDecoyUrl(''); setAcknowledged(false); setLoading(false); setError('')
     }
@@ -741,7 +851,10 @@ function CreateLinkModal({ open, onClose, onCreate, existing, slugPrefix }: {
       return
     }
     setError(''); setLoading(true)
-    await onCreate({ destination, slug: slugClean, redirectType, utm: utmEnabled ? utm : null, cloaking, decoyUrl })
+    await onCreate({
+      destination, destinationLabel: destinationLabel.trim() || destination,
+      slug: slugClean, redirectType, utm: utmEnabled ? utm : null, cloaking, decoyUrl,
+    })
     setLoading(false); onClose()
   }
 
@@ -760,6 +873,7 @@ function CreateLinkModal({ open, onClose, onCreate, existing, slugPrefix }: {
       )}
       <LinkFormFields
         destination={destination} setDestination={setDestination}
+        destinationLabel={destinationLabel} setDestinationLabel={setDestinationLabel}
         slug={slug} setSlug={setSlug}
         showAdvanced={showAdvanced} setShowAdvanced={setShowAdvanced}
         redirectType={redirectType} setRedirectType={setRedirectType}
@@ -784,22 +898,26 @@ function EditLinkModal({ open, onClose, link, onSave, existing, slugPrefix }: {
   onSave: (id: string, patch: Partial<RawRedirect>) => Promise<void>
   existing: LinkItem[]; slugPrefix: string
 }) {
-  const [destination, setDestination] = useState('')
-  const [slug, setSlug]               = useState('')
-  const [showAdvanced, setShowAdvanced] = useState(false)
-  const [redirectType, setRedirectType] = useState(302)
-  const [utmEnabled, setUtmEnabled]   = useState(false)
-  const [utm, setUtm]                 = useState<UtmParams>({ source: '', medium: '', campaign: '' })
-  const [cloaking, setCloaking]       = useState(false)
-  const [decoyUrl, setDecoyUrl]       = useState('')
-  const [acknowledged, setAcknowledged] = useState(false)
-  const [loading, setLoading]         = useState(false)
-  const [error, setError]             = useState('')
+  const [destination, setDestination]         = useState('')
+  const [destinationLabel, setDestinationLabel] = useState('')
+  const [slug, setSlug]                       = useState('')
+  const [showAdvanced, setShowAdvanced]       = useState(false)
+  const [redirectType, setRedirectType]       = useState(302)
+  const [utmEnabled, setUtmEnabled]           = useState(false)
+  const [utm, setUtm]                         = useState<UtmParams>({ source: '', medium: '', campaign: '' })
+  const [cloaking, setCloaking]               = useState(false)
+  const [decoyUrl, setDecoyUrl]               = useState('')
+  const [acknowledged, setAcknowledged]       = useState(false)
+  const [loading, setLoading]                 = useState(false)
+  const [error, setError]                     = useState('')
 
   useEffect(() => {
     if (open && link) {
-      setDestination(link.destination); setSlug(link.slug)
-      setShowAdvanced(!!(link.utm || link.cloaking)); setRedirectType(Number(link.redirectType) || 302)
+      setDestination(link.destination)
+      setDestinationLabel(link.destinationLabel !== link.destination ? link.destinationLabel : '')
+      setSlug(link.slug)
+      setShowAdvanced(!!(link.utm || link.cloaking))
+      setRedirectType(Number(link.redirectType) || 302)
       setUtmEnabled(!!link.utm); setUtm(link.utm ?? { source: '', medium: '', campaign: '' })
       setCloaking(link.cloaking); setDecoyUrl(link.decoyUrl); setAcknowledged(link.cloaking)
       setLoading(false); setError('')
@@ -827,20 +945,25 @@ function EditLinkModal({ open, onClose, link, onSave, existing, slugPrefix }: {
     if (!canSubmit) {
       if (!destValid) { setError('Destino inválido. Use uma URL completa com https://.'); return }
       if (slugTaken)  { setError('Já existe um link com esse slug. Escolha outro.'); return }
+      if (cloaking && !decoyUrl.trim()) { setError('Informe o URL alternativo (decoy) para cloaking.'); return }
+      if (cloaking && !acknowledged)   { setError('Marque a confirmação de ciência sobre cloaking.'); return }
       return
     }
     setError(''); setLoading(true)
     await onSave(safeLink.id, {
-      destination, destination_label: destination,
-      slug: slugClean, redirect_type: String(redirectType),
-      cloaking, decoy_url: decoyUrl || null,
+      destination,
+      destination_label: destinationLabel.trim() || destination,
+      slug: slugClean,
+      redirect_type: String(redirectType),
+      cloaking,
+      decoy_url: decoyUrl || null,
       utm: utmEnabled ? utm : null,
     })
     setLoading(false); onClose()
   }
 
   return (
-    <Modal open={open} onClose={onClose} title="Editar redirecionador" subtitle={`umbra.bot/r/${link.slug}`} size="lg"
+    <Modal open={open} onClose={onClose} title="Editar redirecionador" subtitle={`${slugPrefix}${link.slug}`} size="lg"
       footer={
         <><Btn variant="secondary" onClick={onClose}>Cancelar</Btn>
         <Btn variant="primary" disabled={loading || !canSubmit} onClick={submit}>
@@ -854,6 +977,7 @@ function EditLinkModal({ open, onClose, link, onSave, existing, slugPrefix }: {
       )}
       <LinkFormFields
         destination={destination} setDestination={setDestination}
+        destinationLabel={destinationLabel} setDestinationLabel={setDestinationLabel}
         slug={slug} setSlug={setSlug}
         showAdvanced={showAdvanced} setShowAdvanced={setShowAdvanced}
         redirectType={redirectType} setRedirectType={setRedirectType}
@@ -894,22 +1018,21 @@ function DeleteConfirmModal({ open, onClose, onConfirm, deleting, slug }: {
 
 const DEFAULT_FILTERS = { search: '', status: 'Todos os status' }
 
-export function RedirectsClient({ initialRedirects, userId, appUrl, currClicks, clicksDelta }: RedirectsClientProps) {
+export function RedirectsClient({ initialRedirects, userId, appUrl, currClicks, currUnique, clicksDelta }: RedirectsClientProps) {
   const { track } = useAnalytics()
 
-  const [links, setLinks]             = useState<LinkItem[]>(() => initialRedirects.map(r => mapRaw(r, appUrl)))
-  const [filters, setFilters]         = useState(DEFAULT_FILTERS)
-  const [expanded, setExpanded]       = useState<string | null>(null)
-  const [page, setPage]               = useState(1)
-  const [createOpen, setCreateOpen]   = useState(false)
-  const [editLink, setEditLink]       = useState<LinkItem | null>(null)
-  const [deleteId, setDeleteId]       = useState<string | null>(null)
-  const [deleting, setDeleting]       = useState(false)
-  const [toast, setToast]             = useState<{ msg: string; type: 'success' | 'error' } | null>(null)
+  const [links, setLinks]           = useState<LinkItem[]>(() => initialRedirects.map(r => mapRaw(r, appUrl)))
+  const [filters, setFilters]       = useState(DEFAULT_FILTERS)
+  const [expanded, setExpanded]     = useState<string | null>(null)
+  const [page, setPage]             = useState(1)
+  const [createOpen, setCreateOpen] = useState(false)
+  const [editLink, setEditLink]     = useState<LinkItem | null>(null)
+  const [deleteId, setDeleteId]     = useState<string | null>(null)
+  const [deleting, setDeleting]     = useState(false)
+  const [toast, setToast]           = useState<{ msg: string; type: 'success' | 'error' } | null>(null)
 
-  // Analytics lazy-loaded por link
-  const [analytics, setAnalytics]     = useState<Record<string, LinkAnalytics>>({})
-  const [analyticsLoading, setAnalyticsLoading] = useState<string | null>(null)
+  // Analytics lazy: chave "${id}:${period}", valor: AnalyticsState
+  const [analyticsMap, setAnalyticsMap] = useState<Record<string, AnalyticsState>>({})
 
   const perPage    = 8
   const slugPrefix = `${shortUrl(appUrl)}/r/`
@@ -946,33 +1069,40 @@ export function RedirectsClient({ initialRedirects, userId, appUrl, currClicks, 
   const pageItems  = filtered.slice(start, start + perPage)
 
   const totals = useMemo(() => ({
-    active:       links.filter(l => l.status === 'active').length,
-    total:        links.length,
-    totalClicks:  links.reduce((s, l) => s + l.clicks, 0),
-    uniqueClicks: links.reduce((s, l) => s + l.uniqueClicks, 0),
-    cloaking:     links.filter(l => l.cloaking).length,
+    active:   links.filter(l => l.status === 'active').length,
+    total:    links.length,
+    cloaking: links.filter(l => l.cloaking).length,
   }), [links])
 
-  const uniqueRate = totals.totalClicks > 0 ? (totals.uniqueClicks / totals.totalClicks) * 100 : 0
-  const topLink = [...links].sort((a, b) => b.clicks - a.clicks)[0]
+  const topLink = useMemo(() => [...links].sort((a, b) => b.clicks - a.clicks)[0], [links])
 
-  // ── Analytics lazy load ────────────────────────────────────────────────────
+  // ── Analytics lazy load com cache por período ──────────────────────────────
 
-  const loadAnalytics = useCallback(async (id: string) => {
-    if (analytics[id] || analyticsLoading === id) return
-    setAnalyticsLoading(id)
+  const loadAnalytics = useCallback(async (id: string, period: number) => {
+    const key = `${id}:${period}`
+    const current = analyticsMap[key]
+    // Não recarrega se já tiver dado ou estiver carregando
+    if (current && current !== 'error') return
+
+    setAnalyticsMap(prev => ({ ...prev, [key]: 'loading' }))
     try {
       const supabase = createClient()
-      const { data } = await supabase.rpc('redirect_analytics', { p_redirect_id: id, p_days: 14 })
-      if (data) setAnalytics(prev => ({ ...prev, [id]: data as LinkAnalytics }))
-    } catch (_) {}
-    setAnalyticsLoading(null)
-  }, [analytics, analyticsLoading])
+      const { data, error } = await supabase.rpc('redirect_analytics', { p_redirect_id: id, p_days: period })
+      if (error || !data) {
+        setAnalyticsMap(prev => ({ ...prev, [key]: 'error' }))
+      } else {
+        setAnalyticsMap(prev => ({ ...prev, [key]: data as LinkAnalytics }))
+      }
+    } catch {
+      setAnalyticsMap(prev => ({ ...prev, [key]: 'error' }))
+    }
+  }, [analyticsMap])
 
   function handleToggle(id: string) {
     const opening = expanded !== id
     setExpanded(opening ? id : null)
-    if (opening) loadAnalytics(id)
+    // Pré-carrega o período padrão ao expandir pela primeira vez
+    if (opening) loadAnalytics(id, 14)
   }
 
   // ── CRUD ──────────────────────────────────────────────────────────────────
@@ -985,7 +1115,7 @@ export function RedirectsClient({ initialRedirects, userId, appUrl, currClicks, 
         user_id:           userId,
         slug:              opts.slug,
         destination:       opts.destination,
-        destination_label: opts.destination,
+        destination_label: opts.destinationLabel,
         redirect_type:     String(opts.redirectType),
         cloaking:          opts.cloaking,
         decoy_url:         opts.decoyUrl || null,
@@ -1006,11 +1136,17 @@ export function RedirectsClient({ initialRedirects, userId, appUrl, currClicks, 
   async function saveLink(id: string, patch: Partial<RawRedirect>) {
     const prev = links.find(l => l.id === id)
     if (!prev) return
-    // Optimistic update
-    setLinks(arr => arr.map(l => l.id === id ? { ...l, ...mapRaw({ ...l, ...patch } as unknown as RawRedirect, appUrl) } : l))
-    // Invalidate cached analytics se slug mudou (URL nova)
+
+    // Optimistic update limpo via applyPatch (sem cast frágil)
+    setLinks(arr => arr.map(l => l.id === id ? applyPatch(l, patch, appUrl) : l))
+
+    // Invalida cache de analytics se o slug mudou
     if (patch.slug && patch.slug !== prev.slug) {
-      setAnalytics(a => { const n = { ...a }; delete n[id]; return n })
+      setAnalyticsMap(m => {
+        const next = { ...m }
+        Object.keys(next).filter(k => k.startsWith(`${id}:`)).forEach(k => delete next[k])
+        return next
+      })
     }
 
     const supabase = createClient()
@@ -1045,6 +1181,8 @@ export function RedirectsClient({ initialRedirects, userId, appUrl, currClicks, 
       setLinks(arr => arr.map(l => l.id === id ? prev : l))
       showToast('Erro ao atualizar status.', 'error')
     } else {
+      const label = status === 'active' ? 'ativado' : status === 'paused' ? 'pausado' : 'arquivado'
+      showToast(`Link ${label}.`)
       track('redirect_status_changed', { status })
     }
   }
@@ -1066,7 +1204,11 @@ export function RedirectsClient({ initialRedirects, userId, appUrl, currClicks, 
     }
     setLinks(arr => arr.filter(l => l.id !== deleteId))
     if (expanded === deleteId) setExpanded(null)
-    setAnalytics(a => { const n = { ...a }; delete n[deleteId]; return n })
+    setAnalyticsMap(m => {
+      const next = { ...m }
+      Object.keys(next).filter(k => k.startsWith(`${deleteId}:`)).forEach(k => delete next[k])
+      return next
+    })
     setDeleteId(null)
     showToast('Link apagado.')
     track('redirect_deleted', {})
@@ -1076,11 +1218,11 @@ export function RedirectsClient({ initialRedirects, userId, appUrl, currClicks, 
 
   function handleExport() {
     const rows = [
-      ['Link curto', 'Destino', 'Rótulo', 'Cliques', 'Cliques únicos', 'Status', 'Tipo', 'Criado em'],
+      ['Link curto', 'Rótulo', 'Destino', 'Cliques', 'Cliques únicos', 'Status', 'Tipo', 'Criado em'],
       ...filtered.map(l => [
         `${appUrl}/r/${l.slug}`,
-        l.destination,
         l.destinationLabel,
+        l.destination,
         l.clicks,
         l.uniqueClicks,
         l.status,
@@ -1090,15 +1232,15 @@ export function RedirectsClient({ initialRedirects, userId, appUrl, currClicks, 
     ]
     const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n')
     const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
+    const url  = URL.createObjectURL(blob)
+    const a    = document.createElement('a')
     a.href = url; a.download = `redirecionadores_${new Date().toISOString().slice(0, 10)}.csv`
     document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url)
     track('csv_exported', { section: 'redirects', rows: filtered.length })
   }
 
-  const hasFilters = filters.search || filters.status !== 'Todos os status'
-  const deleteSlug = links.find(l => l.id === deleteId)?.slug ?? ''
+  const hasFilters  = !!(filters.search || filters.status !== 'Todos os status')
+  const deleteSlug  = links.find(l => l.id === deleteId)?.slug ?? ''
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -1149,10 +1291,31 @@ export function RedirectsClient({ initialRedirects, userId, appUrl, currClicks, 
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
-        <SummaryCard label="Links ativos"       value={`${totals.active} / ${totals.total}`} sub="conectados"            icon={Link2}            tone="primary" />
-        <SummaryCard label="Cliques (30 dias)"  value={fmtNum(currClicks)}                   delta={clicksDelta}         icon={MousePointerClick} />
-        <SummaryCard label="Cliques únicos"     value={fmtNum(totals.uniqueClicks)}          sub={fmtPct(uniqueRate)}    icon={Users} />
-        <SummaryCard label="Top link"           value={topLink ? fmtNum(topLink.clicks) : '—'} sub={topLink?.slug || ''} icon={TrendingUp} />
+        <SummaryCard
+          label="Links ativos"
+          value={`${totals.active} / ${totals.total}`}
+          sub="conectados"
+          icon={Link2} tone="primary"
+        />
+        <SummaryCard
+          label="Cliques (30 dias)"
+          value={fmtNum(currClicks)}
+          delta={clicksDelta}
+          sub="vs. 30-60d anteriores"
+          icon={MousePointerClick}
+        />
+        <SummaryCard
+          label="Únicos (30 dias)"
+          value={fmtNum(currUnique)}
+          sub="IPs distintos, excl. bots"
+          icon={Users}
+        />
+        <SummaryCard
+          label="Top link"
+          value={topLink ? fmtNum(topLink.clicks) : '—'}
+          sub={topLink?.slug || ''}
+          icon={TrendingUp}
+        />
       </div>
 
       {/* Barra de filtros */}
@@ -1160,7 +1323,7 @@ export function RedirectsClient({ initialRedirects, userId, appUrl, currClicks, 
         <div className="relative flex-1 min-w-[200px] max-w-sm">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
           <input type="text" value={filters.search} onChange={e => setFilters(f => ({ ...f, search: e.target.value }))}
-            placeholder="Buscar por slug ou destino…"
+            placeholder="Buscar por slug, rótulo ou destino…"
             className="w-full h-9 pl-9 pr-3 bg-surface border border-border rounded-lg text-[12.5px] placeholder:text-text-subtle text-text focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50" />
         </div>
         <Dropdown label="Status" value={filters.status}
@@ -1214,9 +1377,9 @@ export function RedirectsClient({ initialRedirects, userId, appUrl, currClicks, 
                   <LinkRow
                     key={l.id} link={l}
                     expanded={expanded === l.id}
-                    analytics={analytics[l.id]}
-                    analyticsLoading={analyticsLoading === l.id}
+                    analyticsMap={analyticsMap}
                     onToggle={() => handleToggle(l.id)}
+                    onLoadAnalytics={loadAnalytics}
                     onStatusChange={changeStatus}
                     onEdit={link => setEditLink(link)}
                     onDelete={id => setDeleteId(id)}
