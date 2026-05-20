@@ -1,12 +1,15 @@
 'use client'
 
-import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react'
+import React, {
+  useState, useMemo, useEffect, useRef, useCallback, useLayoutEffect,
+} from 'react'
 import { DashboardLayout } from '@/components/dashboard/Layout'
 import {
   Send, Key, QrCode, PlayCircle, Upload, Download, Stethoscope, Eraser,
   ArrowUpRight, Bot, CheckCircle2, XCircle, Check, Info, AlertCircle, X,
   GitBranch, Layers, CreditCard, Link, Tag, Webhook, FileText,
-  AlertTriangle, Inbox, Globe, Database, Play, HelpCircle,
+  AlertTriangle, Inbox, Globe, Database, Play, HelpCircle, Copy, Link2,
+  Shield, RotateCcw, Clock, RefreshCw, ChevronRight,
 } from 'lucide-react'
 import { validateBotTokenAction } from '@/app/actions/bots'
 import {
@@ -14,12 +17,12 @@ import {
   checkBotsAction, checkWebhooksAction, checkGatewaysAction,
   checkQueueAction, checkDnsAction, checkStorageAction,
   getExportCountsAction, exportConfigAction, importConfigAction,
-  clearCacheAction,
+  clearCacheAction, getLgpdDataAction,
 } from '@/app/actions/tools'
 import { useAnalytics } from '@/hooks/use-analytics'
 import type { RawBot, RawFlow } from './page'
 
-/* ── Types ───────────────────────────────────────────────────────── */
+/* ── Types ───────────────────────────────────────────────────────────────── */
 
 interface FlowNode {
   id:       string
@@ -27,51 +30,66 @@ interface FlowNode {
   position: { x: number; y: number }
   data:     Record<string, unknown>
 }
-
 interface FlowEdge {
-  id:           string
-  source:       string
-  target:       string
+  id:            string
+  source:        string
+  target:        string
   sourceHandle?: string
 }
 
-type FlowStep =
-  | { kind: 'message';  text: string }
-  | { kind: 'incoming'; text: string }
-  | { kind: 'buttons';  text: string; options: string[] }
-  | { kind: 'delay';    amount: number; unit: string }
-  | { kind: 'offer';    product: string; price: number; cta: string }
+// Interactive flow simulation
+type SimEntry =
+  | { k: 'bot';     text: string }
+  | { k: 'user';    text: string }
+  | { k: 'sys';     text: string }
+  | { k: 'offer';   product: string; price: number; cta: string }
+  | { k: 'buttons'; text: string; opts: string[]; chosen?: number }
+
+type WaitData =
+  | { k: 'question'; varName: string; next: string | null }
+  | { k: 'buttons';  choices: { label: string; target: string | null }[] }
+
+type SimPhase = 'idle' | 'running' | 'question' | 'buttons' | 'done'
 
 type DiagStatus = 'idle' | 'running' | 'pass' | 'fail'
-
-interface DiagResult { status: DiagStatus; detail: string }
+interface DiagResult { status: DiagStatus; detail: string; timeMs?: number }
 
 interface ExportCounts {
   bots: number; flows: number; sequences: number; gateways: number
   links: number; contacts: number; tags: number; webhooks: number
 }
-
 interface ParsedBackup {
   bots: number; flows: number; sequences: number; gateways: number
-  links: number; contacts: number; tags: number; webhooks: number; size: string
+  links: number; contacts: number; tags: number; webhooks: number
+  size: string; exportedAt?: string; version?: string
 }
+interface LgpdData {
+  total: number; with_name: number; with_email: number; with_phone: number
+  with_username: number; with_city: number; unique_tags: number; total_tag_assignments: number
+}
+interface TestHistory {
+  chatId: string; text: string; format: 'none' | 'HTML' | 'Markdown'; ts: number
+}
+interface DeepLinkHistory { username: string; param: string; ts: number }
 
-/* ── Tool list ───────────────────────────────────────────────────── */
+/* ── Tool list ───────────────────────────────────────────────────────────── */
 
 const TOOL_LIST = [
-  { id: 'test_message',   title: 'Testar envio de mensagem',  description: 'Envie uma mensagem de teste pra um chat ID específico antes de disparar pra base inteira.',   icon: 'send',        color: 'var(--primary)',       category: 'Bots & mensagens' },
-  { id: 'validate_token', title: 'Validar token de bot',       description: 'Verifique se um token do BotFather é válido e veja as informações públicas do bot.',            icon: 'key',         color: 'var(--success)',       category: 'Bots & mensagens' },
-  { id: 'qr_code',        title: 'Gerar QR code do bot',       description: 'Crie um QR code que abre o Telegram direto na conversa do bot — útil pra material impresso.',   icon: 'qr-code',     color: 'var(--warning)',       category: 'Bots & mensagens' },
-  { id: 'preview_flow',   title: 'Prévia de fluxo',            description: 'Simule a execução de um fluxo passo a passo sem precisar disparar um teste real.',             icon: 'play-circle', color: 'oklch(0.62 0.16 200)', category: 'Fluxos' },
-  { id: 'import_config',  title: 'Importar configurações',     description: 'Restaure bots, fluxos, tags e gateways a partir de um arquivo JSON exportado.',                icon: 'upload',      color: 'oklch(0.58 0.05 280)', category: 'Configuração' },
-  { id: 'export_config',  title: 'Exportar configurações',     description: 'Baixe um JSON com a configuração completa do workspace — backup ou migração entre contas.',     icon: 'download',    color: 'oklch(0.58 0.05 280)', category: 'Configuração' },
-  { id: 'diagnostics',    title: 'Diagnóstico do sistema',     description: 'Roda checagens em todos os componentes — bots, gateways, webhooks, DNS, fila de envios.',      icon: 'stethoscope', color: 'var(--danger)',        category: 'Configuração' },
-  { id: 'clear_cache',    title: 'Limpar cache do workspace',  description: 'Limpa caches internos. Útil quando informações estão desatualizadas após mudanças.',            icon: 'eraser',      color: 'oklch(0.58 0.05 280)', category: 'Configuração' },
+  { id: 'test_message',   title: 'Testar envio de mensagem',  description: 'Envie uma mensagem de teste para um chat ID específico antes de disparar para a base inteira.',  icon: 'send',        color: 'var(--primary)',       category: 'Bots & mensagens' },
+  { id: 'validate_token', title: 'Validar token de bot',       description: 'Verifique se um token do BotFather é válido e veja as informações públicas do bot.',             icon: 'key',         color: 'var(--success)',       category: 'Bots & mensagens' },
+  { id: 'qr_code',        title: 'Gerar QR code do bot',       description: 'Crie um QR code que abre o Telegram direto na conversa do bot — útil para material impresso.',    icon: 'qr-code',     color: 'var(--warning)',       category: 'Bots & mensagens' },
+  { id: 'deep_link',      title: 'Gerador de deep link',       description: 'Crie links t.me/bot?start=PARAM com parâmetro rastreável por campanha ou fonte de tráfego.',      icon: 'link2',       color: 'oklch(0.62 0.16 200)', category: 'Bots & mensagens' },
+  { id: 'preview_flow',   title: 'Prévia interativa de fluxo', description: 'Simule a execução de um fluxo passo a passo, clicando em botões e respondendo perguntas.',        icon: 'play-circle', color: 'oklch(0.60 0.18 300)', category: 'Fluxos' },
+  { id: 'import_config',  title: 'Importar configurações',     description: 'Restaure bots, fluxos, tags e gateways a partir de um arquivo JSON exportado.',                   icon: 'upload',      color: 'oklch(0.58 0.05 280)', category: 'Configuração' },
+  { id: 'export_config',  title: 'Exportar configurações',     description: 'Baixe um JSON com a configuração completa do workspace — backup ou migração entre contas.',       icon: 'download',    color: 'oklch(0.58 0.05 280)', category: 'Configuração' },
+  { id: 'diagnostics',    title: 'Diagnóstico do sistema',     description: 'Roda checagens automáticas em todos os componentes — bots, gateways, webhooks, DNS, fila.',       icon: 'stethoscope', color: 'var(--danger)',        category: 'Configuração' },
+  { id: 'clear_cache',    title: 'Limpar cache do workspace',  description: 'Limpa caches internos. Útil quando informações estão desatualizadas após mudanças.',              icon: 'eraser',      color: 'oklch(0.58 0.05 280)', category: 'Configuração' },
+  { id: 'lgpd_check',     title: 'Verificador de LGPD',        description: 'Veja quais dados pessoais estão armazenados nos seus contatos e o status de conformidade.',        icon: 'shield',      color: 'oklch(0.55 0.12 150)', category: 'Avançado' },
 ] as const
 
 type ToolId = typeof TOOL_LIST[number]['id']
 
-/* ── Icon system ─────────────────────────────────────────────────── */
+/* ── Icon map ────────────────────────────────────────────────────────────── */
 
 const ICON_MAP: Record<string, React.ElementType> = {
   'send': Send, 'key': Key, 'qr-code': QrCode, 'play-circle': PlayCircle,
@@ -79,9 +97,10 @@ const ICON_MAP: Record<string, React.ElementType> = {
   'arrow-up-right': ArrowUpRight, 'bot': Bot, 'check-circle-2': CheckCircle2,
   'x-circle': XCircle, 'check': Check, 'info': Info, 'alert-circle': AlertCircle,
   'x': X, 'git-branch': GitBranch, 'layers': Layers, 'credit-card': CreditCard,
-  'link': Link, 'tag': Tag, 'webhook': Webhook, 'file-text': FileText,
-  'alert-triangle': AlertTriangle, 'inbox': Inbox, 'globe': Globe,
-  'database': Database, 'play': Play,
+  'link': Link, 'link2': Link2, 'tag': Tag, 'webhook': Webhook, 'file-text': FileText,
+  'alert-triangle': AlertTriangle, 'inbox': Inbox, 'globe': Globe, 'database': Database,
+  'play': Play, 'copy': Copy, 'shield': Shield, 'rotate-ccw': RotateCcw,
+  'clock': Clock, 'refresh-cw': RefreshCw, 'chevron-right': ChevronRight,
 }
 
 function Icon({ name, size = 16, className }: { name: string; size?: number; className?: string }) {
@@ -89,23 +108,96 @@ function Icon({ name, size = 16, className }: { name: string; size?: number; cla
   return <I size={size} className={className} />
 }
 
-/* ── Formatters ──────────────────────────────────────────────────── */
+/* ── Formatters ──────────────────────────────────────────────────────────── */
 
 function fmtNum(n: number) { return n.toLocaleString('pt-BR') }
 function fmtBRL(n: number) {
   return `R$ ${n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
+function fmtDate(iso: string) {
+  try { return new Date(iso).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', dateStyle: 'short', timeStyle: 'short' }) }
+  catch { return iso }
+}
 
-/* ── Base UI ─────────────────────────────────────────────────────── */
+/* ── Flow preview helpers ────────────────────────────────────────────────── */
 
-function Spinner() {
-  return <div className="w-4 h-4 rounded-full border-2 border-border border-t-primary animate-spin shrink-0" />
+const PREVIEW_DEFAULTS: Record<string, string> = {
+  nome: 'João', produto: 'Mentoria Premium', valor: 'R$ 197,00',
+  bot: 'MeuBot', data: new Date().toLocaleDateString('pt-BR'), email: 'joao@email.com',
+}
+
+function subVars(text: string, vars: Record<string, string>): string {
+  let r = text || ''
+  Object.entries(vars).forEach(([k, v]) => { r = r.replace(new RegExp(`\\{${k}\\}`, 'g'), v) })
+  Object.entries(PREVIEW_DEFAULTS).forEach(([k, v]) => { r = r.replace(new RegExp(`\\{${k}\\}`, 'g'), v) })
+  return r
+}
+
+function buildNodeMaps(nodes: FlowNode[], edges: FlowEdge[]) {
+  const nodeById = new Map(nodes.map(n => [n.id, n]))
+  const edgesBySource = new Map<string, FlowEdge[]>()
+  edges.forEach(e => {
+    if (!edgesBySource.has(e.source)) edgesBySource.set(e.source, [])
+    edgesBySource.get(e.source)!.push(e)
+  })
+  const hasIncoming = new Set(edges.map(e => e.target))
+  const startNode = nodes.find(n => !hasIncoming.has(n.id)) ?? nodes[0] ?? null
+  return { nodeById, edgesBySource, startNode }
+}
+
+/* ── LS helpers ──────────────────────────────────────────────────────────── */
+
+function lsGet<T>(key: string, fallback: T): T {
+  if (typeof window === 'undefined') return fallback
+  try { return JSON.parse(localStorage.getItem(key) ?? '') ?? fallback } catch { return fallback }
+}
+function lsSet(key: string, val: unknown) {
+  if (typeof window === 'undefined') return
+  try { localStorage.setItem(key, JSON.stringify(val)) } catch { /* noop */ }
+}
+
+/* ── Base UI ─────────────────────────────────────────────────────────────── */
+
+function Spinner({ size = 4 }: { size?: number }) {
+  return <div className={`w-${size} h-${size} rounded-full border-2 border-border border-t-primary animate-spin shrink-0`} />
+}
+
+// Toast with progress bar
+function ToastBar({ msg, type, onClose }: { msg: string; type: 'success' | 'error'; onClose: () => void }) {
+  const barRef = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    const el = barRef.current
+    if (!el) return
+    requestAnimationFrame(() => {
+      el.style.transition = 'width 3.5s linear'
+      el.style.width = '0%'
+    })
+  }, [])
+  const isErr = type === 'error'
+  return (
+    <div className={`relative overflow-hidden flex items-center gap-2.5 rounded-lg px-3.5 py-2.5 border mb-4 ${isErr ? 'bg-danger-soft border-danger/30' : 'bg-success-soft border-success/30'}`}>
+      <div ref={barRef} className="absolute bottom-0 left-0 h-0.5" style={{ width: '100%', background: isErr ? 'var(--danger)' : 'var(--success)' }} />
+      <Icon name={isErr ? 'alert-circle' : 'check-circle-2'} size={15} className={isErr ? 'text-danger' : 'text-success'} />
+      <span className={`text-[12.5px] flex-1 ${isErr ? 'text-danger' : 'text-success'}`}>{msg}</span>
+      <button onClick={onClose} className="w-6 h-6 flex items-center justify-center rounded-md opacity-60 hover:opacity-100">
+        <Icon name="x" size={11} />
+      </button>
+    </div>
+  )
 }
 
 function Modal({ open, onClose, title, subtitle, size = 'md', footer, children }: {
   open: boolean; onClose: () => void; title?: string; subtitle?: string
   size?: 'sm' | 'md' | 'lg'; footer?: React.ReactNode; children: React.ReactNode
 }) {
+  // Escape key
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [open, onClose])
+
   if (!open) return null
   const w = size === 'sm' ? 'max-w-sm' : size === 'lg' ? 'max-w-2xl' : 'max-w-lg'
   return (
@@ -120,25 +212,24 @@ function Modal({ open, onClose, title, subtitle, size = 'md', footer, children }
         )}
         <div className="flex-1 overflow-y-auto px-5 py-4">{children}</div>
         {footer && (
-          <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-border shrink-0">
-            {footer}
-          </div>
+          <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-border shrink-0">{footer}</div>
         )}
       </div>
     </div>
   )
 }
 
-function Btn({ children, variant = 'secondary', disabled, icon, onClick }: {
-  children?: React.ReactNode; variant?: 'primary' | 'secondary' | 'danger'
-  disabled?: boolean; icon?: string; onClick?: () => void
+function Btn({ children, variant = 'secondary', disabled, icon, onClick, className }: {
+  children?: React.ReactNode; variant?: 'primary' | 'secondary' | 'danger' | 'ghost'
+  disabled?: boolean; icon?: string; onClick?: () => void; className?: string
 }) {
   const base = 'inline-flex items-center gap-1.5 h-9 px-3.5 text-[13px] font-medium rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-50 transition-colors'
-  const vr   = variant === 'primary' ? 'bg-primary text-primary-fg hover:opacity-90'
-              : variant === 'danger' ? 'bg-danger text-white hover:opacity-90'
-              :                        'bg-surface-2 border border-border text-text hover:bg-surface-3'
+  const vr = variant === 'primary' ? 'bg-primary text-primary-fg hover:opacity-90'
+           : variant === 'danger'  ? 'bg-danger text-white hover:opacity-90'
+           : variant === 'ghost'   ? 'text-text-muted hover:text-text hover:bg-surface-2'
+           :                         'bg-surface-2 border border-border text-text hover:bg-surface-3'
   return (
-    <button className={`${base} ${vr}`} disabled={disabled} onClick={onClick}>
+    <button className={`${base} ${vr} ${className ?? ''}`} disabled={disabled} onClick={onClick}>
       {icon && <Icon name={icon} size={14} />}
       {children}
     </button>
@@ -158,9 +249,7 @@ function ToolField({ label, hint, children }: { label: string; hint?: string; ch
 const INPUT_CLS    = 'w-full h-10 px-3 bg-surface border border-border rounded-lg text-[13px] text-text placeholder:text-text-subtle focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50'
 const TEXTAREA_CLS = 'w-full px-3 py-2 bg-surface border border-border rounded-lg text-[13px] text-text placeholder:text-text-subtle focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50 resize-none leading-relaxed'
 
-function SelDrop({ value, onChange, children }: {
-  value: string; onChange: (v: string) => void; children: React.ReactNode
-}) {
+function SelDrop({ value, onChange, children }: { value: string; onChange: (v: string) => void; children: React.ReactNode }) {
   return (
     <select value={value} onChange={(e) => onChange(e.target.value)}
       className="w-full h-10 pl-3 pr-8 bg-surface border border-border rounded-lg text-[13px] text-text focus:outline-none focus:ring-2 focus:ring-primary/30 appearance-none">
@@ -169,14 +258,7 @@ function SelDrop({ value, onChange, children }: {
   )
 }
 
-function Checkbox({ checked, onChange }: { checked: boolean; onChange: () => void }) {
-  return (
-    <input type="checkbox" checked={checked} onChange={onChange}
-      className="w-4 h-4 rounded border-border cursor-pointer accent-[var(--primary)] shrink-0" />
-  )
-}
-
-/* ── ToolCard ────────────────────────────────────────────────────── */
+/* ── ToolCard ────────────────────────────────────────────────────────────── */
 
 function ToolCard({ tool, onOpen }: { tool: typeof TOOL_LIST[number]; onOpen: () => void }) {
   return (
@@ -202,147 +284,80 @@ function ToolCard({ tool, onOpen }: { tool: typeof TOOL_LIST[number]; onOpen: ()
   )
 }
 
-/* ── PreviewStep ─────────────────────────────────────────────────── */
+/* ── Tool 1 — Test Message ───────────────────────────────────────────────── */
 
-function PreviewStep({ step }: { step: FlowStep }) {
-  if (step.kind === 'message') return (
-    <div className="flex justify-start">
-      <div className="max-w-[280px] text-[12px] leading-snug px-3 py-2 rounded-2xl rounded-bl-sm bg-surface text-text border border-border whitespace-pre-wrap">
-        {step.text}
-      </div>
-    </div>
-  )
-  if (step.kind === 'incoming') return (
-    <div className="flex justify-end">
-      <div className="max-w-[280px] text-[12px] leading-snug px-3 py-2 rounded-2xl rounded-br-sm bg-primary text-primary-fg">
-        {step.text}
-      </div>
-    </div>
-  )
-  if (step.kind === 'buttons') return (
-    <>
-      <PreviewStep step={{ kind: 'message', text: step.text }} />
-      <div className="ml-2 flex flex-wrap gap-1.5">
-        {step.options.map((o, i) => (
-          <span key={i} className="px-2 py-1 bg-surface border border-border rounded text-[11.5px] text-text">{o}</span>
-        ))}
-      </div>
-    </>
-  )
-  if (step.kind === 'delay') return (
-    <div className="text-center py-1">
-      <span className="text-[10px] uppercase tracking-wider text-text-subtle font-semibold">
-        · aguarda {step.amount} {step.unit} ·
-      </span>
-    </div>
-  )
-  if (step.kind === 'offer') return (
-    <div className="flex justify-start">
-      <div className="ml-2 max-w-[260px] bg-surface border border-border rounded-2xl rounded-bl-sm p-3">
-        <div className="text-[10px] uppercase tracking-wider font-semibold text-text-subtle">Oferta</div>
-        <div className="text-[12.5px] font-semibold text-text mt-1">{step.product}</div>
-        <div className="text-[16px] font-semibold text-success mt-0.5">{fmtBRL(step.price)}</div>
-        <button className="w-full mt-2 h-7 bg-primary text-primary-fg text-[11.5px] font-medium rounded-md">{step.cta}</button>
-      </div>
-    </div>
-  )
-  return null
-}
+const FORMAT_OPTIONS = [
+  { v: 'none',     label: 'Sem formatação', hint: 'Texto puro' },
+  { v: 'HTML',     label: 'HTML',           hint: '<b>negrito</b>, <i>itálico</i>, <code>código</code>' },
+  { v: 'Markdown', label: 'Markdown',       hint: '*negrito*, _itálico_, `código`' },
+] as const
 
-/* ── buildFlowPreview — converte nodes/edges reais em FlowStep[] ─── */
+const VARS = ['{nome}', '{produto}', '{valor}', '{bot}', '{data}']
 
-function buildFlowPreview(nodes: FlowNode[], edges: FlowEdge[]): FlowStep[] {
-  if (!nodes.length) return []
+function TestMessageModal({ open, onClose, bots }: { open: boolean; onClose: () => void; bots: RawBot[] }) {
+  const { track }  = useAnalytics()
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
 
-  const hasIncoming = new Set(edges.map(e => e.target))
-  const startNode   = nodes.find(n => !hasIncoming.has(n.id)) ?? nodes[0]
-  const nodeById    = new Map(nodes.map(n => [n.id, n]))
-  const edgesBySource = new Map<string, FlowEdge[]>()
-  edges.forEach(e => {
-    if (!edgesBySource.has(e.source)) edgesBySource.set(e.source, [])
-    edgesBySource.get(e.source)!.push(e)
-  })
-
-  const steps: FlowStep[] = []
-  const visited = new Set<string>()
-
-  function traverse(nodeId: string, depth: number) {
-    if (depth > 25 || visited.has(nodeId)) return
-    visited.add(nodeId)
-    const node = nodeById.get(nodeId)
-    if (!node) return
-    const d = node.data
-
-    switch (node.type) {
-      case 'message':
-        steps.push({ kind: 'message', text: (d.text as string) || '(mensagem vazia)' }); break
-      case 'question':
-        steps.push({ kind: 'message', text: (d.text as string) || (d.question as string) || '(pergunta)' })
-        steps.push({ kind: 'incoming', text: `{${(d.variable as string) || 'resposta'}}` }); break
-      case 'buttons':
-        steps.push({ kind: 'buttons', text: (d.text as string) || '', options: (d.options as string[]) || [] }); break
-      case 'delay':
-        steps.push({ kind: 'delay', amount: (d.amount as number) || 1, unit: (d.unit as string) || 'minutos' }); break
-      case 'offer':
-        steps.push({ kind: 'offer', product: (d.product as string) || '', price: (d.price as number) || 0, cta: (d.cta as string) || 'Comprar' }); break
-      case 'tag':
-        steps.push({ kind: 'message', text: `🏷️ Tag "${d.tag as string}" ${d.action === 'remove' ? 'removida' : 'adicionada'}` }); break
-      case 'image':
-        steps.push({ kind: 'message', text: `📷 Imagem enviada${d.caption ? ': ' + (d.caption as string) : ''}` }); break
-      case 'link':
-        steps.push({ kind: 'message', text: `🔗 ${(d.label as string) || 'Link'}: ${(d.url as string) || ''}` }); break
-      case 'handoff':
-        steps.push({ kind: 'message', text: '👤 Transferindo para atendimento humano…' }); return
-    }
-
-    const outEdges = edgesBySource.get(nodeId) ?? []
-    if (outEdges.length > 0) traverse(outEdges[0].target, depth + 1)
-  }
-
-  traverse(startNode.id, 0)
-  return steps
-}
-
-/* ── Tool 1 — Test Message ───────────────────────────────────────── */
-
-function TestMessageModal({ open, onClose, bots }: {
-  open: boolean; onClose: () => void; bots: RawBot[]
-}) {
-  const { track } = useAnalytics()
   const [botId,   setBotId]   = useState(bots[0]?.id ?? '')
   const [chatId,  setChatId]  = useState('')
-  const [text,    setText]    = useState('Olá! Esta é uma mensagem de teste do Umbra Bot.')
+  const [text,    setText]    = useState('Olá {nome}! Esta é uma mensagem de teste do Umbra Bot. 🚀')
+  const [format,  setFormat]  = useState<'none' | 'HTML' | 'Markdown'>('HTML')
   const [loading, setLoading] = useState(false)
-  const [result,  setResult]  = useState<Awaited<ReturnType<typeof testMessageAction>> | null>(null)
+  const [result,  setResult]  = useState<{ success: boolean; messageId: number | null; time: string; error: string | null } | null>(null)
   const [err,     setErr]     = useState('')
+  const [history, setHistory] = useState<TestHistory[]>([])
+  const [attemptsLeft, setAttemptsLeft] = useState(10)
 
   useEffect(() => {
-    if (open) { setBotId(bots[0]?.id ?? ''); setChatId(''); setText('Olá! Esta é uma mensagem de teste do Umbra Bot.'); setResult(null); setErr('') }
+    if (open) {
+      setBotId(bots[0]?.id ?? ''); setChatId(''); setResult(null); setErr('')
+      setAttemptsLeft(10)
+      setHistory(lsGet<TestHistory[]>('umbra_test_history', []))
+    }
   }, [open, bots])
 
-  async function handleSend() {
-    if (!chatId.trim() || !botId) return
-    setLoading(true); setResult(null); setErr('')
-    try {
-      const r = await testMessageAction(botId, chatId, text)
-      setResult(r)
-      track('test_message_sent', { bot_id: botId, success: r.success, time_ms: parseInt(r.time) || 0 })
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Erro ao enviar.')
-    } finally {
-      setLoading(false)
-    }
+  function insertVar(v: string) {
+    const el = textareaRef.current
+    if (!el) { setText(t => t + v); return }
+    const s = el.selectionStart, e = el.selectionEnd
+    const next = text.slice(0, s) + v + text.slice(e)
+    setText(next)
+    requestAnimationFrame(() => {
+      el.focus()
+      el.setSelectionRange(s + v.length, s + v.length)
+    })
   }
 
-  const canSend = !!chatId.trim() && !!botId && !loading
+  async function handleSend() {
+    if (!chatId.trim() || !botId || loading || attemptsLeft <= 0) return
+    setLoading(true); setResult(null); setErr('')
+    try {
+      const r = await testMessageAction(botId, chatId, text, format)
+      setResult(r)
+      setAttemptsLeft(p => Math.max(0, p - 1))
+      track('test_message_sent', { bot_id: botId, success: r.success, time_ms: parseInt(r.time) || 0, format })
+      if (r.success) {
+        const entry: TestHistory = { chatId, text, format, ts: Date.now() }
+        const next = [entry, ...lsGet<TestHistory[]>('umbra_test_history', [])].slice(0, 5)
+        lsSet('umbra_test_history', next)
+        setHistory(next)
+      }
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Erro ao enviar.') }
+    finally { setLoading(false) }
+  }
+
+  const canSend = !!chatId.trim() && !!botId && !loading && attemptsLeft > 0
 
   return (
     <Modal open={open} onClose={onClose}
       title="Testar envio de mensagem" subtitle="Envie uma mensagem isolada antes de disparar em massa." size="md"
       footer={<>
+        <span className={`text-[11px] mr-auto ${attemptsLeft <= 2 ? 'text-danger' : 'text-text-muted'}`}>
+          {attemptsLeft}/10 tentativas restantes
+        </span>
         <Btn variant="secondary" onClick={onClose}>Fechar</Btn>
         <Btn variant="primary" disabled={!canSend} onClick={handleSend}>
-          {loading ? <><Spinner /> Enviando…</> : 'Enviar teste'}
+          {loading ? <><Spinner size={3} /> Enviando…</> : 'Enviar teste'}
         </Btn>
       </>}>
       <div className="space-y-3.5">
@@ -358,30 +373,72 @@ function TestMessageModal({ open, onClose, bots }: {
             </SelDrop>
           </ToolField>
         )}
+
         <ToolField label="Chat ID de destino" hint="Obtenha seu chat_id enviando /start para @userinfobot no Telegram.">
           <input type="text" value={chatId} onChange={(e) => setChatId(e.target.value)}
             placeholder="123456789" className={INPUT_CLS + ' font-mono'}
             onKeyDown={(e) => { if (e.key === 'Enter' && canSend) handleSend() }} />
         </ToolField>
-        <ToolField label="Mensagem">
-          <textarea value={text} onChange={(e) => setText(e.target.value)} rows={3} className={TEXTAREA_CLS} />
+
+        {/* Format selector */}
+        <ToolField label="Formatação">
+          <div className="flex gap-2 flex-wrap">
+            {FORMAT_OPTIONS.map(f => (
+              <button key={f.v} onClick={() => setFormat(f.v as 'none' | 'HTML' | 'Markdown')}
+                className={`px-3 h-8 rounded-lg text-[12px] font-medium border transition-colors ${
+                  format === f.v ? 'bg-primary text-primary-fg border-primary' : 'bg-surface border-border text-text hover:bg-surface-2'
+                }`}>
+                {f.label}
+              </button>
+            ))}
+          </div>
+          <div className="text-[11px] text-text-muted mt-1">
+            {FORMAT_OPTIONS.find(f => f.v === format)?.hint}
+          </div>
         </ToolField>
+
+        {/* Variable buttons */}
+        <ToolField label="Mensagem">
+          <div className="flex gap-1.5 flex-wrap mb-1.5">
+            {VARS.map(v => (
+              <button key={v} onClick={() => insertVar(v)}
+                className="px-2 h-6 rounded text-[11px] font-mono bg-surface-2 border border-border text-text-muted hover:text-primary hover:border-primary/50 transition-colors">
+                {v}
+              </button>
+            ))}
+          </div>
+          <textarea ref={textareaRef} value={text} onChange={(e) => setText(e.target.value)} rows={3} className={TEXTAREA_CLS} />
+        </ToolField>
+
+        {/* History */}
+        {history.length > 0 && (
+          <div>
+            <div className="text-[11px] uppercase tracking-wider font-semibold text-text-subtle mb-1.5">Últimas mensagens</div>
+            <div className="space-y-1">
+              {history.slice(0, 3).map((h, i) => (
+                <button key={i} onClick={() => { setChatId(h.chatId); setText(h.text); setFormat(h.format) }}
+                  className="w-full text-left px-2.5 py-1.5 rounded-lg bg-surface-2/50 border border-border hover:border-border-strong text-[11.5px] text-text-muted truncate">
+                  <span className="font-mono text-text-subtle">{h.chatId}</span> · {h.text.slice(0, 40)}{h.text.length > 40 ? '…' : ''}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {err && (
           <div className="flex items-start gap-2.5 bg-danger-soft border border-danger/30 rounded-lg p-3 text-[12px] text-danger">
             <Icon name="alert-circle" size={14} className="mt-0.5" /> {err}
           </div>
         )}
-
         {result && (
           <div className={`flex items-start gap-2.5 rounded-lg p-3 border ${result.success ? 'bg-success-soft border-success/30' : 'bg-danger-soft border-danger/30'}`}>
             <Icon name={result.success ? 'check-circle-2' : 'x-circle'} size={16} className={result.success ? 'text-success' : 'text-danger'} />
             <div className="text-[12px] flex-1">
               <div className={`font-semibold ${result.success ? 'text-success' : 'text-danger'}`}>
-                {result.success ? `Mensagem entregue · ID ${result.messageId}` : 'Falha no envio'}
+                {result.success ? `Entregue · ID ${result.messageId}` : 'Falha no envio'}
               </div>
               <div className="text-text-muted mt-0.5">
-                {result.success ? `Tempo de resposta: ${result.time}` : result.error}
+                {result.success ? `Tempo: ${result.time}` : result.error}
               </div>
             </div>
           </div>
@@ -391,39 +448,42 @@ function TestMessageModal({ open, onClose, bots }: {
   )
 }
 
-/* ── Tool 2 — Validate Token ─────────────────────────────────────── */
+/* ── Tool 2 — Validate Token ─────────────────────────────────────────────── */
 
 function ValidateTokenModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { track } = useAnalytics()
   const [token,   setToken]   = useState('')
   const [loading, setLoading] = useState(false)
   const [result,  setResult]  = useState<{ ok: boolean; name?: string; username?: string; id?: string; error?: string } | null>(null)
+  const [attemptsLeft, setAttemptsLeft] = useState(10)
 
-  useEffect(() => { if (open) { setToken(''); setResult(null); setLoading(false) } }, [open])
+  useEffect(() => { if (open) { setToken(''); setResult(null); setLoading(false); setAttemptsLeft(10) } }, [open])
 
   async function handleValidate() {
-    if (!token.trim()) return
+    if (!token.trim() || loading || attemptsLeft <= 0) return
     setLoading(true); setResult(null)
     try {
       const data = await validateBotTokenAction(token.trim())
       setResult({ ok: true, name: data.firstName, username: data.username, id: data.telegramId })
+      setAttemptsLeft(p => Math.max(0, p - 1))
       track('token_validated', { valid: true })
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Erro ao validar.'
-      setResult({ ok: false, error: msg })
+      setResult({ ok: false, error: e instanceof Error ? e.message : 'Erro ao validar.' })
+      setAttemptsLeft(p => Math.max(0, p - 1))
       track('token_validated', { valid: false })
-    } finally {
-      setLoading(false)
-    }
+    } finally { setLoading(false) }
   }
 
   return (
     <Modal open={open} onClose={onClose}
       title="Validar token de bot" subtitle="Cheque um token sem precisar conectá-lo ao workspace." size="md"
       footer={<>
+        <span className={`text-[11px] mr-auto ${attemptsLeft <= 2 ? 'text-danger' : 'text-text-muted'}`}>
+          {attemptsLeft}/10 validações restantes
+        </span>
         <Btn variant="secondary" onClick={onClose}>Fechar</Btn>
-        <Btn variant="primary" disabled={!token.trim() || loading} onClick={handleValidate}>
-          {loading ? <><Spinner /> Validando…</> : 'Validar token'}
+        <Btn variant="primary" disabled={!token.trim() || loading || attemptsLeft <= 0} onClick={handleValidate}>
+          {loading ? <><Spinner size={3} /> Validando…</> : 'Validar token'}
         </Btn>
       </>}>
       <div className="space-y-3.5">
@@ -432,13 +492,11 @@ function ValidateTokenModal({ open, onClose }: { open: boolean; onClose: () => v
             placeholder="7234567890:ABCdefGHIjklMNOpqrSTU…" autoFocus className={INPUT_CLS + ' font-mono'}
             onKeyDown={(e) => { if (e.key === 'Enter' && token.trim() && !loading) handleValidate() }} />
         </ToolField>
-
         {result && !result.ok && (
           <div className="flex items-start gap-2.5 bg-danger-soft border border-danger/30 rounded-lg p-3 text-[12px] text-danger">
             <Icon name="alert-circle" size={14} className="mt-0.5" /> {result.error}
           </div>
         )}
-
         {result?.ok && (
           <div className="bg-success-soft border border-success/30 rounded-lg p-3.5">
             <div className="flex items-start gap-3">
@@ -463,47 +521,46 @@ function ValidateTokenModal({ open, onClose }: { open: boolean; onClose: () => v
   )
 }
 
-/* ── Tool 3 — QR Code ────────────────────────────────────────────── */
+/* ── Tool 3 — QR Code ────────────────────────────────────────────────────── */
 
-function QRCodeModal({ open, onClose, bots }: {
-  open: boolean; onClose: () => void; bots: RawBot[]
-}) {
-  const { track }         = useAnalytics()
-  const [botId, setBotId] = useState(bots[0]?.id ?? '')
-  const [qrUrl, setQrUrl] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
-  const imgRef = useRef<HTMLImageElement>(null)
+const QR_SIZES = [
+  { v: 160, label: 'Pequeno' }, { v: 220, label: 'Médio' }, { v: 300, label: 'Grande' },
+] as const
+
+function QRCodeModal({ open, onClose, bots }: { open: boolean; onClose: () => void; bots: RawBot[] }) {
+  const { track }                       = useAnalytics()
+  const [botId,    setBotId]            = useState(bots[0]?.id ?? '')
+  const [darkColor, setDarkColor]       = useState('#000000')
+  const [lightColor, setLightColor]     = useState('#ffffff')
+  const [size,     setSize]             = useState<160 | 220 | 300>(220)
+  const [qrUrl,    setQrUrl]            = useState<string | null>(null)
+  const [loading,  setLoading]          = useState(false)
 
   const selectedBot = bots.find(b => b.id === botId)
   const telegramUrl = selectedBot ? `https://t.me/${selectedBot.username}` : ''
 
-  useEffect(() => {
-    if (open) setBotId(bots[0]?.id ?? '')
-  }, [open, bots])
+  useEffect(() => { if (open) setBotId(bots[0]?.id ?? '') }, [open, bots])
 
   useEffect(() => {
     if (!selectedBot?.username) { setQrUrl(null); return }
     setLoading(true)
     import('qrcode').then(({ default: QRCode }) =>
       QRCode.toDataURL(`https://t.me/${selectedBot.username}`, {
-        width: 220, margin: 2,
-        color: { dark: '#000000', light: '#ffffff' },
+        width: size, margin: 2,
+        color: { dark: darkColor, light: lightColor },
       })
     ).then(url => {
       setQrUrl(url)
       track('qr_generated', { bot_username: selectedBot.username })
     }).finally(() => setLoading(false))
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [botId, selectedBot?.username])
+  }, [botId, selectedBot?.username, size, darkColor, lightColor])
 
   function handleDownload() {
     if (!qrUrl || !selectedBot) return
     const a = document.createElement('a')
-    a.href     = qrUrl
-    a.download = `qr_${selectedBot.username}.png`
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
+    a.href = qrUrl; a.download = `qr_${selectedBot.username}_${size}px.png`
+    document.body.appendChild(a); a.click(); document.body.removeChild(a)
     track('qr_downloaded', { bot_username: selectedBot.username })
   }
 
@@ -517,8 +574,7 @@ function QRCodeModal({ open, onClose, bots }: {
       <div className="space-y-3.5">
         {bots.length === 0 ? (
           <div className="flex items-start gap-2.5 bg-warning-soft border border-warning/30 rounded-lg p-3 text-[12px] text-warning">
-            <Icon name="alert-triangle" size={14} className="mt-0.5" />
-            Nenhum bot cadastrado ainda.
+            <Icon name="alert-triangle" size={14} className="mt-0.5" /> Nenhum bot cadastrado ainda.
           </div>
         ) : (
           <ToolField label="Bot">
@@ -528,95 +584,138 @@ function QRCodeModal({ open, onClose, bots }: {
           </ToolField>
         )}
 
+        {/* Size + Colors */}
+        <div className="grid grid-cols-3 gap-2">
+          {QR_SIZES.map(s => (
+            <button key={s.v} onClick={() => setSize(s.v as 160 | 220 | 300)}
+              className={`h-8 rounded-lg text-[12px] font-medium border transition-colors ${size === s.v ? 'bg-primary text-primary-fg border-primary' : 'bg-surface border-border text-text hover:bg-surface-2'}`}>
+              {s.label}
+            </button>
+          ))}
+        </div>
+        <div className="flex gap-3">
+          <ToolField label="Cor do código">
+            <div className="flex items-center gap-2">
+              <input type="color" value={darkColor} onChange={e => setDarkColor(e.target.value)}
+                className="w-8 h-8 rounded cursor-pointer border border-border bg-surface p-0.5" />
+              <span className="text-[12px] font-mono text-text-muted">{darkColor}</span>
+            </div>
+          </ToolField>
+          <ToolField label="Cor do fundo">
+            <div className="flex items-center gap-2">
+              <input type="color" value={lightColor} onChange={e => setLightColor(e.target.value)}
+                className="w-8 h-8 rounded cursor-pointer border border-border bg-surface p-0.5" />
+              <span className="text-[12px] font-mono text-text-muted">{lightColor}</span>
+            </div>
+          </ToolField>
+        </div>
+
         <div className="bg-surface-2/40 border border-border rounded-xl p-6 flex flex-col items-center min-h-[220px] justify-center">
           {loading && <Spinner />}
           {!loading && qrUrl && (
             <>
-              <img ref={imgRef} src={qrUrl} alt="QR Code" width={220} height={220} className="block rounded" />
+              <img src={qrUrl} alt="QR Code" width={size} height={size} className="block rounded" />
               <div className="mt-3 text-center">
                 <div className="text-[11.5px] text-text-muted">Aponte a câmera para abrir:</div>
                 <div className="text-[13px] font-mono font-semibold text-text mt-0.5">{telegramUrl}</div>
               </div>
             </>
           )}
-          {!loading && !qrUrl && bots.length === 0 && (
+          {!loading && !qrUrl && bots.length > 0 && (
             <span className="text-[12px] text-text-muted">Selecione um bot para gerar o QR.</span>
           )}
         </div>
-
         <div className="flex items-start gap-2 text-[11.5px] text-text-muted bg-surface-2/40 border border-border rounded-lg p-3">
           <Icon name="info" size={13} className="mt-0.5 shrink-0" />
-          <span>Use em materiais impressos (panfletos, banners, embalagens). O Telegram identifica o link automaticamente em câmeras nativas.</span>
+          <span>Use em panfletos, banners e embalagens. O Telegram identifica o link automaticamente em câmeras nativas.</span>
         </div>
       </div>
     </Modal>
   )
 }
 
-/* ── Tool 4 — Preview Flow ───────────────────────────────────────── */
+/* ── Tool 4 — Deep Link Generator ───────────────────────────────────────── */
 
-function PreviewFlowModal({ open, onClose, flows }: {
-  open: boolean; onClose: () => void; flows: RawFlow[]
-}) {
-  const { track }             = useAnalytics()
-  const [flowId, setFlowId]   = useState(flows[0]?.id ?? '')
-  const [tracked, setTracked] = useState(false)
+function DeepLinkModal({ open, onClose, bots }: { open: boolean; onClose: () => void; bots: RawBot[] }) {
+  const { track }               = useAnalytics()
+  const [botId,  setBotId]      = useState(bots[0]?.id ?? '')
+  const [param,  setParam]      = useState('')
+  const [copied, setCopied]     = useState(false)
+  const [history, setHistory]   = useState<DeepLinkHistory[]>([])
 
-  useEffect(() => {
-    if (open) { setFlowId(flows[0]?.id ?? ''); setTracked(false) }
-  }, [open, flows])
-
-  const selectedFlow = flows.find(f => f.id === flowId)
-  const nodes = (selectedFlow?.nodes ?? []) as FlowNode[]
-  const edges = (selectedFlow?.edges ?? []) as FlowEdge[]
-  const steps = useMemo(() => buildFlowPreview(nodes, edges), [nodes, edges])
+  const selectedBot = bots.find(b => b.id === botId)
+  const safeParam   = param.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64)
+  const deepLink    = selectedBot?.username ? `https://t.me/${selectedBot.username}?start=${safeParam || 'campanha'}` : ''
 
   useEffect(() => {
-    if (selectedFlow && !tracked && steps.length > 0) {
-      track('flow_previewed', { flow_id: selectedFlow.id, node_count: nodes.length })
-      setTracked(true)
+    if (open) { setBotId(bots[0]?.id ?? ''); setParam(''); setCopied(false); setHistory(lsGet<DeepLinkHistory[]>('umbra_deeplink_history', [])) }
+  }, [open, bots])
+
+  function handleCopy() {
+    if (!deepLink || !selectedBot) return
+    navigator.clipboard.writeText(deepLink)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+    track('deep_link_generated', { bot_username: selectedBot.username, param: safeParam })
+    if (safeParam) {
+      const entry: DeepLinkHistory = { username: selectedBot.username, param: safeParam, ts: Date.now() }
+      const next = [entry, ...lsGet<DeepLinkHistory[]>('umbra_deeplink_history', [])].filter(
+        (h, i, arr) => i === arr.findIndex(x => x.username === h.username && x.param === h.param)
+      ).slice(0, 5)
+      lsSet('umbra_deeplink_history', next)
+      setHistory(next)
     }
-  }, [selectedFlow, steps.length, tracked, nodes.length, track])
+  }
 
   return (
     <Modal open={open} onClose={onClose}
-      title="Prévia de fluxo" subtitle="Simulação real dos nós cadastrados no editor de fluxo." size="lg"
-      footer={<Btn variant="primary" onClick={onClose}>Fechar</Btn>}>
+      title="Gerador de deep link" subtitle="Crie links rastreáveis por campanha, fonte ou anúncio." size="md"
+      footer={<>
+        <Btn variant="secondary" onClick={onClose}>Fechar</Btn>
+        <Btn variant="primary" icon={copied ? 'check' : 'copy'} disabled={!selectedBot} onClick={handleCopy}>
+          {copied ? 'Copiado!' : 'Copiar link'}
+        </Btn>
+      </>}>
       <div className="space-y-3.5">
-        {flows.length === 0 ? (
+        {bots.length === 0 ? (
           <div className="flex items-start gap-2.5 bg-warning-soft border border-warning/30 rounded-lg p-3 text-[12px] text-warning">
-            <Icon name="alert-triangle" size={14} className="mt-0.5" />
-            Nenhum fluxo criado ainda. Crie um em <strong>Fluxos de venda</strong>.
+            <Icon name="alert-triangle" size={14} className="mt-0.5" /> Nenhum bot cadastrado ainda.
           </div>
         ) : (
-          <ToolField label="Fluxo">
-            <SelDrop value={flowId} onChange={(v) => { setFlowId(v); setTracked(false) }}>
-              {flows.map(f => <option key={f.id} value={f.id}>{f.name} {f.status === 'published' ? '✓' : '(rascunho)'}</option>)}
+          <ToolField label="Bot">
+            <SelDrop value={botId} onChange={setBotId}>
+              {bots.map(b => <option key={b.id} value={b.id}>@{b.username} — {b.name}</option>)}
             </SelDrop>
           </ToolField>
         )}
 
-        {flows.length > 0 && (
-          <div className="bg-surface-2/30 border border-border rounded-xl p-4 space-y-2 max-h-[420px] overflow-y-auto">
-            {steps.length === 0 ? (
-              <div className="text-center py-8 text-[12px] text-text-muted">
-                Fluxo vazio — adicione nós no editor para visualizar a prévia.
-              </div>
-            ) : (
-              <>
-                {steps.map((step, i) => <PreviewStep key={i} step={step} />)}
-                <div className="text-center pt-1">
-                  <span className="text-[10px] uppercase tracking-wider text-text-subtle font-semibold">· fim da prévia ·</span>
-                </div>
-              </>
-            )}
+        <ToolField label="Parâmetro start" hint="Apenas letras, números, _ e -. Máx. 64 chars. Ex: instagram_jun26, google_ads, story_bio">
+          <input type="text" value={param} onChange={e => setParam(e.target.value)}
+            placeholder="instagram_campanha_junho" className={INPUT_CLS + ' font-mono'} />
+        </ToolField>
+
+        {selectedBot && (
+          <div className="bg-surface-2/40 border border-border rounded-xl p-4">
+            <div className="text-[10.5px] uppercase tracking-wider font-semibold text-text-subtle mb-2">Link gerado</div>
+            <div className="font-mono text-[12px] text-text break-all select-all">{deepLink}</div>
+            <div className="mt-3 pt-3 border-t border-border flex items-start gap-2 text-[11px] text-text-muted">
+              <Icon name="info" size={12} className="mt-0.5 shrink-0" />
+              <span>O Telegram repassa o parâmetro <code className="font-mono bg-surface px-1 rounded">start</code> ao bot quando o usuário clica "Iniciar". Use-o para identificar a fonte no webhook.</span>
+            </div>
           </div>
         )}
 
-        {nodes.length > 0 && (
-          <div className="flex items-center gap-2 text-[11px] text-text-muted">
-            <Icon name="info" size={12} className="shrink-0" />
-            <span>{nodes.length} nó{nodes.length !== 1 ? 's' : ''} · prévia mostra o caminho principal (primeiro branch).</span>
+        {history.length > 0 && (
+          <div>
+            <div className="text-[11px] uppercase tracking-wider font-semibold text-text-subtle mb-1.5">Últimos links gerados</div>
+            <div className="space-y-1">
+              {history.map((h, i) => (
+                <button key={i} onClick={() => { const b = bots.find(x => x.username === h.username); if (b) setBotId(b.id); setParam(h.param) }}
+                  className="w-full text-left px-2.5 py-1.5 rounded-lg bg-surface-2/50 border border-border hover:border-border-strong text-[11.5px] text-text-muted">
+                  <span className="font-mono text-text">@{h.username}</span> · {h.param}
+                </button>
+              ))}
+            </div>
           </div>
         )}
       </div>
@@ -624,33 +723,300 @@ function PreviewFlowModal({ open, onClose, flows }: {
   )
 }
 
-/* ── Tool 5 — Import Config ──────────────────────────────────────── */
+/* ── Tool 5 — Interactive Flow Preview ──────────────────────────────────── */
+
+function PreviewFlowModal({ open, onClose, flows }: { open: boolean; onClose: () => void; flows: RawFlow[] }) {
+  const { track }                = useAnalytics()
+  const bottomRef                = useRef<HTMLDivElement>(null)
+  const qInputRef                = useRef<HTMLInputElement>(null)
+
+  const [flowId,    setFlowId]   = useState(flows[0]?.id ?? '')
+  const [simHistory, setHistory] = useState<SimEntry[]>([])
+  const [simPhase,  setPhase]    = useState<SimPhase>('idle')
+  const [simVars,   setSimVars]  = useState<Record<string, string>>({})
+  const [waitData,  setWaitData] = useState<WaitData | null>(null)
+  const [qInput,    setQInput]   = useState('')
+  const [branchCount, setBranchCount] = useState(0)
+  const [tracked,   setTracked]  = useState(false)
+
+  const selectedFlow = flows.find(f => f.id === flowId)
+  const nodes = useMemo(() => (selectedFlow?.nodes ?? []) as FlowNode[], [selectedFlow])
+  const edges = useMemo(() => (selectedFlow?.edges ?? []) as FlowEdge[], [selectedFlow])
+  const { nodeById, edgesBySource, startNode } = useMemo(() => buildNodeMaps(nodes, edges), [nodes, edges])
+
+  useEffect(() => { if (open) { setFlowId(flows[0]?.id ?? ''); resetSim(); setTracked(false) } }, [open, flows])
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [simHistory])
+  useEffect(() => { if (simPhase === 'question') qInputRef.current?.focus() }, [simPhase])
+
+  function resetSim() {
+    setHistory([]); setPhase('idle'); setSimVars({}); setWaitData(null); setQInput(''); setBranchCount(0)
+  }
+
+  function runFrom(nodeId: string, vars: Record<string, string>, depth = 0) {
+    if (depth > 30) { setPhase('done'); return }
+    const newEntries: SimEntry[] = []
+    let curr: string | null = nodeId
+    let nextPhase: SimPhase = 'done'
+    let nextWait: WaitData | null = null
+
+    while (curr) {
+      const node = nodeById.get(curr)
+      if (!node) break
+      const out: FlowEdge[] = edgesBySource.get(curr!) ?? []
+      const d = node.data
+
+      if (node.type === 'buttons') {
+        newEntries.push({ k: 'buttons', text: subVars(d.text as string || '', vars), opts: (d.options as string[]) || [] })
+        nextPhase = 'buttons'
+        nextWait = { k: 'buttons', choices: ((d.options as string[]) || []).map((lbl, i) => ({
+          label: lbl, target: out.find(e => e.sourceHandle === `option-${i}`)?.target ?? null,
+        }))}
+        break
+      }
+      if (node.type === 'question') {
+        newEntries.push({ k: 'bot', text: subVars((d.text || d.question) as string || '', vars) })
+        nextPhase = 'question'
+        nextWait = { k: 'question', varName: (d.variable as string) || 'resposta', next: out[0]?.target ?? null }
+        break
+      }
+
+      switch (node.type) {
+        case 'message': newEntries.push({ k: 'bot', text: subVars(d.text as string || '', vars) }); break
+        case 'tag':     newEntries.push({ k: 'sys', text: `🏷️ Tag "${d.tag}" ${d.action === 'remove' ? 'removida' : 'adicionada'}` }); break
+        case 'delay':   newEntries.push({ k: 'sys', text: `⏱ Aguarda ${d.amount} ${d.unit}` }); break
+        case 'image':   newEntries.push({ k: 'bot', text: `📷 Imagem${d.caption ? ' — ' + d.caption : ''}` }); break
+        case 'link':    newEntries.push({ k: 'bot', text: `🔗 ${d.label || 'Link'}: ${d.url}` }); break
+        case 'offer':   newEntries.push({ k: 'offer', product: d.product as string || '', price: (d.price as number) || 0, cta: d.cta as string || 'Comprar' }); break
+        case 'condition': newEntries.push({ k: 'sys', text: `🔀 Condição avaliada — seguindo primeiro caminho` }); break
+        case 'handoff': newEntries.push({ k: 'sys', text: '👤 Transferindo para atendimento humano' }); curr = null; continue
+      }
+
+      curr = out[0]?.target ?? null
+      if (!curr) nextPhase = 'done'
+    }
+
+    setHistory(prev => [...prev, ...newEntries])
+    setPhase(nextPhase)
+    setWaitData(nextWait)
+  }
+
+  function handleStart() {
+    if (!startNode) return
+    resetSim()
+    if (!tracked && selectedFlow) {
+      track('flow_previewed', { flow_id: selectedFlow.id, node_count: nodes.length })
+      setTracked(true)
+    }
+    setTimeout(() => runFrom(startNode.id, {}), 10)
+  }
+
+  function handleButton(idx: number) {
+    if (waitData?.k !== 'buttons') return
+    const choice = waitData.choices[idx]
+    setBranchCount(p => p + 1)
+    setHistory(prev => {
+      const updated = [...prev]
+      for (let i = updated.length - 1; i >= 0; i--) {
+        if (updated[i].k === 'buttons') { (updated[i] as {k:'buttons';opts:string[];chosen?:number;text:string}).chosen = idx; break }
+      }
+      return [...updated, { k: 'user', text: choice.label }]
+    })
+    setWaitData(null)
+    if (choice.target) runFrom(choice.target, simVars)
+    else setPhase('done')
+  }
+
+  function handleQuestion() {
+    if (waitData?.k !== 'question' || !qInput.trim()) return
+    const ans = qInput.trim()
+    const newVars = { ...simVars, [waitData.varName]: ans }
+    setSimVars(newVars)
+    setHistory(prev => [...prev, { k: 'user', text: ans }])
+    setQInput('')
+    setWaitData(null)
+    if (waitData.next) runFrom(waitData.next, newVars)
+    else setPhase('done')
+  }
+
+  function SimEntryView({ entry, isActive }: { entry: SimEntry; isActive: boolean }) {
+    if (entry.k === 'bot') return (
+      <div className="flex justify-start">
+        <div className="max-w-[280px] text-[12px] leading-snug px-3 py-2 rounded-2xl rounded-bl-sm bg-surface text-text border border-border whitespace-pre-wrap">{entry.text}</div>
+      </div>
+    )
+    if (entry.k === 'user') return (
+      <div className="flex justify-end">
+        <div className="max-w-[200px] text-[12px] leading-snug px-3 py-2 rounded-2xl rounded-br-sm bg-primary text-primary-fg">{entry.text}</div>
+      </div>
+    )
+    if (entry.k === 'sys') return (
+      <div className="text-center py-0.5">
+        <span className="text-[10.5px] text-text-subtle">{entry.text}</span>
+      </div>
+    )
+    if (entry.k === 'offer') return (
+      <div className="flex justify-start">
+        <div className="ml-0 max-w-[240px] bg-surface border border-border rounded-2xl rounded-bl-sm p-3">
+          <div className="text-[10px] uppercase tracking-wider font-semibold text-text-subtle">Oferta</div>
+          <div className="text-[12.5px] font-semibold text-text mt-1">{entry.product}</div>
+          <div className="text-[15px] font-semibold text-success mt-0.5">{fmtBRL(entry.price)}</div>
+          <div className="w-full mt-2 h-7 bg-primary text-primary-fg text-[11.5px] font-medium rounded-md flex items-center justify-center">{entry.cta}</div>
+        </div>
+      </div>
+    )
+    if (entry.k === 'buttons') return (
+      <div className="space-y-1.5">
+        <div className="flex justify-start">
+          <div className="max-w-[280px] text-[12px] px-3 py-2 rounded-2xl rounded-bl-sm bg-surface text-text border border-border">{entry.text}</div>
+        </div>
+        <div className="ml-1 flex flex-wrap gap-1.5">
+          {entry.opts.map((opt, bi) => (
+            <button key={bi}
+              onClick={() => isActive && entry.chosen === undefined && handleButton(bi)}
+              disabled={!isActive || entry.chosen !== undefined}
+              className={`px-2.5 py-1 rounded text-[11.5px] border transition-colors ${
+                entry.chosen === bi
+                  ? 'bg-primary text-primary-fg border-primary'
+                  : entry.chosen !== undefined
+                  ? 'bg-surface border-border text-text-subtle opacity-40 cursor-default'
+                  : isActive
+                  ? 'bg-surface border-border text-text hover:bg-surface-2 hover:border-border-strong cursor-pointer'
+                  : 'bg-surface border-border text-text-subtle opacity-40 cursor-default'
+              }`}>
+              {opt}
+            </button>
+          ))}
+        </div>
+      </div>
+    )
+    return null
+  }
+
+  return (
+    <Modal open={open} onClose={onClose}
+      title="Prévia interativa de fluxo" subtitle="Clique nos botões e responda perguntas para simular o fluxo real." size="lg"
+      footer={<>
+        {simPhase !== 'idle' && (
+          <Btn variant="ghost" icon="rotate-ccw" onClick={() => { resetSim(); setTimeout(() => handleStart(), 10) }}>
+            Reiniciar
+          </Btn>
+        )}
+        <Btn variant="secondary" onClick={onClose}>Fechar</Btn>
+        {simPhase === 'idle' && (
+          <Btn variant="primary" icon="play" disabled={!startNode || flows.length === 0} onClick={handleStart}>
+            Iniciar simulação
+          </Btn>
+        )}
+      </>}>
+      <div className="space-y-3.5">
+        {flows.length === 0 ? (
+          <div className="flex items-start gap-2.5 bg-warning-soft border border-warning/30 rounded-lg p-3 text-[12px] text-warning">
+            <Icon name="alert-triangle" size={14} className="mt-0.5" /> Nenhum fluxo criado ainda.
+          </div>
+        ) : (
+          <div className="flex gap-2">
+            <div className="flex-1">
+              <SelDrop value={flowId} onChange={v => { setFlowId(v); resetSim(); setTracked(false) }}>
+                {flows.map(f => <option key={f.id} value={f.id}>{f.name} {f.status === 'published' ? '✓' : '(rascunho)'}</option>)}
+              </SelDrop>
+            </div>
+            {nodes.length > 0 && (
+              <div className="h-10 px-3 flex items-center text-[11.5px] text-text-muted bg-surface-2/40 border border-border rounded-lg shrink-0">
+                {nodes.length} nós
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Chat area */}
+        {flows.length > 0 && (
+          <div className="bg-surface-2/20 border border-border rounded-xl p-4 space-y-2 min-h-[280px] max-h-[400px] overflow-y-auto">
+            {simPhase === 'idle' && (
+              <div className="flex flex-col items-center justify-center h-[220px] text-center">
+                <div className="w-12 h-12 rounded-xl bg-surface border border-border flex items-center justify-center mb-3">
+                  <Icon name="play-circle" size={20} className="text-text-muted" />
+                </div>
+                <div className="text-[13px] font-medium text-text">Simulação pronta</div>
+                <div className="text-[12px] text-text-muted mt-1">Clique em "Iniciar simulação" para começar</div>
+              </div>
+            )}
+
+            {simHistory.map((entry, i) => {
+              const isLastButtons = entry.k === 'buttons' && i === simHistory.length - 1 && simPhase === 'buttons'
+              return <SimEntryView key={i} entry={entry} isActive={isLastButtons} />
+            })}
+
+            {/* Question input */}
+            {simPhase === 'question' && (
+              <div className="flex gap-2 pt-1">
+                <input ref={qInputRef} value={qInput} onChange={e => setQInput(e.target.value)}
+                  placeholder="Digite sua resposta…"
+                  className={INPUT_CLS + ' text-[12px]'}
+                  onKeyDown={e => { if (e.key === 'Enter') handleQuestion() }} />
+                <button onClick={handleQuestion} disabled={!qInput.trim()}
+                  className="h-10 px-3 bg-primary text-primary-fg rounded-lg disabled:opacity-50 flex items-center justify-center">
+                  <Icon name="chevron-right" size={16} />
+                </button>
+              </div>
+            )}
+
+            {simPhase === 'done' && (
+              <div className="text-center pt-2">
+                <span className="inline-flex items-center gap-1 text-[11px] text-text-subtle font-semibold px-3 py-1 bg-surface border border-border rounded-full">
+                  <Icon name="check" size={11} /> Fim do fluxo {branchCount > 0 ? `· ${branchCount} branch${branchCount !== 1 ? 'es' : ''} seguido${branchCount !== 1 ? 's' : ''}` : ''}
+                </span>
+              </div>
+            )}
+
+            <div ref={bottomRef} />
+          </div>
+        )}
+
+        {/* Vars captured */}
+        {Object.keys(simVars).length > 0 && (
+          <div className="bg-surface-2/30 border border-border rounded-lg p-3">
+            <div className="text-[10.5px] uppercase tracking-wider font-semibold text-text-subtle mb-2">Variáveis capturadas</div>
+            <div className="flex flex-wrap gap-1.5">
+              {Object.entries(simVars).map(([k, v]) => (
+                <span key={k} className="px-2 py-0.5 bg-surface border border-border rounded text-[11.5px] font-mono">
+                  <span className="text-primary">{'{' + k + '}'}</span> = {v}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </Modal>
+  )
+}
+
+/* ── Tool 6 — Import Config ──────────────────────────────────────────────── */
 
 function ImportConfigModal({ open, onClose, onToast }: {
   open: boolean; onClose: () => void; onToast: (msg: string, type?: 'success' | 'error') => void
 }) {
-  const { track }               = useAnalytics()
-  const fileRef                 = useRef<HTMLInputElement>(null)
-  const [fileName, setFileName] = useState('')
-  const [parsing, setParsing]   = useState(false)
-  const [parseErr, setParseErr] = useState('')
-  const [parsed,  setParsed]    = useState<ParsedBackup | null>(null)
-  const [rawJson, setRawJson]   = useState('')
+  const { track }                 = useAnalytics()
+  const fileRef                   = useRef<HTMLInputElement>(null)
+  const [fileName, setFileName]   = useState('')
+  const [parsing,  setParsing]    = useState(false)
+  const [parseErr, setParseErr]   = useState('')
+  const [parsed,   setParsed]     = useState<ParsedBackup | null>(null)
+  const [rawJson,  setRawJson]    = useState('')
   const [importing, setImporting] = useState(false)
+  const [isDragging, setDragging] = useState(false)
 
   useEffect(() => {
-    if (open) { setFileName(''); setParsed(null); setRawJson(''); setParsing(false); setParseErr('') }
+    if (open) { setFileName(''); setParsed(null); setRawJson(''); setParsing(false); setParseErr(''); setDragging(false) }
   }, [open])
 
-  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    if (!file) return
+  function processFile(file: File) {
+    if (!file.name.endsWith('.json')) { setParseErr('Apenas arquivos .json são suportados.'); return }
     setFileName(file.name); setParsing(true); setParseErr(''); setParsed(null)
     const reader = new FileReader()
     reader.onload = (ev) => {
       try {
-        const json = ev.target?.result as string
-        const data = JSON.parse(json) as Record<string, unknown>
+        const json  = ev.target?.result as string
+        const data  = JSON.parse(json) as Record<string, unknown>
         setParsed({
           bots:      Array.isArray(data.bots)      ? data.bots.length      : 0,
           flows:     Array.isArray(data.flows)     ? data.flows.length     : 0,
@@ -661,15 +1027,27 @@ function ImportConfigModal({ open, onClose, onToast }: {
           tags:      Array.isArray(data.tags)      ? data.tags.length      : 0,
           webhooks:  Array.isArray(data.webhooks)  ? data.webhooks.length  : 0,
           size:      `${(json.length / 1024).toFixed(0)} KB`,
+          exportedAt: data.exported_at as string | undefined,
+          version:   data.version as string | undefined,
         })
         setRawJson(json)
-      } catch {
-        setParseErr('Arquivo inválido. Certifique-se que é um backup exportado pelo Umbra Bot.')
-      } finally {
-        setParsing(false)
-      }
+      } catch { setParseErr('Arquivo inválido. Certifique-se que é um backup exportado pelo Umbra Bot.') }
+      finally { setParsing(false) }
     }
     reader.readAsText(file)
+  }
+
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (file) processFile(file)
+  }
+
+  function handleDragOver(e: React.DragEvent) { e.preventDefault(); setDragging(true) }
+  function handleDragLeave() { setDragging(false) }
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault(); setDragging(false)
+    const file = e.dataTransfer.files[0]
+    if (file) processFile(file)
   }
 
   async function doImport() {
@@ -679,20 +1057,14 @@ function ImportConfigModal({ open, onClose, onToast }: {
       const { imported, errors } = await importConfigAction(rawJson)
       const total = Object.values(imported).reduce((a, b) => a + b, 0)
       track('config_imported', imported)
-      if (errors.length > 0) {
-        onToast(`${total} itens importados com ${errors.length} erro(s). Verifique o console.`, 'error')
-      } else {
-        onToast(`${total} itens importados com sucesso de ${fileName}.`)
-      }
+      if (errors.length > 0) onToast(`${total} itens importados com ${errors.length} erro(s).`, 'error')
+      else onToast(`${total} itens importados com sucesso de ${fileName}.`)
       onClose()
-    } catch (e) {
-      onToast(e instanceof Error ? e.message : 'Erro ao importar.', 'error')
-    } finally {
-      setImporting(false)
-    }
+    } catch (e) { onToast(e instanceof Error ? e.message : 'Erro ao importar.', 'error') }
+    finally { setImporting(false) }
   }
 
-  function ImportRow({ icon, label, count }: { icon: string; label: string; count: number }) {
+  function Row({ icon, label, count }: { icon: string; label: string; count: number }) {
     return (
       <div className="flex items-center gap-2">
         <Icon name={icon} size={12} className="text-text-muted shrink-0" />
@@ -708,20 +1080,24 @@ function ImportConfigModal({ open, onClose, onToast }: {
       footer={<>
         <Btn variant="secondary" onClick={onClose}>Cancelar</Btn>
         <Btn variant="primary" disabled={!parsed || !!parseErr || importing} onClick={doImport}>
-          {importing ? <><Spinner /> Importando…</> : 'Importar configurações'}
+          {importing ? <><Spinner size={3} /> Importando…</> : 'Importar configurações'}
         </Btn>
       </>}>
       <div className="space-y-3.5">
         <input ref={fileRef} type="file" accept=".json" className="hidden" onChange={handleFileChange} />
 
         {!fileName ? (
-          <button onClick={() => fileRef.current?.click()}
-            className="w-full bg-surface-2/30 border-2 border-dashed border-border rounded-xl py-10 px-6 flex flex-col items-center justify-center text-center hover:bg-surface-2/50 hover:border-primary/50 focus:outline-none transition-colors">
+          <button
+            onClick={() => fileRef.current?.click()}
+            onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}
+            className={`w-full border-2 border-dashed rounded-xl py-10 px-6 flex flex-col items-center justify-center text-center focus:outline-none transition-colors ${
+              isDragging ? 'border-primary/60 bg-primary/5' : 'bg-surface-2/30 border-border hover:bg-surface-2/50 hover:border-primary/50'
+            }`}>
             <div className="w-12 h-12 rounded-xl bg-surface border border-border text-text-muted flex items-center justify-center mb-3">
               <Icon name="upload" size={20} />
             </div>
-            <div className="text-[13px] font-semibold text-text">Selecionar arquivo JSON</div>
-            <div className="text-[11.5px] text-text-muted mt-1 max-w-xs">Arraste e solte ou clique para escolher um backup exportado.</div>
+            <div className="text-[13px] font-semibold text-text">{isDragging ? 'Solte o arquivo aqui' : 'Arraste o arquivo ou clique para selecionar'}</div>
+            <div className="text-[11.5px] text-text-muted mt-1">Backup JSON exportado pelo Umbra Bot</div>
           </button>
         ) : (
           <div className="bg-surface-2/40 border border-border rounded-lg p-3.5 flex items-center gap-3">
@@ -731,13 +1107,13 @@ function ImportConfigModal({ open, onClose, onToast }: {
             <div className="min-w-0 flex-1">
               <div className="text-[12.5px] font-medium text-text truncate">{fileName}</div>
               <div className="text-[11px] text-text-muted">
-                {parsing ? 'Lendo arquivo…' : parseErr ? 'Arquivo inválido' : parsed ? `${parsed.size} · workspace válido` : ''}
+                {parsing ? 'Lendo arquivo…' : parseErr ? 'Arquivo inválido' : parsed ? `${parsed.size}${parsed.version ? ` · v${parsed.version}` : ''} · workspace válido` : ''}
               </div>
             </div>
-            {parsing && <Spinner />}
+            {parsing && <Spinner size={4} />}
             {!parsing && (
               <button onClick={() => { setFileName(''); setParsed(null); setRawJson(''); setParseErr('') }}
-                className="w-7 h-7 inline-flex items-center justify-center rounded-md text-text-muted hover:bg-surface-3 hover:text-text">
+                className="w-7 h-7 flex items-center justify-center rounded-md text-text-muted hover:bg-surface-3 hover:text-text">
                 <Icon name="x" size={13} />
               </button>
             )}
@@ -752,16 +1128,22 @@ function ImportConfigModal({ open, onClose, onToast }: {
 
         {parsed && !parseErr && (
           <div className="bg-surface border border-border rounded-lg p-4">
+            {parsed.exportedAt && (
+              <div className="text-[11px] text-text-muted mb-2.5 flex items-center gap-1.5">
+                <Icon name="clock" size={11} className="shrink-0" />
+                Exportado em {fmtDate(parsed.exportedAt)}
+              </div>
+            )}
             <div className="text-[10.5px] uppercase tracking-wider font-semibold text-text-subtle mb-2.5">Conteúdo a importar</div>
             <div className="grid grid-cols-2 gap-y-2 gap-x-4">
-              <ImportRow icon="bot"         label="Bots"       count={parsed.bots} />
-              <ImportRow icon="git-branch"  label="Fluxos"     count={parsed.flows} />
-              <ImportRow icon="layers"      label="Sequências" count={parsed.sequences} />
-              <ImportRow icon="credit-card" label="Gateways"   count={parsed.gateways} />
-              <ImportRow icon="link"        label="Links"      count={parsed.links} />
-              <ImportRow icon="tag"         label="Tags"       count={parsed.tags} />
+              <Row icon="bot"         label="Bots"       count={parsed.bots} />
+              <Row icon="git-branch"  label="Fluxos"     count={parsed.flows} />
+              <Row icon="layers"      label="Sequências" count={parsed.sequences} />
+              <Row icon="credit-card" label="Gateways"   count={parsed.gateways} />
+              <Row icon="link"        label="Links"      count={parsed.links} />
+              <Row icon="tag"         label="Tags"       count={parsed.tags} />
             </div>
-            <div className="mt-3 pt-3 border-t border-border flex items-start gap-2 text-[11px] text-warning bg-warning-soft/40 -mx-1 px-3 py-2 rounded">
+            <div className="mt-3 pt-3 border-t border-border flex items-start gap-2 text-[11px] text-warning">
               <Icon name="alert-triangle" size={12} className="mt-0.5 shrink-0" />
               <span>A importação <strong>substitui</strong> itens com o mesmo ID e <strong>cria os novos</strong>. Exporte um backup antes de continuar.</span>
             </div>
@@ -772,7 +1154,7 @@ function ImportConfigModal({ open, onClose, onToast }: {
   )
 }
 
-/* ── Tool 6 — Export Config ──────────────────────────────────────── */
+/* ── Tool 7 — Export Config ──────────────────────────────────────────────── */
 
 function ExportConfigModal({ open, onClose, onToast }: {
   open: boolean; onClose: () => void; onToast: (msg: string, type?: 'success' | 'error') => void
@@ -789,10 +1171,7 @@ function ExportConfigModal({ open, onClose, onToast }: {
   useEffect(() => {
     if (!open) return
     setLoading(true)
-    getExportCountsAction()
-      .then(setCounts)
-      .catch(() => setCounts(null))
-      .finally(() => setLoading(false))
+    getExportCountsAction().then(setCounts).catch(() => setCounts(null)).finally(() => setLoading(false))
   }, [open])
 
   function toggle(key: string) { setParts(p => ({ ...p, [key]: !p[key] })) }
@@ -812,11 +1191,8 @@ function ExportConfigModal({ open, onClose, onToast }: {
       track('config_exported', { parts: selected, total_sections: selected.length })
       onToast('Backup JSON gerado e baixado com sucesso.')
       onClose()
-    } catch (e) {
-      onToast(e instanceof Error ? e.message : 'Erro ao exportar.', 'error')
-    } finally {
-      setExporting(false)
-    }
+    } catch (e) { onToast(e instanceof Error ? e.message : 'Erro ao exportar.', 'error') }
+    finally { setExporting(false) }
   }
 
   const totalSelected = Object.values(parts).filter(Boolean).length
@@ -838,36 +1214,46 @@ function ExportConfigModal({ open, onClose, onToast }: {
       footer={<>
         <Btn variant="secondary" onClick={onClose}>Cancelar</Btn>
         <Btn variant="primary" icon="download" disabled={totalSelected === 0 || exporting || loading} onClick={doExport}>
-          {exporting ? <><Spinner /> Gerando…</> : `Baixar JSON (${totalSelected})`}
+          {exporting ? <><Spinner size={3} /> Gerando…</> : `Baixar JSON (${totalSelected})`}
         </Btn>
       </>}>
-      <div className="space-y-1">
-        {loading && (
+      <div>
+        {loading ? (
           <div className="flex items-center gap-2 py-4 justify-center text-[12px] text-text-muted">
-            <Spinner /> Carregando contagens do banco…
+            <Spinner size={4} /> Carregando contagens do banco…
+          </div>
+        ) : (
+          <div className="space-y-0.5">
+            {EXPORT_ROWS.map((p) => (
+              <label key={p.key} className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-surface-2 cursor-pointer">
+                <input type="checkbox" checked={parts[p.key] ?? false} onChange={() => toggle(p.key)}
+                  className="w-4 h-4 rounded border-border cursor-pointer accent-[var(--primary)] shrink-0" />
+                <Icon name={p.icon} size={13} className="text-text-muted shrink-0" />
+                <span className="flex-1 text-[12.5px] text-text">{p.label}</span>
+                {p.warn && <span className="inline-flex items-center px-1.5 h-5 rounded bg-warning-soft text-warning text-[10.5px] font-semibold">LGPD</span>}
+                <span className="text-[11.5px] text-text-muted shrink-0">
+                  {counts ? fmtNum(counts[p.key as keyof ExportCounts] ?? 0) : '—'}
+                </span>
+              </label>
+            ))}
           </div>
         )}
-        {!loading && EXPORT_ROWS.map((p) => (
-          <label key={p.key} className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-surface-2 cursor-pointer">
-            <Checkbox checked={parts[p.key] ?? false} onChange={() => toggle(p.key)} />
-            <Icon name={p.icon} size={13} className="text-text-muted shrink-0" />
-            <span className="flex-1 text-[12.5px] text-text">{p.label}</span>
-            {p.warn && <span className="inline-flex items-center px-1.5 h-5 rounded bg-warning-soft text-warning text-[10.5px] font-semibold">LGPD</span>}
-            <span className="text-[11.5px] text-text-muted shrink-0">
-              {counts ? fmtNum(counts[p.key as keyof ExportCounts] ?? 0) : '—'}
-            </span>
-          </label>
-        ))}
-      </div>
-      <div className="mt-3 pt-3 border-t border-border flex items-start gap-2 text-[11.5px] text-text-muted">
-        <Icon name="info" size={13} className="mt-0.5 shrink-0" />
-        <span>Tokens de bots e chaves de gateway <strong>não</strong> são incluídos no backup. Reconexão manual necessária ao importar em outra conta.</span>
+        <div className="mt-3 pt-3 border-t border-border space-y-2">
+          <div className="flex items-start gap-2 text-[11.5px] text-text-muted">
+            <Icon name="info" size={13} className="mt-0.5 shrink-0" />
+            <span>Tokens de bots e chaves de gateway <strong>não</strong> são incluídos. Reconexão manual necessária ao importar em outra conta.</span>
+          </div>
+          <div className="flex items-start gap-2 text-[11.5px] text-text-muted">
+            <Icon name="refresh-cw" size={13} className="mt-0.5 shrink-0 text-primary" />
+            <span className="text-primary">Dica: automatize backups semanais com o Vercel Cron apontando para <code className="font-mono bg-surface px-1 rounded">/api/cron/export-backup</code>.</span>
+          </div>
+        </div>
       </div>
     </Modal>
   )
 }
 
-/* ── Tool 7 — Diagnostics ────────────────────────────────────────── */
+/* ── Tool 8 — Diagnostics ────────────────────────────────────────────────── */
 
 const DIAG_CHECKS = [
   { id: 'bots',     label: 'Bots conectados',      icon: 'bot',         fn: checkBotsAction },
@@ -875,50 +1261,75 @@ const DIAG_CHECKS = [
   { id: 'gateways', label: 'Gateways de pagamento', icon: 'credit-card', fn: checkGatewaysAction },
   { id: 'queue',    label: 'Fila de envios',        icon: 'inbox',       fn: checkQueueAction },
   { id: 'dns',      label: 'DNS e certificados',    icon: 'globe',       fn: checkDnsAction },
-  { id: 'storage',  label: 'Armazenamento e cache', icon: 'database',    fn: checkStorageAction },
+  { id: 'storage',  label: 'Armazenamento e dados', icon: 'database',    fn: checkStorageAction },
 ] as const
 
 function DiagnosticsModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { track }   = useAnalytics()
+  const { track }             = useAnalytics()
   const [running, setRunning] = useState(false)
   const [results, setResults] = useState<Record<string, DiagResult>>({})
-
-  useEffect(() => { if (open) { setRunning(false); setResults({}) } }, [open])
-
-  async function runAll() {
-    setRunning(true); setResults({})
-    const startTs = Date.now()
-
-    for (const check of DIAG_CHECKS) {
-      setResults(p => ({ ...p, [check.id]: { status: 'running', detail: '' } }))
-      try {
-        const r = await (check.fn as () => Promise<{ pass: boolean; detail: string }>)()
-        setResults(p => ({ ...p, [check.id]: { status: r.pass ? 'pass' : 'fail', detail: r.detail } }))
-      } catch (e) {
-        setResults(p => ({ ...p, [check.id]: { status: 'fail', detail: e instanceof Error ? e.message : 'Falha na verificação.' } }))
-      }
-    }
-
-    setRunning(false)
-    const finalResults = await new Promise<Record<string, DiagResult>>(resolve =>
-      setResults(p => { resolve(p); return p })
-    )
-    const failed = Object.values(finalResults).filter(r => r.status === 'fail').length
-    track('diagnostics_run', { checks: DIAG_CHECKS.length, failed })
-    void startTs
-  }
+  const [copied,  setCopied]  = useState(false)
+  const hasRun = Object.keys(results).length > 0
 
   const completed = Object.values(results).filter(r => r.status === 'pass' || r.status === 'fail').length
   const failed    = Object.values(results).filter(r => r.status === 'fail').length
-  const allDone   = completed === DIAG_CHECKS.length
+  const allDone   = hasRun && completed === DIAG_CHECKS.length && !running
+
+  const runAll = useCallback(async () => {
+    setRunning(true); setResults({})
+    for (const check of DIAG_CHECKS) {
+      setResults(p => ({ ...p, [check.id]: { status: 'running', detail: '' } }))
+      const t0 = Date.now()
+      try {
+        const r = await (check.fn as () => Promise<{ pass: boolean; detail: string }>)()
+        setResults(p => ({ ...p, [check.id]: { status: r.pass ? 'pass' : 'fail', detail: r.detail, timeMs: Date.now() - t0 } }))
+      } catch (e) {
+        setResults(p => ({ ...p, [check.id]: { status: 'fail', detail: e instanceof Error ? e.message : 'Falha.', timeMs: Date.now() - t0 } }))
+      }
+    }
+    setRunning(false)
+  }, [])
+
+  // Auto-run when modal opens
+  useEffect(() => {
+    if (open) {
+      setResults({}); setCopied(false)
+      const t = setTimeout(() => runAll(), 300)
+      return () => clearTimeout(t)
+    }
+  }, [open, runAll])
+
+  useEffect(() => {
+    if (allDone) track('diagnostics_run', { checks: DIAG_CHECKS.length, failed })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allDone])
+
+  function copyResults() {
+    const lines = DIAG_CHECKS.map(c => {
+      const r = results[c.id]
+      if (!r || r.status === 'idle') return `[ ] ${c.label}: Não verificado`
+      const icon = r.status === 'pass' ? '[✓]' : r.status === 'fail' ? '[✗]' : '[-]'
+      const time = r.timeMs != null ? ` (${r.timeMs}ms)` : ''
+      return `${icon} ${c.label}: ${r.detail}${time}`
+    }).join('\n')
+    const header = `Diagnóstico Umbra Bot — ${new Date().toLocaleString('pt-BR')}\n${'─'.repeat(48)}\n`
+    navigator.clipboard.writeText(header + lines)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
 
   return (
     <Modal open={open} onClose={onClose}
-      title="Diagnóstico do sistema" subtitle="Verifique a saúde dos componentes do workspace." size="lg"
+      title="Diagnóstico do sistema" subtitle="Checagem automática de todos os componentes do workspace." size="lg"
       footer={<>
+        {allDone && (
+          <Btn variant="ghost" icon={copied ? 'check' : 'copy'} onClick={copyResults}>
+            {copied ? 'Copiado!' : 'Copiar resultado'}
+          </Btn>
+        )}
         <Btn variant="secondary" onClick={onClose}>Fechar</Btn>
         <Btn variant="primary" icon="play" disabled={running} onClick={runAll}>
-          {running ? <><Spinner /> Verificando ({completed}/{DIAG_CHECKS.length})…</> : 'Iniciar diagnóstico'}
+          {running ? <><Spinner size={3} /> Verificando ({completed}/{DIAG_CHECKS.length})…</> : 'Repetir diagnóstico'}
         </Btn>
       </>}>
       <div className="space-y-2">
@@ -932,14 +1343,17 @@ function DiagnosticsModal({ open, onClose }: { open: boolean; onClose: () => voi
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="text-[12.5px] font-medium text-text">{c.label}</div>
-                  {!r               && <div className="text-[11px] text-text-muted mt-0.5">Aguardando início…</div>}
+                  {!r                      && <div className="text-[11px] text-text-muted mt-0.5">Iniciando…</div>}
                   {r?.status === 'running' && <div className="text-[11px] text-text-muted mt-0.5">Verificando…</div>}
                   {r?.status === 'pass'    && <div className="text-[11px] text-success mt-0.5 leading-snug">{r.detail}</div>}
                   {r?.status === 'fail'    && <div className="text-[11px] text-danger mt-0.5 leading-snug">{r.detail}</div>}
                 </div>
-                <div className="shrink-0">
+                <div className="flex items-center gap-2 shrink-0">
+                  {r?.timeMs != null && (r.status === 'pass' || r.status === 'fail') && (
+                    <span className="text-[10px] text-text-subtle font-mono">{r.timeMs}ms</span>
+                  )}
                   {!r                      && <span className="w-4 h-4 rounded-full border border-border-strong inline-block" />}
-                  {r?.status === 'running' && <Spinner />}
+                  {r?.status === 'running' && <Spinner size={4} />}
                   {r?.status === 'pass'    && <Icon name="check-circle-2" size={16} className="text-success" />}
                   {r?.status === 'fail'    && <Icon name="x-circle"       size={16} className="text-danger" />}
                 </div>
@@ -956,7 +1370,7 @@ function DiagnosticsModal({ open, onClose }: { open: boolean; onClose: () => voi
             <div className={`font-semibold ${failed === 0 ? 'text-success' : 'text-warning'}`}>
               {failed === 0 ? 'Tudo certo · sistema operacional' : `${failed} verificaç${failed === 1 ? 'ão falhou' : 'ões falharam'}`}
             </div>
-            {failed > 0 && <div className="text-text-muted mt-0.5">Revise os itens em vermelho e acesse a tela de Alertas para mais detalhes.</div>}
+            {failed > 0 && <div className="text-text-muted mt-0.5">Revise os itens em vermelho e acesse Alertas para mais detalhes.</div>}
           </div>
         </div>
       )}
@@ -964,12 +1378,12 @@ function DiagnosticsModal({ open, onClose }: { open: boolean; onClose: () => voi
   )
 }
 
-/* ── Tool 8 — Clear Cache ────────────────────────────────────────── */
+/* ── Tool 9 — Clear Cache ────────────────────────────────────────────────── */
 
 function ClearCacheModal({ open, onClose, onToast }: {
   open: boolean; onClose: () => void; onToast: (msg: string, type?: 'success' | 'error') => void
 }) {
-  const { track }               = useAnalytics()
+  const { track }                   = useAnalytics()
   const [confirming, setConfirming] = useState(false)
   const [clearing,   setClearing]   = useState(false)
 
@@ -982,11 +1396,8 @@ function ClearCacheModal({ open, onClose, onToast }: {
       track('cache_cleared', {})
       onToast('Cache do workspace limpo. Páginas serão recarregadas com dados frescos.')
       onClose()
-    } catch (e) {
-      onToast(e instanceof Error ? e.message : 'Erro ao limpar cache.', 'error')
-    } finally {
-      setClearing(false)
-    }
+    } catch (e) { onToast(e instanceof Error ? e.message : 'Erro ao limpar cache.', 'error') }
+    finally { setClearing(false) }
   }
 
   return (
@@ -995,7 +1406,7 @@ function ClearCacheModal({ open, onClose, onToast }: {
         <>
           <Btn variant="secondary" onClick={() => setConfirming(false)}>Cancelar</Btn>
           <Btn variant="danger" disabled={clearing} onClick={doClear}>
-            {clearing ? <><Spinner /> Limpando…</> : 'Sim, limpar tudo'}
+            {clearing ? <><Spinner size={3} /> Limpando…</> : 'Sim, limpar tudo'}
           </Btn>
         </>
       ) : (
@@ -1015,15 +1426,119 @@ function ClearCacheModal({ open, onClose, onToast }: {
   )
 }
 
-/* ── Modal registry ──────────────────────────────────────────────── */
+/* ── Tool 10 — LGPD Check ────────────────────────────────────────────────── */
 
-type ModalProps = {
-  open: boolean
-  onClose: () => void
-  onToast: (msg: string, type?: 'success' | 'error') => void
-  bots:    RawBot[]
-  flows:   RawFlow[]
+function LgpdCheckModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { track }             = useAnalytics()
+  const [data,    setData]    = useState<LgpdData | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [err,     setErr]     = useState('')
+
+  useEffect(() => {
+    if (!open) return
+    setLoading(true); setErr(''); setData(null)
+    getLgpdDataAction()
+      .then(d => { setData(d); track('lgpd_check_run', { contacts: d.total, with_email: d.with_email, with_phone: d.with_phone }) })
+      .catch(e => setErr(e instanceof Error ? e.message : 'Erro ao verificar dados.'))
+      .finally(() => setLoading(false))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open])
+
+  function pct(n: number) { return data && data.total > 0 ? `${((n / data.total) * 100).toFixed(0)}%` : '0%' }
+
+  const rows = data ? [
+    { label: 'Nome',          count: data.with_name,     icon: 'bot',      level: 'info',    lgpd: 'Dado pessoal' },
+    { label: 'E-mail',        count: data.with_email,    icon: 'send',     level: 'warning', lgpd: 'Dado sensível' },
+    { label: 'Telefone',      count: data.with_phone,    icon: 'key',      level: 'warning', lgpd: 'Dado sensível' },
+    { label: 'Username TG',   count: data.with_username, icon: 'link',     level: 'info',    lgpd: 'Dado público' },
+    { label: 'Cidade/Estado', count: data.with_city,     icon: 'globe',    level: 'info',    lgpd: 'Dado pessoal' },
+    { label: 'Tags',          count: data.total_tag_assignments, icon: 'tag', level: 'ok', lgpd: 'Metadado' },
+  ] : []
+
+  const levelColor = (l: string) =>
+    l === 'warning' ? 'text-warning' : l === 'ok' ? 'text-success' : 'text-text-muted'
+  const levelBg = (l: string) =>
+    l === 'warning' ? 'bg-warning-soft text-warning' : l === 'ok' ? 'bg-success-soft text-success' : 'bg-surface-2 text-text-muted'
+
+  return (
+    <Modal open={open} onClose={onClose}
+      title="Verificador de LGPD" subtitle="Dados pessoais armazenados nos seus contatos." size="md"
+      footer={<Btn variant="primary" onClick={onClose}>Fechar</Btn>}>
+      <div className="space-y-3.5">
+        {loading && (
+          <div className="flex items-center gap-2 py-8 justify-center text-[12px] text-text-muted">
+            <Spinner size={4} /> Verificando dados no banco…
+          </div>
+        )}
+        {err && (
+          <div className="flex items-start gap-2.5 bg-danger-soft border border-danger/30 rounded-lg p-3 text-[12px] text-danger">
+            <Icon name="alert-circle" size={14} className="mt-0.5" /> {err}
+          </div>
+        )}
+        {data && (
+          <>
+            {/* Summary */}
+            <div className="bg-surface-2/40 border border-border rounded-xl p-4">
+              <div className="text-[10.5px] uppercase tracking-wider font-semibold text-text-subtle mb-3">Resumo do banco</div>
+              <div className="grid grid-cols-3 gap-3 text-center">
+                <div>
+                  <div className="text-[22px] font-semibold text-text">{fmtNum(data.total)}</div>
+                  <div className="text-[11px] text-text-muted">Contatos totais</div>
+                </div>
+                <div>
+                  <div className="text-[22px] font-semibold text-warning">{fmtNum(data.with_email + data.with_phone)}</div>
+                  <div className="text-[11px] text-text-muted">Dados sensíveis</div>
+                </div>
+                <div>
+                  <div className="text-[22px] font-semibold text-primary">{data.unique_tags}</div>
+                  <div className="text-[11px] text-text-muted">Tags únicas</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Table */}
+            <div className="border border-border rounded-lg overflow-hidden">
+              <table className="w-full text-[12px]">
+                <thead>
+                  <tr className="bg-surface-2/50 border-b border-border">
+                    <th className="text-left px-3 py-2 text-[10.5px] uppercase tracking-wider font-semibold text-text-subtle">Tipo de dado</th>
+                    <th className="text-right px-3 py-2 text-[10.5px] uppercase tracking-wider font-semibold text-text-subtle">Contatos</th>
+                    <th className="text-right px-3 py-2 text-[10.5px] uppercase tracking-wider font-semibold text-text-subtle">%</th>
+                    <th className="text-right px-3 py-2 text-[10.5px] uppercase tracking-wider font-semibold text-text-subtle">LGPD</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {rows.map(row => (
+                    <tr key={row.label} className="hover:bg-surface-2/30">
+                      <td className="px-3 py-2.5 text-text">{row.label}</td>
+                      <td className={`px-3 py-2.5 text-right font-semibold ${levelColor(row.level)}`}>{fmtNum(row.count)}</td>
+                      <td className={`px-3 py-2.5 text-right text-text-muted`}>{pct(row.count)}</td>
+                      <td className="px-3 py-2.5 text-right">
+                        <span className={`inline-flex items-center px-1.5 h-5 rounded text-[10px] font-semibold ${levelBg(row.level)}`}>
+                          {row.lgpd}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Note */}
+            <div className="flex items-start gap-2 bg-success-soft/50 border border-success/20 rounded-lg p-3 text-[11.5px] text-text leading-relaxed">
+              <Icon name="shield" size={13} className="text-success mt-0.5 shrink-0" />
+              <span>Todos os dados são armazenados no Supabase com RLS ativo. <strong>Apenas você</strong> tem acesso aos seus contatos. Tokens e chaves de API são criptografados com AES-256-GCM.</span>
+            </div>
+          </>
+        )}
+      </div>
+    </Modal>
+  )
 }
+
+/* ── Modal registry ──────────────────────────────────────────────────────── */
+
+type ModalProps = { open: boolean; onClose: () => void; onToast: (msg: string, type?: 'success' | 'error') => void; bots: RawBot[]; flows: RawFlow[] }
 
 function ActiveModal({ toolId, ...props }: { toolId: ToolId | null } & ModalProps) {
   if (!toolId) return null
@@ -1031,28 +1546,32 @@ function ActiveModal({ toolId, ...props }: { toolId: ToolId | null } & ModalProp
     case 'test_message':   return <TestMessageModal   open={props.open} onClose={props.onClose} bots={props.bots} />
     case 'validate_token': return <ValidateTokenModal open={props.open} onClose={props.onClose} />
     case 'qr_code':        return <QRCodeModal        open={props.open} onClose={props.onClose} bots={props.bots} />
+    case 'deep_link':      return <DeepLinkModal      open={props.open} onClose={props.onClose} bots={props.bots} />
     case 'preview_flow':   return <PreviewFlowModal   open={props.open} onClose={props.onClose} flows={props.flows} />
     case 'import_config':  return <ImportConfigModal  open={props.open} onClose={props.onClose} onToast={props.onToast} />
     case 'export_config':  return <ExportConfigModal  open={props.open} onClose={props.onClose} onToast={props.onToast} />
     case 'diagnostics':    return <DiagnosticsModal   open={props.open} onClose={props.onClose} />
     case 'clear_cache':    return <ClearCacheModal    open={props.open} onClose={props.onClose} onToast={props.onToast} />
+    case 'lgpd_check':     return <LgpdCheckModal     open={props.open} onClose={props.onClose} />
   }
 }
 
-/* ── ToolsClient (main) ──────────────────────────────────────────── */
+/* ── ToolsClient (main) ──────────────────────────────────────────────────── */
 
 export function ToolsClient({ bots, flows }: { bots: RawBot[]; flows: RawFlow[] }) {
   const { track } = useAnalytics()
   const [openTool, setOpenTool] = useState<ToolId | null>(null)
   const [toast, setToast]       = useState<{ msg: string; type: 'success' | 'error' } | null>(null)
+  const toastKey                = useRef(0)
 
   useEffect(() => {
     if (!toast) return
     const t = setTimeout(() => setToast(null), 3500)
     return () => clearTimeout(t)
-  }, [toast])
+  }, [toast, toastKey.current]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleToast = useCallback((msg: string, type: 'success' | 'error' = 'success') => {
+    toastKey.current++
     setToast({ msg, type })
   }, [])
 
@@ -1075,30 +1594,11 @@ export function ToolsClient({ bots, flows }: { bots: RawBot[]; flows: RawFlow[] 
       <div className="flex items-start justify-between gap-3 mb-6">
         <div>
           <h1 className="text-[20px] font-semibold text-text">Ferramentas</h1>
-          <p className="text-[13px] text-text-muted mt-0.5">Utilitários auxiliares para sua operação — testes, diagnósticos, backup e mais.</p>
+          <p className="text-[13px] text-text-muted mt-0.5">Utilitários para testes, diagnósticos, backup e conformidade.</p>
         </div>
       </div>
 
-      {toast && (
-        <div className={`mb-4 flex items-center gap-2.5 rounded-lg px-3.5 py-2 border ${
-          toast.type === 'error'
-            ? 'bg-danger-soft border-danger/30'
-            : 'bg-success-soft border-success/30'
-        }`}>
-          <Icon
-            name={toast.type === 'error' ? 'alert-circle' : 'check-circle-2'}
-            size={15}
-            className={toast.type === 'error' ? 'text-danger' : 'text-success'}
-          />
-          <div className={`text-[12.5px] flex-1 ${toast.type === 'error' ? 'text-danger' : 'text-success'}`}>
-            {toast.msg}
-          </div>
-          <button onClick={() => setToast(null)}
-            className="w-6 h-6 inline-flex items-center justify-center rounded-md opacity-70 hover:opacity-100 focus:outline-none">
-            <Icon name="x" size={11} />
-          </button>
-        </div>
-      )}
+      {toast && <ToastBar msg={toast.msg} type={toast.type} onClose={() => setToast(null)} />}
 
       <div className="space-y-6">
         {Object.entries(grouped).map(([cat, items]) => (
@@ -1109,9 +1609,7 @@ export function ToolsClient({ bots, flows }: { bots: RawBot[]; flows: RawFlow[] 
               <div className="flex-1 h-px bg-border" />
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-              {items.map(t => (
-                <ToolCard key={t.id} tool={t} onOpen={() => handleOpen(t.id)} />
-              ))}
+              {items.map(t => <ToolCard key={t.id} tool={t} onOpen={() => handleOpen(t.id)} />)}
             </div>
           </section>
         ))}

@@ -11,6 +11,7 @@ export async function testMessageAction(
   botId: string,
   chatId: string,
   text: string,
+  format: 'HTML' | 'Markdown' | 'none' = 'HTML',
 ): Promise<{ success: boolean; messageId: number | null; time: string; error: string | null }> {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -26,12 +27,15 @@ export async function testMessageAction(
   const token = decryptToken(bot.token as string)
   const start = Date.now()
 
+  const msgBody: Record<string, unknown> = { chat_id: chatId.trim(), text }
+  if (format !== 'none') msgBody.parse_mode = format
+
   let res: Response
   try {
     res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ chat_id: chatId.trim(), text, parse_mode: 'HTML' }),
+      body:    JSON.stringify(msgBody),
       cache:   'no-store',
       signal:  AbortSignal.timeout(10_000),
     })
@@ -457,4 +461,49 @@ export async function clearCacheAction(): Promise<{ ok: boolean }> {
   revalidatePath('/', 'layout')
 
   return { ok: true }
+}
+
+/* ── getLgpdDataAction ─────────────────────────────────────────────────── */
+
+export async function getLgpdDataAction(): Promise<{
+  total: number
+  with_name: number
+  with_email: number
+  with_phone: number
+  with_username: number
+  with_city: number
+  unique_tags: number
+  total_tag_assignments: number
+}> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) throw new Error('Não autorizado.')
+
+  const [totalRes, nameRes, emailRes, phoneRes, usernameRes, cityRes, tagsRes] = await Promise.all([
+    supabase.from('contacts').select('*', { count: 'exact', head: true }).eq('user_id', user.id),
+    supabase.from('contacts').select('*', { count: 'exact', head: true }).eq('user_id', user.id).not('name', 'is', null).neq('name', ''),
+    supabase.from('contacts').select('*', { count: 'exact', head: true }).eq('user_id', user.id).not('email', 'is', null).neq('email', ''),
+    supabase.from('contacts').select('*', { count: 'exact', head: true }).eq('user_id', user.id).not('phone', 'is', null).neq('phone', ''),
+    supabase.from('contacts').select('*', { count: 'exact', head: true }).eq('user_id', user.id).not('username', 'is', null).neq('username', ''),
+    supabase.from('contacts').select('*', { count: 'exact', head: true }).eq('user_id', user.id).not('city', 'is', null).neq('city', ''),
+    supabase.from('contacts').select('tags').eq('user_id', user.id).not('tags', 'eq', '{}'),
+  ])
+
+  const allTags = new Set<string>()
+  let totalTagAssignments = 0
+  ;(tagsRes.data ?? []).forEach(c => {
+    const tags = (c.tags as string[] | null) ?? []
+    tags.forEach(t => { allTags.add(t); totalTagAssignments++ })
+  })
+
+  return {
+    total:                totalRes.count ?? 0,
+    with_name:            nameRes.count ?? 0,
+    with_email:           emailRes.count ?? 0,
+    with_phone:           phoneRes.count ?? 0,
+    with_username:        usernameRes.count ?? 0,
+    with_city:            cityRes.count ?? 0,
+    unique_tags:          allTags.size,
+    total_tag_assignments: totalTagAssignments,
+  }
 }

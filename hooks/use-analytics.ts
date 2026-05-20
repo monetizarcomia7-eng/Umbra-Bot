@@ -66,15 +66,18 @@ type EventMap = {
   campaign_deleted:          Record<string, never>
   // Aba Ferramentas
   tool_opened:               { tool_id: string }
-  test_message_sent:         { bot_id: string; success: boolean; time_ms: number }
+  test_message_sent:         { bot_id: string; success: boolean; time_ms: number; format: string }
   token_validated:           { valid: boolean }
   qr_generated:              { bot_username: string }
   qr_downloaded:             { bot_username: string }
   flow_previewed:            { flow_id: string; node_count: number }
+  flow_sim_completed:        { flow_id: string; steps_taken: number; branches_chosen: number }
   config_exported:           { parts: string[]; total_sections: number }
   config_imported:           { flows: number; sequences: number; gateways: number; links: number; webhooks: number }
   diagnostics_run:           { checks: number; failed: number }
   cache_cleared:             Record<string, never>
+  deep_link_generated:       { bot_username: string; param: string }
+  lgpd_check_run:            { contacts: number; with_email: number; with_phone: number }
 }
 
 export function useAnalytics() {
