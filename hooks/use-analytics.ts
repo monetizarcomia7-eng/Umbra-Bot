@@ -53,6 +53,11 @@ type EventMap = {
   alert_reopened:            { alert_type: string }
   all_alerts_resolved:       { count: number }
   alert_action_clicked:      { alert_type: string; action: string }
+  // Aba Redirecionadores
+  redirect_created:          { slug: string; cloaking: boolean; utm_enabled: boolean; redirect_type: string }
+  redirect_updated:          { slug: string }
+  redirect_status_changed:   { status: string }
+  redirect_deleted:          Record<string, never>
 }
 
 export function useAnalytics() {
