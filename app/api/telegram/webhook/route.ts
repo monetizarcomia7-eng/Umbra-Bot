@@ -415,13 +415,15 @@ export async function POST(request: NextRequest) {
   const isNewContact = !existingContact
 
   // Upsert contact (always keep info up to date)
-  const { data: upserted } = await supabase
+  const fullName = [firstName, lastName].filter(Boolean).join(' ')
+  const { data: upserted, error: upsertError } = await supabase
     .from('contacts')
     .upsert(
       {
         user_id:     bot.user_id,
         bot_id:      bot.id,
         telegram_id: telegramId,
+        name:        fullName || firstName,
         first_name:  firstName,
         last_name:   lastName,
         username,
@@ -431,6 +433,10 @@ export async function POST(request: NextRequest) {
     )
     .select('id')
     .single()
+
+  if (upsertError) {
+    console.error('[webhook] upsert contact error:', upsertError.message, upsertError.details)
+  }
 
   const contactId = existingContact?.id ?? upserted?.id ?? null
 
