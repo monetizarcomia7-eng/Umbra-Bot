@@ -3,6 +3,8 @@ import { createClient } from '@/lib/supabase/server'
 import { DashboardLayout } from '@/components/dashboard/Layout'
 import RemarketingClient, { type RawCampaign, type RawBotOption } from './RemarketingClient'
 
+const PAGE_SIZE = 50
+
 export default async function RemarketingPage() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -11,10 +13,11 @@ export default async function RemarketingPage() {
   const [campaignsRes, botsRes] = await Promise.all([
     supabase
       .from('remarketing_campaigns')
-      .select('id, name, description, trigger_type, audience, trigger_config, status, leads_recovered, revenue_recovered, leads_triggered, conversion, steps, step_stats, bot_id, created_at, updated_at')
+      // step_stats omitido: payload grande, só usado no PerformanceCard do editor (lazy-load)
+      .select('id, name, description, trigger_type, audience, trigger_config, status, leads_recovered, revenue_recovered, leads_triggered, conversion, steps, bot_id, created_at, updated_at')
       .eq('user_id', user.id)
       .order('updated_at', { ascending: false })
-      .limit(100),
+      .limit(PAGE_SIZE),
     supabase
       .from('bots')
       .select('id, name, username, color')
@@ -22,12 +25,15 @@ export default async function RemarketingPage() {
       .order('added_at', { ascending: false }),
   ])
 
+  const initialCampaigns = (campaignsRes.data ?? []) as unknown as RawCampaign[]
+
   return (
     <DashboardLayout>
       <RemarketingClient
-        initialCampaigns={(campaignsRes.data ?? []) as unknown as RawCampaign[]}
+        initialCampaigns={initialCampaigns}
         bots={(botsRes.data ?? []) as unknown as RawBotOption[]}
         userId={user.id}
+        initialHasMore={initialCampaigns.length >= PAGE_SIZE}
       />
     </DashboardLayout>
   )

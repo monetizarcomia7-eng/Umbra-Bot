@@ -27,7 +27,7 @@ export interface RawCampaign {
   leads_triggered: number
   conversion: number
   steps: CampaignStep[]
-  step_stats: number[]
+  step_stats?: number[]  // omitido na listagem SSR; lazy-load ao abrir editor
   bot_id: string | null
   created_at: string
   updated_at: string
@@ -1304,13 +1304,16 @@ function CampaignEditor({ campaign, bots, saving, onBack, onSave, onActivate, on
 
 /* ── Campaign List ───────────────────────────────────────────── */
 
-function CampaignList({ campaigns, onOpen, onCreate, onDuplicate, onDelete, onShowTemplates }: {
+function CampaignList({ campaigns, onOpen, onCreate, onDuplicate, onDelete, onShowTemplates, hasMore, loadingMore, onLoadMore }: {
   campaigns: Campaign[]
   onOpen: (id: string) => void
   onCreate: () => void
   onDuplicate: (id: string) => void
   onDelete: (id: string) => void
   onShowTemplates: () => void
+  hasMore: boolean
+  loadingMore: boolean
+  onLoadMore: () => void
 }) {
   const { track } = useAnalytics()
   const [search, setSearch]   = useState('')
@@ -1402,6 +1405,19 @@ function CampaignList({ campaigns, onOpen, onCreate, onDuplicate, onDelete, onSh
               <div className="text-[11.5px] text-text-muted mt-1 max-w-[220px] leading-snug">Comece do zero ou use um template pronto.</div>
             </button>
           </div>
+
+          {hasMore && (
+            <div className="flex justify-center mt-5">
+              <Btn variant="secondary" loading={loadingMore} onClick={onLoadMore}>
+                Carregar mais campanhas
+              </Btn>
+            </div>
+          )}
+          {!hasMore && campaigns.length >= 50 && (
+            <p className="text-center text-[11.5px] text-text-subtle mt-4">
+              {campaigns.length} campanhas carregadas
+            </p>
+          )}
         </>
       )}
     </>
@@ -1410,24 +1426,30 @@ function CampaignList({ campaigns, onOpen, onCreate, onDuplicate, onDelete, onSh
 
 /* ── Main Client Component ───────────────────────────────────── */
 
+const LIST_SELECT = 'id, name, description, trigger_type, audience, trigger_config, status, leads_recovered, revenue_recovered, leads_triggered, conversion, steps, bot_id, created_at, updated_at'
+const PAGE_SIZE   = 50
+
 interface Props {
   initialCampaigns: RawCampaign[]
   bots: RawBotOption[]
   userId: string
+  initialHasMore: boolean
 }
 
-export default function RemarketingClient({ initialCampaigns, bots, userId }: Props) {
+export default function RemarketingClient({ initialCampaigns, bots, userId, initialHasMore }: Props) {
   const router = useRouter()
   const { track } = useAnalytics()
   const supabase = createClient()
 
-  const [campaigns, setCampaigns] = useState<Campaign[]>(() => initialCampaigns.map(mapRaw))
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const [saving, setSaving] = useState(false)
+  const [campaigns,    setCampaigns]    = useState<Campaign[]>(() => initialCampaigns.map(mapRaw))
+  const [editingId,    setEditingId]    = useState<string | null>(null)
+  const [saving,       setSaving]       = useState(false)
   const [showTemplates, setShowTemplates] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<Campaign | null>(null)
-  const [deleting, setDeleting] = useState(false)
-  const [toast, setToastState] = useState<ToastState | null>(null)
+  const [deleting,     setDeleting]     = useState(false)
+  const [toast,        setToastState]   = useState<ToastState | null>(null)
+  const [hasMore,      setHasMore]      = useState(initialHasMore)
+  const [loadingMore,  setLoadingMore]  = useState(false)
 
   function showToast(msg: string, type: 'success' | 'error' = 'success') {
     setToastState({ msg, type })
@@ -1461,6 +1483,46 @@ export default function RemarketingClient({ initialCampaigns, bots, userId }: Pr
 
     return () => { supabase.removeChannel(channel) }
   }, [userId])
+
+  /* ── Paginação ──────────────────────────────────────────────── */
+
+  async function loadMore() {
+    setLoadingMore(true)
+    const { data } = await supabase
+      .from('remarketing_campaigns')
+      .select(LIST_SELECT)
+      .eq('user_id', userId)
+      .order('updated_at', { ascending: false })
+      .range(campaigns.length, campaigns.length + PAGE_SIZE - 1)
+    setLoadingMore(false)
+    if (!data || data.length === 0) { setHasMore(false); return }
+    setCampaigns((prev) => {
+      const ids = new Set(prev.map((c) => c.id))
+      const news = (data as unknown as RawCampaign[]).filter((r) => !ids.has(r.id)).map(mapRaw)
+      return [...prev, ...news]
+    })
+    setHasMore(data.length >= PAGE_SIZE)
+  }
+
+  /* ── Lazy-load step_stats ao abrir editor ────────────────────── */
+
+  async function openCampaign(id: string) {
+    setEditingId(id)
+    // step_stats não vem do SSR (payload da listagem) — busca sob demanda para o PerformanceCard
+    const alreadyLoaded = campaigns.find((c) => c.id === id)
+    if (alreadyLoaded && alreadyLoaded.stepStats.length > 0) return
+    const { data } = await supabase
+      .from('remarketing_campaigns')
+      .select('step_stats')
+      .eq('id', id)
+      .eq('user_id', userId)
+      .single()
+    if (data?.step_stats) {
+      setCampaigns((prev) => prev.map((c) =>
+        c.id === id ? { ...c, stepStats: data.step_stats as number[] } : c
+      ))
+    }
+  }
 
   /* ── CRUD ───────────────────────────────────────────────────── */
 
@@ -1623,11 +1685,14 @@ export default function RemarketingClient({ initialCampaigns, bots, userId }: Pr
       ) : (
         <CampaignList
           campaigns={campaigns}
-          onOpen={setEditingId}
+          onOpen={openCampaign}
           onCreate={() => createCampaign()}
           onDuplicate={duplicateCampaign}
           onDelete={(id) => setDeleteTarget(campaigns.find((c) => c.id === id) ?? null)}
           onShowTemplates={() => setShowTemplates(true)}
+          hasMore={hasMore}
+          loadingMore={loadingMore}
+          onLoadMore={loadMore}
         />
       )}
 
