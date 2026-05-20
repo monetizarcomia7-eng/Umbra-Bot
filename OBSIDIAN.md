@@ -27,9 +27,9 @@ C:\Users\Usuario\OneDrive\Documentos\Obsidian Vault\umbra-bot\
 | `Módulo - Afiliados.md` | CRUD, /r/[slug], comissão, cookie de atribuição |
 | `Módulo - Bots.md` | SSR + BotsClient + 9 server actions + webhook (motor de fluxo) + cron + perfil no Telegram |
 | `Módulo - Fluxos.md` | SSR + FlowsClient, editor visual, templates, duplicar, handles dinâmicos, prévia com ramificações |
-| `Módulo - Redirecionadores.md` | SSR + RedirectsClient, CRUD real, analytics lazy, cloaking, redirect_click_events, RPCs |
+| `Módulo - Redirecionadores.md` | SSR + RedirectsClient, CRUD real, analytics lazy, seletor período 7/14/30d, sparkline preload, cloaking, redirect_click_events, RPCs (migração 065 + 066) |
 | `Módulo - Documentação.md` | /docs/ 30 artigos, /dashboard/docs renderizador, marked, toggle tema |
-| `Referência - Eventos PostHog.md` | 32 eventos rastreados (inclui redirect_created/updated/status_changed/deleted) |
+| `Referência - Eventos PostHog.md` | 37 eventos rastreados (inclui redirect_created/updated/status_changed/deleted + csv_exported redirect) |
 | `Referência - Onboarding Wizard.md` | 4 passos, localStorage, gateway |
 | `Referência - Busca Global.md` | 14 tabelas, race condition, debounce |
 | `Referência - Cron Jobs.md` | 4 crons no vercel.json |
@@ -40,11 +40,11 @@ C:\Users\Usuario\OneDrive\Documentos\Obsidian Vault\umbra-bot\
 |---|---|
 | `Módulo - Fluxos.md` | **Atualizar** — adicionar: motor de execução de fluxo no webhook (executeFlowNode recursivo, 9 tipos de nó), migração 064 (flow_id/flow_node_id/flow_vars em contacts), correção inspector (bgPannedRef), correção campo Question (data.text ?? data.question) |
 | `Módulo - Bots.md` | **Atualizar** — 9 server actions (+ getBotTelegramProfileAction, saveBotTelegramProfileAction, setBotPhotoAction); TelegramProfileModal (foto base64, nome, descrição, short desc, comandos reordenáveis); welcome_message só para novos contatos (isNewContact); motor de fluxo no webhook |
-| `Módulo - Redirecionadores.md` | **Criar** — módulo completo: SSR page.tsx + RedirectsClient, CRUD real (.eq user_id), analytics lazy via RPC redirect_analytics (by_day/source/device), cloaking (decoy_url para bots), UTM nullable, redirect_type 301/302, rota /r/[slug] com rastreamento (IP hash, device, referrer), tabela redirect_click_events, RPCs record_redirect_click + redirect_analytics, migração 065, 4 eventos PostHog + csv_exported |
-| `04 - Banco de Dados e Migrações.md` | Adicionar migração 063 (trigger_type + keywords em flows), migração 064 (flow_id/flow_node_id/flow_vars em contacts) e migração 065 (redirects user_id + RLS + redirect_click_events + RPCs) |
-| `03 - Estado do Projeto.md` | Marcar itens de fluxo/webhook/perfil-telegram como ✅; marcar Redirecionadores como ✅ Funcional |
+| `Módulo - Redirecionadores.md` | **Atualizar** — melhorias: seletor de período 7/14/30d no painel expandido; sparkline preload automático para links visíveis (14d); loadAnalytics estável via refs (sem infinite loop); cache ${id}:${period}; confirmação inline ao pausar; slug sanitização defensiva; KPI "Cliques únicos (30d)" via RPC 066; KPI "Top link" com subtitle "total acumulado"; cloaking null-safe (decoy_url\|\|appUrl); onLoadAnalytics noop corrigido; status archived; migração 066 |
+| `04 - Banco de Dados e Migrações.md` | Adicionar migração 063 (trigger_type + keywords em flows), migração 064 (flow_id/flow_node_id/flow_vars em contacts), migração 065 (redirects user_id + RLS + redirect_click_events + RPCs) e migração 066 (RPC redirect_unique_clicks_30d) |
+| `03 - Estado do Projeto.md` | Marcar itens de fluxo/webhook/perfil-telegram como ✅; marcar Redirecionadores como ✅ Funcional com todas as melhorias de auditoria |
 | `Módulo - Afiliados.md` | **Atualizar** — /r/[slug] agora tem prioridade dupla: tenta afiliado primeiro, depois redirecionador |
-| `Referência - Eventos PostHog.md` | **Atualizar** — adicionar 4 eventos de redirect (redirect_created, redirect_updated, redirect_status_changed, redirect_deleted); total agora 32 eventos |
+| `Referência - Eventos PostHog.md` | **Atualizar** — 4 eventos redirect (redirect_created/updated/status_changed/deleted) + csv_exported redirect; total agora ~37 eventos |
 
 ## Como Atualizar
 

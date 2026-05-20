@@ -58,6 +58,12 @@ type EventMap = {
   redirect_updated:          { slug: string }
   redirect_status_changed:   { status: string }
   redirect_deleted:          Record<string, never>
+  // Aba Remarketing
+  campaign_created:          { trigger: string; audience: string }
+  campaign_saved:            { step_count: number }
+  campaign_activated:        { trigger: string; step_count: number }
+  campaign_paused:           { trigger: string }
+  campaign_deleted:          Record<string, never>
 }
 
 export function useAnalytics() {

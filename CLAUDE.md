@@ -145,7 +145,9 @@ umbra-bot/
 │       │   ├── page.tsx          # Server Component: SSR redirects + contagem de cliques 30d + delta vs 30-60d
 │       │   └── RedirectsClient.tsx # Client Component: CRUD real, analytics lazy por link (RPC redirect_analytics),
 │       │                           # cloaking, UTM, CSV export, criar/editar/apagar modais, 4 eventos PostHog
-│       ├── remarketing/          # Remarketing (mock)
+│       ├── remarketing/          # Remarketing — SSR + RemarketingClient (dados reais)
+│       │   ├── page.tsx          # Server Component: SSR campaigns + bots em paralelo
+│       │   └── RemarketingClient.tsx # Client Component: CRUD real, Realtime, Templates, PostHog
 │       ├── broadcasts/           # Disparador (mock)
 │       ├── tools/                # Ferramentas (mock)
 │       ├── gateways/             # Gateways (mock)
@@ -433,6 +435,21 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Notificações — RLS corrigida: política por usuário em vez de open (migração 060) | ✅ Corrigido |
 | Notificações — migração 061: fix CONSTRAINT UNIQUE completo (substitui índice parcial incompatível) | ✅ Corrigido |
 | Sistema de planos/billing | ❌ Não iniciado |
+| Remarketing — Server Component SSR + RemarketingClient (dados reais, sem mock) | ✅ Funcional |
+| Remarketing — createCampaign: INSERT real com user_id + UUID real retornado | ✅ Implementado |
+| Remarketing — saveCampaign: UPDATE com .eq('user_id') — IDOR duplo | ✅ Implementado |
+| Remarketing — activate/pause: UPDATE status real com validação (≥1 etapa para ativar) | ✅ Implementado |
+| Remarketing — deleteCampaign: DELETE com modal de confirmação + PostHog | ✅ Implementado |
+| Remarketing — duplicateCampaign: copia steps + config, nome + "(cópia)", status draft | ✅ Implementado |
+| Remarketing — trigger_type: bug de mapeamento corrigido (era r.trigger, agora r.trigger_type) | ✅ Corrigido |
+| Remarketing — KPI deltas removidos (eram hardcoded 18.4% e 24.1%) | ✅ Corrigido |
+| Remarketing — NoDataState: estado vazio visual quando sem campanhas | ✅ Implementado |
+| Remarketing — Realtime: canal postgres_changes filtrado por user_id (INSERT/UPDATE/DELETE) | ✅ Implementado |
+| Remarketing — Templates modal: 4 templates prontos (botão funcional) | ✅ Implementado |
+| Remarketing — bot_id: seletor de bot vinculado à campanha (migração 067) | ✅ Implementado |
+| Remarketing — triggerConfig dinâmico: campos extras por tipo (tag, dias, horas) | ✅ Implementado |
+| Remarketing — 5 eventos PostHog: campaign_created/saved/activated/paused/deleted | ✅ Implementado |
+| Remarketing — migração 067: bot_id FK + last_run_at + total_sent | ✅ Criada |
 | Fluxos — Server Component SSR + FlowsClient (dados reais, sem MOCK_FLOWS) | ✅ Funcional |
 | Fluxos — createFlow: INSERT real no banco, UUID real retornado (sem fake ID) | ✅ Implementado |
 | Fluxos — saveFlow: .update() com feedback de erro via Toast | ✅ Implementado |
@@ -542,6 +559,19 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Redirecionadores — delta de cliques 30d vs 30-60d calculado no Server Component | ✅ Implementado |
 | Redirecionadores — CSV export filtrado por status + 4 eventos PostHog | ✅ Implementado |
 | Redirecionadores — migração 065: user_id + RLS owner + redirect_click_events + RPCs | ✅ Implementado |
+| Redirecionadores — migração 066: RPC redirect_unique_clicks_30d (count distinct ip_hash, 30d, exclui bots) | ✅ Implementado |
+| Redirecionadores — KPI "Cliques únicos (30d)" via RPC redirect_unique_clicks_30d no Server Component | ✅ Implementado |
+| Redirecionadores — KPI "Top link" com subtitle "total acumulado" (esclarece janela all-time) | ✅ Corrigido |
+| Redirecionadores — seletor de período 7/14/30d no painel expandido de analytics | ✅ Implementado |
+| Redirecionadores — sparkline preload automático para todos os links da página corrente (14d) | ✅ Implementado |
+| Redirecionadores — loadAnalytics estável via analyticsMapRef + inflightRef (sem infinite loop) | ✅ Implementado |
+| Redirecionadores — cache de analytics por chave ${id}:${period} (por link e período) | ✅ Implementado |
+| Redirecionadores — confirmação inline ao pausar link (botão Confirmar / Cancelar no DetailsCard) | ✅ Implementado |
+| Redirecionadores — slug sanitização defensiva em createLink (NFD, lowercase, -strip, 64 chars) | ✅ Implementado |
+| Redirecionadores — cloaking null-safe: decoy_url || appUrl (bots nunca veem destino real) | ✅ Corrigido |
+| Redirecionadores — clicks ?? 0 / unique_clicks ?? 0 null-safety em mapRaw | ✅ Corrigido |
+| Redirecionadores — status 'archived' com ação "Arquivar" no DetailsCard | ✅ Implementado |
+| Redirecionadores — onLoadAnalytics passado corretamente de LinkRow → LinkStats (era noop) | ✅ Corrigido |
 | Clientes — Server Component SSR + dados reais (sem mock) | ✅ Funcional |
 | Clientes — colunas origin, first_purchase, last_purchase, avg_ticket (mig 052) | ✅ Implementado |
 | Clientes — status buyer/lead derivado de purchases > 0 (sem mismatch DB) | ✅ Corrigido |
@@ -613,6 +643,11 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | `redirect_updated` | `RedirectsClient.tsx` — ao editar redirecionador (inclui slug) |
 | `redirect_status_changed` | `RedirectsClient.tsx` — ao pausar ou retomar (inclui status: 'active'\|'paused') |
 | `redirect_deleted` | `RedirectsClient.tsx` — ao apagar redirecionador (confirmação modal) |
+| `campaign_created` | `RemarketingClient.tsx` — ao criar campanha (blank ou template) (inclui trigger, audience) |
+| `campaign_saved` | `RemarketingClient.tsx` — ao salvar alterações no editor (inclui step_count) |
+| `campaign_activated` | `RemarketingClient.tsx` — ao ativar campanha (inclui trigger, step_count) |
+| `campaign_paused` | `RemarketingClient.tsx` — ao pausar campanha (inclui trigger) |
+| `campaign_deleted` | `RemarketingClient.tsx` — ao apagar campanha (confirmação modal) |
 
 ---
 
@@ -2388,10 +2423,12 @@ Funções auxiliares:
 
 ```
 app/dashboard/redirects/
-  ├── page.tsx              # Server Component — SSR redirects + contagem cliques 30d (curr) e 30-60d (prev)
-  │                         # Computa clicksDelta: ((curr-prev)/prev)*100 — null se prev=0
-  │                         # Passa initialRedirects, userId, appUrl, currClicks, clicksDelta ao Client
-  └── RedirectsClient.tsx   # Client Component — CRUD real, analytics lazy, CSV export, 4 eventos PostHog
+  ├── page.tsx              # Server Component — SSR redirects + 4 queries paralelas
+  │                         # currClicks (30d), prevClicks (30-60d), currUnique (RPC mig 066)
+  │                         # clicksDelta: ((curr-prev)/prev)*100 — null se prev=0
+  │                         # Props: initialRedirects, userId, appUrl, currClicks, currUnique, clicksDelta
+  └── RedirectsClient.tsx   # Client Component — CRUD real, analytics lazy por período,
+  │                           KPI cards 4 colunas, sparkline preload, 4 eventos PostHog
 
 app/r/[slug]/route.ts       # Rota pública — prioridade: afiliado → redirecionador → APP_URL
 ```
@@ -2401,57 +2438,93 @@ app/r/[slug]/route.ts       # Rota pública — prioridade: afiliado → redirec
 ```
 RedirectsPage (Server Component)
   ├── Auth guard: if (!user) redirect('/login')
-  ├── Promise.all em paralelo:
+  ├── Promise.all com 4 queries em paralelo:
   │     ├── redirects: id, slug, destination, destination_label, clicks, unique_clicks,
   │     │              status, cloaking, decoy_url, utm, redirect_type, created_at
   │     │              order: created_at desc, filtrado por user_id
   │     ├── redirect_click_events: count(*) head:true — cliques nos últimos 30d
-  │     └── redirect_click_events: count(*) head:true — cliques de 30-60d atrás (para delta)
+  │     ├── redirect_click_events: count(*) head:true — cliques de 30-60d atrás (delta)
+  │     └── RPC redirect_unique_clicks_30d(user_id) — IPs distintos, excl. bots, 30d
   ├── clicksDelta = prevClicks > 0 ? round(((curr-prev)/prev)*1000)/10 : null
-  └── passa como props: initialRedirects, userId, appUrl, currClicks, clicksDelta
+  └── passa como props: initialRedirects, userId, appUrl, currClicks, currUnique, clicksDelta
 
 RedirectsClient (Client Component)
   ├── links state: initialRedirects.map(mapRaw) — zero mock
-  ├── mapRaw(row, appUrl): deriva url = `${appUrl}/r/${slug}` (nunca do banco)
-  ├── expandedId state: id do link com row expandida (analytics lazy)
-  ├── analytics state: Map<id, LinkAnalytics | 'loading' | 'error'>
+  ├── mapRaw(row, appUrl): url=`${appUrl}/r/${slug}`, clicks??0, unique_clicks??0
+  ├── applyPatch(link, patch, appUrl): helper para optimistic update snake→camelCase sem cast
+  ├── expanded state: id do link com row expandida (null = nenhum)
+  ├── analyticsMap state: Record<"${id}:${period}", AnalyticsState>
+  │     AnalyticsState = LinkAnalytics | 'loading' | 'error'
+  │     chave composta por id + período: cache independente por link e janela
+  ├── analyticsMapRef + inflightRef: refs para loadAnalytics estável (sem dep no state)
   ├── toast state: { msg, type: 'success'|'error' } — auto-fecha 3.5s
   │
-  ├── loadAnalytics(id): chama supabase.rpc('redirect_analytics', { p_redirect_id: id, p_days: 14 })
-  │     → setAnalytics(prev => new Map(prev).set(id, data)) — só executa ao expandir a linha
+  ├── loadAnalytics(id, period): estável (deps=[]) — lê state via analyticsMapRef
+  │     inflightRef previne duplicatas mesmo com referência estável
+  │     supabase.rpc('redirect_analytics', { p_redirect_id: id, p_days: period })
+  │     setAnalyticsMap(prev => ({ ...prev, [`${id}:${period}`]: data }))
+  │
+  ├── pageItemIds = pageItems.map(l => l.id).join(',')
+  │     useEffect([pageItemIds, loadAnalytics]):
+  │       pageItems.forEach(l => loadAnalytics(l.id, 14))
+  │       pré-carrega sparklines para todos os links visíveis sem expandir
+  │
+  ├── handleToggle(id): expande linha + loadAnalytics(id, 14) como garantia
   │
   ├── createLink(opts: CreateOpts):
-  │     INSERT { user_id, slug, destination, destination_label, redirect_type: String(type),
-  │              cloaking, decoy_url, utm: utmEnabled ? utm : null, status: 'active' }
+  │     re-sanitiza slug defensivamente (segunda camada além do modal)
+  │     INSERT { user_id, safeSlug, destination, destination_label, redirect_type: String(type),
+  │              cloaking, decoy_url, utm: utmEnabled ? utm : null }
   │     → prepend ao state + track('redirect_created', { slug, cloaking, utm_enabled, redirect_type })
   │
   ├── saveLink(id, patch):
-  │     UPDATE .eq('id', id).eq('user_id', userId)
-  │     redirect_type sempre como String (evita mismatch text vs number)
-  │     → atualiza inline + track('redirect_updated', { slug })
+  │     optimistic update via applyPatch (snake→camelCase, sem cast frágil)
+  │     invalida cache de analytics se slug mudou (Object.keys filter)
+  │     UPDATE .eq('id', id).eq('user_id', userId) — IDOR duplo
+  │     → track('redirect_updated', { slug })
   │
   ├── changeStatus(id, status):
-  │     UPDATE status .eq('user_id', userId) — IDOR-safe
-  │     → atualiza inline + track('redirect_status_changed', { status })
+  │     aceita 'active' | 'paused' | 'archived' — todos os 3 estados suportados no DB
+  │     UPDATE status .eq('user_id', userId) — optimistic + rollback
+  │     toast com label (ativado/pausado/arquivado)
+  │     → track('redirect_status_changed', { status })
   │
   ├── deleteLink(id):
-  │     DELETE .eq('user_id', userId) → remove do state + track('redirect_deleted', {})
+  │     DELETE .eq('user_id', userId)
+  │     limpa cache do link em analyticsMap (Object.keys filter por prefixo)
+  │     → track('redirect_deleted', {})
   │
   ├── handleExport():
-  │     CSV com BOM (Excel pt-BR): Nome | Slug | Destino | Tipo | Cliques | Únicos | Status | Cloaking | Criado
-  │     nome do arquivo: redirecionadores_YYYY-MM-DD.csv
-  │     track('csv_exported', { section: 'redirects', rows })
+  │     CSV com BOM: Link curto | Rótulo | Destino | Cliques | Únicos | Status | Tipo | Criado
+  │     nome: redirecionadores_YYYY-MM-DD.csv
+  │     → track('csv_exported', { section: 'redirects', rows })
   │
-  ├── SummaryCard: KPI card (total links, total cliques, delta %)
-  ├── MiniSparkline: SVG inline com pontos de by_day dos últimos 14d
-  ├── CopyableShort: copia URL + feedback visual "✓ Copiado"
-  ├── LinkRow: linha expansível — ao expandir chama loadAnalytics(id)
-  ├── DetailsCard: mostra analytics completos + sparkline + breakdown
-  ├── BreakdownCard: barra horizontal por fonte (SOURCE_COLORS) e dispositivo (DEVICE_COLORS)
-  ├── LinkStats: analytics reais — estado vazio "Nenhum clique ainda" quando sem dados
-  ├── CreateLinkModal: formulário completo com seções básicas e avançadas
-  ├── EditLinkModal: idem — pré-popula com dados do link existente
-  └── DeleteConfirmModal: confirmação antes de apagar
+  ├── KPI Cards (4 colunas):
+  │     "Links ativos" — totals.active / totals.total (live count)
+  │     "Cliques (30 dias)" — currClicks com delta vs 30-60d e subtitle "vs. 30-60d anteriores"
+  │     "Únicos (30 dias)" — currUnique via RPC, subtitle "IPs distintos, excl. bots"
+  │     "Top link" — topLink.clicks com subtitle "r/slug · total acumulado" (all-time, não windowed)
+  │
+  ├── LinkRow: linha expansível com sparkline auto-carregada (pré-load via pageItemIds effect)
+  │     sparkline usa sempre 14d para consistência visual na tabela
+  │     sparkState = analyticsMap[`${link.id}:14`] — loading → animate-pulse; loaded → svg
+  │
+  ├── LinkStats: seletor de período (7/14/30d) + gráfico BarChart + totais + taxa
+  │     useEffect([link.id, period, onLoadAnalytics]) — busca dados ao montar e ao trocar período
+  │     estado de erro com botão "Tentar novamente"
+  │
+  ├── DetailsCard: confirmação inline antes de pausar (evita ação acidental)
+  │     link.status === 'active' → botão "Pausar" → confirmação "Pausar o link? Confirmar/Cancelar"
+  │     link.status === 'paused' → "Retomar" (direto, sem confirmação)
+  │     active ou paused → "Arquivar" (ghost, sem confirmação)
+  │     archived → "Ativar" (primary, sem confirmação)
+  │     "Testar link" → window.open(link.url) — abre /r/slug
+  │     "Abrir destino" → window.open(link.destination) — abre URL final
+  │
+  ├── CloakingSection: aviso inline de risco + campo decoy_url + checkbox de ciência
+  ├── LinkFormFields: campos Destino + Rótulo (opcional) + Slug + Avançados (301/302, UTM, Cloaking)
+  ├── CreateLinkModal / EditLinkModal / DeleteConfirmModal
+  └── Aviso global de cloaking no topo quando links.cloaking > 0
 ```
 
 ### Interfaces TypeScript
@@ -2459,19 +2532,26 @@ RedirectsClient (Client Component)
 ```typescript
 interface RawRedirect {
   id: string; slug: string; destination: string; destination_label: string | null
-  clicks: number; unique_clicks: number; status: 'active' | 'paused'
+  clicks: number; unique_clicks: number
+  status: 'active' | 'paused' | 'archived'   // 'archived' suportado pelo DB
   cloaking: boolean; decoy_url: string | null; utm: UtmParams | null
   redirect_type: string; created_at: string
 }
 
-interface LinkItem extends RawRedirect {
-  url: string           // derivado: ${appUrl}/r/${slug}
-  redirectType: string  // alias de redirect_type (sempre string '301'|'302')
+interface LinkItem {
+  id: string; slug: string; url: string       // url derivada de ${appUrl}/r/${slug}
+  destination: string; destinationLabel: string
+  clicks: number; uniqueClicks: number; createdAt: number
+  status: 'active' | 'paused' | 'archived'
+  cloaking: boolean; decoyUrl: string
+  utm: UtmParams | null; redirectType: string
 }
+
+type AnalyticsState = LinkAnalytics | 'loading' | 'error'
 
 interface LinkAnalytics {
   period_clicks: number; period_unique: number
-  by_day:    Array<{ day: string; clicks: number }>      // 'DD/MM'
+  by_day:    Array<{ day: string; clicks: number }>   // 'DD/MM'
   by_source: Array<{ name: string; value: number }>
   by_device: Array<{ name: string; value: number }>
 }
@@ -2479,8 +2559,14 @@ interface LinkAnalytics {
 interface UtmParams { source: string; medium: string; campaign: string }
 
 interface CreateOpts {
-  slug: string; destination: string; redirectType: number
-  cloaking: boolean; decoyUrl: string; utmEnabled: boolean; utm: UtmParams
+  destination: string; destinationLabel: string; slug: string; redirectType: number
+  utm: UtmParams | null; cloaking: boolean; decoyUrl: string
+}
+
+interface RedirectsClientProps {
+  initialRedirects: RawRedirect[]
+  userId: string; appUrl: string
+  currClicks: number; currUnique: number; clicksDelta: number | null
 }
 ```
 
@@ -2488,14 +2574,14 @@ interface CreateOpts {
 
 ```sql
 -- Alterações na tabela redirects (préexistente)
+-- status já tinha check ('active','paused','archived') na migration 008
 alter table public.redirects
   add column if not exists user_id uuid references auth.users(id) on delete cascade;
--- delete from public.redirects where user_id is null;  -- remove órfãos
 alter table public.redirects alter column user_id set not null;
 alter table public.redirects alter column utm drop not null, alter column utm set default null;
-alter table public.redirects drop column if exists url;  -- coluna redundante (url = appUrl/r/slug)
+alter table public.redirects drop column if exists url;  -- coluna redundante
 
--- RLS corrigida
+-- RLS corrigida (open → owner)
 drop policy if exists "redirects_open"  on public.redirects;
 drop policy if exists "redirects_owner" on public.redirects;
 create policy "redirects_owner" on public.redirects
@@ -2518,24 +2604,29 @@ create table if not exists public.redirect_click_events (
 -- RLS: rce_owner_select — auth.uid() = user_id (SELECT only)
 ```
 
-### RPCs (migração 065)
+### RPCs
 
 ```sql
--- record_redirect_click(p_redirect_id, p_ip_hash, p_referrer, p_device_type) → void
+-- migration 065: record_redirect_click(p_redirect_id, p_ip_hash, p_referrer, p_device_type) → void
 -- security definer, grant to anon, authenticated
 -- Resolve user_id via redirects (status='active')
 -- v_is_unique: ip_hash não nulo e nunca viu este redirect_id
 -- INSERT em redirect_click_events
 -- UPDATE redirects SET clicks++, unique_clicks += (1 se único)
 
--- redirect_analytics(p_redirect_id, p_days default 14) → json
+-- migration 065: redirect_analytics(p_redirect_id, p_days default 14) → json
 -- security definer, grant to authenticated
 -- Verifica propriedade (auth.uid() = user_id) — retorna null se não for dono
 -- Exclui device_type='bot' de todos os contadores
--- by_day: generate_series(current_date-(p_days-1), current_date) + LEFT JOIN por dia
---         agrupa por (clicked_at at time zone 'America/Sao_Paulo')::date
+-- by_day: generate_series + LEFT JOIN, agrupado por America/Sao_Paulo
 -- by_source: mapeia referrer → Instagram/Google/YouTube/TikTok/WhatsApp/Facebook/Twitter/Direto/Outros
 -- by_device: agrupa device_type (exclui bot + unknown)
+
+-- migration 066: redirect_unique_clicks_30d(p_user_id uuid) → bigint
+-- security invoker, grant to authenticated
+-- count(distinct ip_hash) em redirect_click_events
+-- WHERE user_id = p_user_id AND clicked_at >= now()-30d AND device_type != 'bot'
+-- Usado no KPI "Únicos (30 dias)" da página SSR
 ```
 
 ### Rota /r/[slug] — prioridade dupla (migração 065)
@@ -2552,8 +2643,10 @@ GET /r/{slug}
      hashIp(rawIp): SHA-256('umbra:'+ip).slice(0,16)
      detectDevice(ua): bot|tablet|mobile|desktop|unknown
      parseReferrer(referer): hostname do header Referer
-     cloaking: se cloaking=true && isBot && decoy_url → serve decoy_url; senão destination
-     await admin.rpc('record_redirect_click', { ... }) — await para confiabilidade serverless
+     cloaking: redirect.cloaking && isBot
+               ? (redirect.decoy_url || appUrl)   ← appUrl é fallback se decoy_url nulo
+               : redirect.destination
+     await admin.rpc('record_redirect_click', { ... }) — await para serverless
      redirect_type '301' → status 301; senão 302
 
 3. Fallback: redirect para APP_URL
@@ -2565,15 +2658,17 @@ GET /r/{slug}
 |---|---|---|
 | `redirect_created` | ao criar redirecionador | `{ slug, cloaking, utm_enabled, redirect_type }` |
 | `redirect_updated` | ao salvar edição | `{ slug }` |
-| `redirect_status_changed` | ao pausar/retomar | `{ status: 'active'\|'paused' }` |
+| `redirect_status_changed` | ao pausar/retomar/arquivar | `{ status: 'active'\|'paused'\|'archived' }` |
 | `redirect_deleted` | ao confirmar exclusão | `{}` |
 | `csv_exported` | ao exportar CSV | `{ section: 'redirects', rows }` |
 
 ### Segurança
 
 - RLS `redirects_owner`: `auth.uid() = user_id` — isola dados entre usuários
-- Todo UPDATE/DELETE usa `.eq('user_id', userId)` — proteção IDOR no código além da RLS
-- `record_redirect_click` roda com `security definer` — permite INSERT sem sessão de usuário
-- `redirect_analytics` verifica propriedade antes de retornar dados — null se não for dono
-- IP nunca armazenado em texto claro — apenas SHA-256 truncado (16 chars hex)
-- `createAdminClient()` usado na rota `/r/[slug]` (sem sessão) — service role key server-side
+- Todo UPDATE/DELETE usa `.eq('user_id', userId)` — IDOR duplo (código + RLS)
+- `createLink` re-sanitiza slug antes do INSERT (segunda camada além da validação do modal)
+- `record_redirect_click` com `security definer` — permite INSERT sem sessão de usuário
+- `redirect_analytics` verifica propriedade — retorna null se não for dono (sem cross-user leak)
+- IP nunca armazenado em texto claro — SHA-256 truncado (16 chars hex), LGPD-safe
+- Cloaking null-safe: se `decoy_url` nulo, bots recebem `appUrl` (nunca o destino real)
+- `createAdminClient()` usado apenas na rota pública `/r/[slug]` — sem sessão de usuário
