@@ -1,0 +1,334 @@
+import { NextResponse } from 'next/server'
+import { createAdminClient } from '@/lib/supabase/admin'
+import { decryptToken } from '@/lib/crypto'
+import { sendTelegramMessage } from '@/lib/telegram'
+import * as Sentry from '@sentry/nextjs'
+
+// GET /api/cron/process-remarketing
+// Deve ser chamado a cada hora via cron-job.org (com Authorization: Bearer CRON_SECRET).
+// Faz duas coisas por execução:
+//   1. Enfileira novos contatos elegíveis nas campanhas ativas (step 0)
+//   2. Envia as mensagens pendentes cujo scheduled_at já passou
+
+const ENQUEUE_LIMIT = 50   // novos contatos por campanha por rodada
+const SEND_LIMIT    = 100  // execuções a enviar por rodada
+
+/* ── Tipos internos ──────────────────────────────────────────────────────── */
+
+interface CampaignStep {
+  id: string
+  delay:   { amount: number; unit: string }
+  message: string
+  offer:   { product: string; price: number; cta: string } | null
+}
+
+interface RawCampaign {
+  id:             string
+  user_id:        string
+  bot_id:         string
+  trigger_type:   string
+  audience:       string
+  trigger_config: Record<string, unknown>
+  steps:          CampaignStep[]
+  status:         string
+}
+
+interface RawExec {
+  id:          string
+  campaign_id: string
+  contact_id:  string
+  bot_id:      string
+  step_index:  number
+  user_id:     string
+}
+
+/* ── Helpers ─────────────────────────────────────────────────────────────── */
+
+function delayMs(amount: number, unit: string): number {
+  if (unit === 'minutos') return amount * 60_000
+  if (unit === 'horas')   return amount * 3_600_000
+  if (unit === 'dias')    return amount * 86_400_000
+  return 0
+}
+
+function buildMessage(step: CampaignStep, firstName: string, botName: string): string {
+  const nome = firstName.trim() || 'você'
+  const data = new Date().toLocaleDateString('pt-BR')
+
+  let text = step.message
+    .replace(/\{nome\}/g,    nome)
+    .replace(/\{bot\}/g,     botName)
+    .replace(/\{produto\}/g, step.offer?.product ?? '')
+    .replace(/\{valor\}/g,   step.offer?.price
+      ? `R$ ${step.offer.price.toFixed(2).replace('.', ',')}`
+      : '')
+    .replace(/\{data\}/g, data)
+
+  if (step.offer) {
+    text += `\n\n💰 <b>${step.offer.product}</b>`
+    if (step.offer.price > 0)
+      text += ` — R$ ${step.offer.price.toFixed(2).replace('.', ',')}`
+    if (step.offer.cta)
+      text += `\n👉 ${step.offer.cta}`
+  }
+
+  return text
+}
+
+/* ── Busca contatos elegíveis para uma campanha ──────────────────────────── */
+
+async function findEligibleContactIds(
+  supabase:  ReturnType<typeof createAdminClient>,
+  campaign:  RawCampaign,
+  limit:     number,
+): Promise<string[]> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let query: any = supabase
+    .from('contacts')
+    .select('id')
+    .eq('user_id', campaign.user_id)
+    .not('telegram_id', 'is', null)
+    .neq('telegram_id', '')
+
+  // Filtra pelo bot da campanha
+  if (campaign.bot_id) query = query.eq('bot_id', campaign.bot_id)
+
+  // Filtro de audiência
+  const cfg = campaign.trigger_config
+  switch (campaign.audience) {
+    case 'leads':   query = query.eq('purchases', 0);  break
+    case 'buyers':  query = query.gt('purchases', 0);  break
+    case 'recent':  query = query.gte('first_contact',
+      new Date(Date.now() - 30 * 86_400_000).toISOString()); break
+    case 'with_tag':
+      if (cfg.tag) query = query.contains('tags', [cfg.tag]); break
+  }
+
+  // Filtro por tipo de gatilho
+  switch (campaign.trigger_type) {
+    case 'nao_comprou_72h': {
+      const hours   = Number(cfg.hours ?? 72)
+      const cutoff  = new Date(Date.now() - hours * 3_600_000).toISOString()
+      const oldest  = new Date(Date.now() - (hours + 168) * 3_600_000).toISOString()
+      query = query.eq('purchases', 0).lte('first_contact', cutoff).gte('first_contact', oldest)
+      break
+    }
+    case 'inatividade': {
+      const days   = Number(cfg.days ?? 30)
+      const cutoff = new Date(Date.now() - days * 86_400_000).toISOString()
+      query = query.lte('last_contact', cutoff)
+      break
+    }
+    case 'tag_adicionada':
+      if (cfg.tag) query = query.contains('tags', [cfg.tag]); break
+
+    case 'compra_concluida': {
+      const cutoff = new Date(Date.now() - 24 * 3_600_000).toISOString()
+      query = query.gt('purchases', 0).gte('last_purchase', cutoff)
+      break
+    }
+    case 'carrinho_abandonado':
+    case 'abandonou_funil':
+      query = query.eq('purchases', 0); break
+
+    case 'aniversario':
+      return []  // sem campo de aniversário na tabela
+  }
+
+  const { data: contacts } = await query.limit(limit * 3)
+  if (!contacts?.length) return []
+
+  const allIds = contacts.map((c: { id: string }) => c.id)
+
+  // Exclui quem já recebeu qualquer etapa desta campanha
+  const { data: existing } = await supabase
+    .from('remarketing_executions')
+    .select('contact_id')
+    .eq('campaign_id', campaign.id)
+    .in('contact_id', allIds)
+
+  const existingSet = new Set((existing ?? []).map((e: { contact_id: string }) => e.contact_id))
+  return allIds.filter((id: string) => !existingSet.has(id)).slice(0, limit)
+}
+
+/* ── Handler principal ───────────────────────────────────────────────────── */
+
+export async function GET(request: Request) {
+  const authHeader = request.headers.get('authorization')
+  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+    return NextResponse.json({ error: 'Não autorizado.' }, { status: 401 })
+  }
+
+  const supabase = createAdminClient()
+  let enqueued = 0
+  let sent     = 0
+  let failed   = 0
+
+  /* ── 1. Enfileirar novos contatos nas campanhas ativas ─────────────────── */
+
+  const { data: campaigns } = await supabase
+    .from('remarketing_campaigns')
+    .select('id, user_id, bot_id, trigger_type, audience, trigger_config, steps, status')
+    .eq('status', 'active')
+    .not('bot_id',   'is', null)
+    .not('user_id',  'is', null)
+
+  for (const campaign of (campaigns ?? []) as RawCampaign[]) {
+    try {
+      const steps = campaign.steps as CampaignStep[]
+      if (!steps?.length) continue
+
+      const contactIds = await findEligibleContactIds(supabase, campaign, ENQUEUE_LIMIT)
+      if (!contactIds.length) continue
+
+      const firstStep   = steps[0]
+      const scheduledAt = new Date(
+        Date.now() + delayMs(firstStep.delay.amount, firstStep.delay.unit)
+      ).toISOString()
+
+      const rows = contactIds.map(contactId => ({
+        campaign_id:  campaign.id,
+        user_id:      campaign.user_id,
+        contact_id:   contactId,
+        bot_id:       campaign.bot_id,
+        step_index:   0,
+        status:       'pending',
+        scheduled_at: scheduledAt,
+      }))
+
+      const { error } = await supabase.from('remarketing_executions').insert(rows)
+      if (!error) enqueued += rows.length
+
+    } catch (err) {
+      Sentry.captureException(err, {
+        extra: { campaignId: campaign.id, context: 'remarketing_enqueue' },
+      })
+    }
+  }
+
+  /* ── 2. Enviar execuções pendentes que já venceram ─────────────────────── */
+
+  const { data: pending } = await supabase
+    .from('remarketing_executions')
+    .select('id, campaign_id, contact_id, bot_id, step_index, user_id')
+    .eq('status', 'pending')
+    .lte('scheduled_at', new Date().toISOString())
+    .order('scheduled_at', { ascending: true })
+    .limit(SEND_LIMIT)
+
+  if (!pending?.length) {
+    return NextResponse.json({
+      enqueued, sent, failed,
+      message: `${enqueued} enfileirados, ${sent} enviados, ${failed} falhas.`,
+    })
+  }
+
+  // Carrega campanhas, contatos e bots em paralelo (sem N+1)
+  const campaignIds = [...new Set(pending.map((p: RawExec) => p.campaign_id))]
+  const contactIds  = [...new Set(pending.map((p: RawExec) => p.contact_id).filter(Boolean))]
+  const botIds      = [...new Set(pending.map((p: RawExec) => p.bot_id).filter(Boolean))]
+
+  const [campRes, contRes, botRes] = await Promise.all([
+    supabase.from('remarketing_campaigns').select('id, steps, status').in('id', campaignIds),
+    supabase.from('contacts').select('id, first_name, name, telegram_id').in('id', contactIds),
+    supabase.from('bots').select('id, token, name').in('id', botIds),
+  ])
+
+  const campMap = new Map((campRes.data ?? []).map(c => [c.id, c]))
+  const contMap = new Map((contRes.data ?? []).map(c => [c.id, c]))
+  const botMap  = new Map((botRes.data  ?? []).map(b => [b.id, b]))
+
+  const sentCampaignIds    = new Set<string>()
+  const sentCountPerCampaign = new Map<string, number>()
+
+  for (const exec of pending as RawExec[]) {
+    try {
+      const campaign = campMap.get(exec.campaign_id)
+      const contact  = contMap.get(exec.contact_id)
+      const bot      = botMap.get(exec.bot_id)
+      const now      = new Date().toISOString()
+
+      // Pula se campanha pausada ou dados faltando
+      if (!campaign || campaign.status !== 'active' || !contact?.telegram_id || !bot?.token) {
+        await supabase
+          .from('remarketing_executions')
+          .update({ status: 'skipped', executed_at: now })
+          .eq('id', exec.id)
+        continue
+      }
+
+      const steps = campaign.steps as CampaignStep[]
+      const step  = steps[exec.step_index]
+      if (!step) {
+        await supabase
+          .from('remarketing_executions')
+          .update({ status: 'skipped', executed_at: now })
+          .eq('id', exec.id)
+        continue
+      }
+
+      const token     = decryptToken(bot.token as string)
+      const firstName = ((contact.first_name || contact.name) as string) || ''
+      const text      = buildMessage(step, firstName, bot.name as string)
+
+      await sendTelegramMessage(token, contact.telegram_id as string, text, 'HTML')
+
+      await supabase
+        .from('remarketing_executions')
+        .update({ status: 'sent', message_sent: text, executed_at: now })
+        .eq('id', exec.id)
+
+      sent++
+      sentCampaignIds.add(exec.campaign_id)
+      sentCountPerCampaign.set(exec.campaign_id, (sentCountPerCampaign.get(exec.campaign_id) ?? 0) + 1)
+
+      // Agenda próxima etapa se existir
+      const nextStep = steps[exec.step_index + 1]
+      if (nextStep) {
+        await supabase.from('remarketing_executions').insert({
+          campaign_id:  exec.campaign_id,
+          user_id:      exec.user_id,
+          contact_id:   exec.contact_id,
+          bot_id:       exec.bot_id,
+          step_index:   exec.step_index + 1,
+          status:       'pending',
+          scheduled_at: new Date(
+            Date.now() + delayMs(nextStep.delay.amount, nextStep.delay.unit)
+          ).toISOString(),
+        })
+      }
+
+    } catch (err) {
+      failed++
+      const errMsg = err instanceof Error ? err.message : 'Erro desconhecido'
+      await supabase
+        .from('remarketing_executions')
+        .update({ status: 'failed', error_message: errMsg, executed_at: new Date().toISOString() })
+        .eq('id', exec.id)
+        .catch(() => {})
+
+      Sentry.captureException(err, {
+        extra: { execId: exec.id, context: 'remarketing_send' },
+      })
+    }
+  }
+
+  // Incrementa total_sent atomicamente por campanha (sem race condition)
+  if (sentCountPerCampaign.size > 0) {
+    await Promise.all(
+      [...sentCountPerCampaign.entries()].map(([campaignId, count]) =>
+        supabase.rpc('increment_campaign_sent', {
+          p_campaign_id: campaignId,
+          p_count:       count,
+        })
+      )
+    )
+  }
+
+  return NextResponse.json({
+    enqueued,
+    sent,
+    failed,
+    message: `${enqueued} enfileirados, ${sent} enviados, ${failed} falhas.`,
+  })
+}
