@@ -60,10 +60,16 @@ umbra-bot/
 │   │   │   ├── cleanup-activity/route.ts     # GET: deleta activity_events com >90 dias (CRON_SECRET)
 │   │   │   ├── cleanup-alerts/route.ts       # GET: deleta alertas resolvidos com >30 dias (CRON_SECRET, 04:00 UTC)
 │   │   │   │                                 # Lotes de 500, cron_log, Sentry
-│   │   │   └── check-bots/route.ts           # GET: verifica conectividade de todos os bots a cada 30 min
-│   │   │                                     # createAdminClient (bypassa RLS — cron não tem sessão de usuário)
-│   │   │                                     # disconnect → insere activity_event + alert critical (bot_offline, source='cron')
-│   │   │                                     # reconnect  → insere activity_event + auto-resolve alert (resolved_by='sistema (auto)')
+│   │   │   ├── check-bots/route.ts           # GET: verifica conectividade de todos os bots a cada 30 min
+│   │   │   │                                 # createAdminClient (bypassa RLS — cron não tem sessão de usuário)
+│   │   │   │                                 # disconnect → insere activity_event + alert critical (bot_offline, source='cron')
+│   │   │   │                                 # reconnect  → insere activity_event + auto-resolve alert (resolved_by='sistema (auto)')
+│   │   │   └── process-remarketing/route.ts  # GET: enfileira contatos elegíveis + envia mensagens pendentes
+│   │   │                                     # Protegido por CRON_SECRET — chamado via cron-job.org (1x/hora)
+│   │   │                                     # Task 1: findEligibleContactIds por trigger_type + audience → INSERT remarketing_executions
+│   │   │                                     # Task 2: SELECT pending WHERE scheduled_at<=now → sendTelegramMessage → sent/failed
+│   │   │                                     # Agenda próxima etapa (step_index+1) com scheduled_at = now + delay
+│   │   │                                     # Atualiza total_sent via RPC increment_campaign_sent (atômico)
 │   │   ├── push/
 │   │   │   ├── subscribe/route.ts
 │   │   │   └── notify/route.ts
@@ -243,8 +249,9 @@ umbra-bot/
 │   ├── 09-notificacoes/          # configurar-notificacoes
 │   ├── 10-perfil/                # editar-perfil
 │   └── 11-faq/                   # perguntas-frequentes (20 perguntas organizadas por tema)
-├── supabase/migrations/          # 62 migrações SQL (000 a 062)
-├── vercel.json                   # 4 Cron jobs: process-withdrawals (06:00 UTC) + cleanup-activity (02:00 UTC) + check-bots (a cada 30 min) + cleanup-alerts (04:00 UTC)
+├── supabase/migrations/          # 69 migrações SQL (000 a 069)
+├── vercel.json                   # 4 Cron jobs Vercel (Hobby só executa 2 — os primeiros da lista): process-withdrawals (06:00 UTC) + cleanup-activity (02:00 UTC) + check-bots + cleanup-alerts
+│                                 # Cron adicional via cron-job.org (gratuito, 1x/hora): process-remarketing
 ├── sentry.*.config.ts            # Sentry (client com Replay / server com tracePropagation)
 ├── instrumentation.ts            # Next.js hook para Sentry server
 ├── middleware.ts                 # Auth guard + security headers + CSP (unsafe-eval só em dev)
@@ -460,6 +467,12 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Remarketing — 5 eventos PostHog: campaign_created/saved/activated/paused/deleted | ✅ Implementado |
 | Remarketing — migração 067: bot_id FK + last_run_at + total_sent | ✅ Criada |
 | Remarketing — migração 068: next_run_at + tabela remarketing_executions (RLS re_owner) | ✅ Criada |
+| Remarketing — cron process-remarketing: enfileira contatos elegíveis + envia mensagens via Telegram | ✅ Implementado |
+| Remarketing — cron: 7 gatilhos (carrinho_abandonado, compra_concluida, nao_comprou_72h, inatividade, tag_adicionada, abandonou_funil, aniversario skip) | ✅ Implementado |
+| Remarketing — cron: agenda próximas etapas automaticamente com delay correto (minutos/horas/dias) | ✅ Implementado |
+| Remarketing — cron: atualiza total_sent via RPC increment_campaign_sent (atômico, sem race condition) | ✅ Implementado |
+| Remarketing — cron: protegido por CRON_SECRET, chamado via cron-job.org (1x/hora, gratuito) | ✅ Configurado |
+| Remarketing — migração 069: índice contacts (user_id, bot_id, telegram_id) + índice re_pending_scheduled + RPC increment_campaign_sent | ✅ Criada |
 | Remarketing — auto-save 30 s: debounce + stateRef/campaignRef estáveis (pula se nome vazio) | ✅ Implementado |
 | Remarketing — indicador "Auto-save em 30 s" na topbar quando dirty=true | ✅ Implementado |
 | Remarketing — aviso de mudanças não salvas ao clicar Voltar (backConfirmOpen + dirty check) | ✅ Implementado |
@@ -1205,7 +1218,7 @@ Variáveis adicionais documentadas (além do básico):
   **NUNCA expor ao cliente browser** — usar apenas em server-side routes
 - `MERCADOPAGO_ACCESS_TOKEN` / `MERCADOPAGO_WEBHOOK_SECRET`
 - `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN`
-- `CRON_SECRET` — protege `GET /api/cron/process-withdrawals`, `GET /api/cron/cleanup-activity` e `GET /api/cron/check-bots`
+- `CRON_SECRET` — protege todos os cron routes: `process-withdrawals`, `cleanup-activity`, `check-bots`, `cleanup-alerts`, `process-remarketing`
 - `ADMIN_MIGRATION_SECRET` — protege `POST /api/admin/migrate-tokens`
 - `ADMIN_EMAIL` — protege `GET /api/migrations`
 - `NEXT_PUBLIC_VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_EMAIL`

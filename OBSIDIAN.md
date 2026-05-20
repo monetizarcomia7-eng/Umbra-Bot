@@ -28,23 +28,23 @@ C:\Users\Usuario\OneDrive\Documentos\Obsidian Vault\umbra-bot\
 | `Módulo - Bots.md` | SSR + BotsClient + 9 server actions + webhook (motor de fluxo) + cron + perfil no Telegram |
 | `Módulo - Fluxos.md` | SSR + FlowsClient, editor visual, templates, duplicar, handles dinâmicos, prévia com ramificações |
 | `Módulo - Redirecionadores.md` | SSR + RedirectsClient, CRUD real, analytics lazy, seletor período 7/14/30d, sparkline preload, cloaking, redirect_click_events, RPCs (migração 065 + 066) |
-| `Módulo - Remarketing.md` | SSR + RemarketingClient, CRUD real, Realtime, auto-save 30s, CSV export, ExecutionHistoryCard, paginação 50, lazy-load step_stats, 6 eventos PostHog, migrações 067 + 068 |
+| `Módulo - Remarketing.md` | SSR + RemarketingClient, CRUD real, Realtime, auto-save 30s, CSV export, ExecutionHistoryCard, paginação 50, lazy-load step_stats, 6 eventos PostHog, migrações 067 + 068 + 069, cron process-remarketing via cron-job.org |
 | `Módulo - Documentação.md` | /docs/ 30 artigos, /dashboard/docs renderizador, marked, toggle tema |
 | `Referência - Eventos PostHog.md` | 43 eventos rastreados (inclui campaign_created/saved/activated/paused/deleted + csv_exported remarketing) |
 | `Referência - Onboarding Wizard.md` | 4 passos, localStorage, gateway |
 | `Referência - Busca Global.md` | 14 tabelas, race condition, debounce |
-| `Referência - Cron Jobs.md` | 4 crons no vercel.json |
+| `Referência - Cron Jobs.md` | 4 crons no vercel.json (Hobby executa só 2) + process-remarketing via cron-job.org (1x/hora, CRON_SECRET) |
 
 ## Notas a criar/atualizar no Vault após esta sessão
 
 | Nota | O que atualizar |
 |---|---|
-| `Módulo - Remarketing.md` | **Criar** — documentar módulo completo: SSR (page.tsx limit 50, sem step_stats, initialHasMore), RemarketingClient (CRUD real, Realtime, Templates 4, auto-save 30s, CSV export BOM, paginação .range(), openCampaign lazy-load step_stats, ExecutionHistoryCard, aviso dirty, 6 PostHog events), migrações 067 (bot_id FK + last_run_at + total_sent) e 068 (next_run_at + remarketing_executions RLS) |
+| `Módulo - Remarketing.md` | **Criar** — documentar módulo completo: SSR (page.tsx limit 50, sem step_stats, initialHasMore), RemarketingClient (CRUD real, Realtime, Templates 4, auto-save 30s, CSV export BOM, paginação .range(), openCampaign lazy-load step_stats, ExecutionHistoryCard, aviso dirty, 6 PostHog events), cron process-remarketing (7 gatilhos, multi-step scheduling, increment_campaign_sent RPC, cron-job.org 1x/hora), migrações 067 + 068 + 069 |
 | `Módulo - Fluxos.md` | **Atualizar** — adicionar: motor de execução de fluxo no webhook (executeFlowNode recursivo, 9 tipos de nó), migração 064 (flow_id/flow_node_id/flow_vars em contacts), correção inspector (bgPannedRef), correção campo Question (data.text ?? data.question) |
 | `Módulo - Bots.md` | **Atualizar** — 9 server actions (+ getBotTelegramProfileAction, saveBotTelegramProfileAction, setBotPhotoAction); TelegramProfileModal (foto base64, nome, descrição, short desc, comandos reordenáveis); welcome_message só para novos contatos (isNewContact); motor de fluxo no webhook |
 | `Módulo - Redirecionadores.md` | **Atualizar** — melhorias: seletor de período 7/14/30d no painel expandido; sparkline preload automático para links visíveis (14d); loadAnalytics estável via refs (sem infinite loop); cache ${id}:${period}; confirmação inline ao pausar; slug sanitização defensiva; KPI "Cliques únicos (30d)" via RPC 066; KPI "Top link" com subtitle "total acumulado"; cloaking null-safe (decoy_url\|\|appUrl); onLoadAnalytics noop corrigido; status archived; migração 066 |
-| `04 - Banco de Dados e Migrações.md` | Adicionar migrações 063–068: trigger_type+keywords (flows), flow_id/flow_node_id/flow_vars (contacts), redirects RLS + redirect_click_events + RPCs (065), redirect_unique_clicks_30d (066), remarketing bot_id+last_run_at+total_sent (067), remarketing next_run_at + remarketing_executions (068) |
-| `03 - Estado do Projeto.md` | Marcar Remarketing como ✅ Funcional (auditoria completa); marcar Redirecionadores e Fluxos/webhook/perfil-Telegram como ✅ |
+| `04 - Banco de Dados e Migrações.md` | Adicionar migrações 063–069: trigger_type+keywords (flows), flow_id/flow_node_id/flow_vars (contacts), redirects RLS + redirect_click_events + RPCs (065), redirect_unique_clicks_30d (066), remarketing bot_id+last_run_at+total_sent (067), remarketing next_run_at + remarketing_executions (068), remarketing cron índices + increment_campaign_sent RPC (069) |
+| `03 - Estado do Projeto.md` | Marcar Remarketing como ✅ Funcional (auditoria completa + cron de envio real); marcar Redirecionadores e Fluxos/webhook/perfil-Telegram como ✅ |
 | `Módulo - Afiliados.md` | **Atualizar** — /r/[slug] agora tem prioridade dupla: tenta afiliado primeiro, depois redirecionador |
 | `Referência - Eventos PostHog.md` | **Atualizar** — 5 eventos campaign + csv_exported remarketing; total agora ~43 eventos |
 
