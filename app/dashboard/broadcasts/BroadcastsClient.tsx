@@ -960,7 +960,7 @@ interface EditorProps {
   userId:          string
   onBack:          () => void
   onSave:          (b: Broadcast) => Promise<void>
-  onSendNow:       (b: Broadcast) => Promise<void>
+  onSendNow:       (b: Broadcast) => Promise<string | null>
   onSchedule:      (b: Broadcast) => Promise<void>
   onCancel:        (id: string) => Promise<void>
   onDelete:        (id: string) => Promise<void>
@@ -1052,9 +1052,13 @@ function BroadcastEditor({
     if (!message.trim()) { showToast('A mensagem não pode ficar vazia.'); return }
     setSending(true)
     setConfirmOpen(false)
-    await onSendNow(buildPatch())
+    const errMsg = await onSendNow(buildPatch())
     setSending(false)
-    onBack()
+    if (errMsg) {
+      showToast(errMsg)
+    } else {
+      onBack()
+    }
   }
 
   async function handleCancel() {
@@ -1607,23 +1611,41 @@ export default function BroadcastsClient({
       .eq('user_id', userId)
   }, [userId, supabase])
 
-  const sendBroadcastNow = useCallback(async (updated: Broadcast) => {
-    // 1. Salva o estado atual no banco (status será sobrescrito pela API)
+  const sendBroadcastNow = useCallback(async (updated: Broadcast): Promise<string | null> => {
     await saveBroadcast(updated)
 
-    // 2. Chama a API de envio (fire-and-forget — Realtime notifica o progresso)
-    fetch('/api/broadcasts/send', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ broadcast_id: updated.id }),
-    }).catch(() => {
-      // Erro de rede — a UI vai refletir via Realtime quando o status mudar
-    })
+    // Tenta aguardar resposta por até 20s para capturar erros imediatos
+    // (rate limit, status inválido, bot não encontrado, etc.)
+    // Se demorar mais, assuma que está processando audiência grande — Realtime cuida do progresso
+    const controller = new AbortController()
+    const tid = setTimeout(() => controller.abort(), 20_000)
 
-    // 3. Atualiza o estado local imediatamente para UX responsiva
+    try {
+      const res = await fetch('/api/broadcasts/send', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ broadcast_id: updated.id }),
+        signal:  controller.signal,
+      })
+      clearTimeout(tid)
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({} as Record<string, string>)) as Record<string, string>
+        const msg = body.error ?? `Erro ${res.status}`
+        // Reverte status local — disparo não saiu
+        setBroadcasts(prev => prev.map(b => b.id === updated.id ? { ...b, status: 'draft' } : b))
+        return msg
+      }
+    } catch {
+      clearTimeout(tid)
+      // AbortError = timeout → audiência grande ainda processando (normal)
+      // Outros = erro de rede → Realtime mostrará quando status mudar
+    }
+
     setBroadcasts(prev => prev.map(b =>
       b.id === updated.id ? { ...updated, status: 'sending', startedAt: Date.now() } : b,
     ))
+    return null
   }, [saveBroadcast])
 
   const scheduleBroadcast = useCallback(async (updated: Broadcast) => {
