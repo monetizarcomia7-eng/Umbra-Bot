@@ -145,9 +145,18 @@ umbra-bot/
 │       │   ├── page.tsx          # Server Component: SSR redirects + contagem de cliques 30d + delta vs 30-60d
 │       │   └── RedirectsClient.tsx # Client Component: CRUD real, analytics lazy por link (RPC redirect_analytics),
 │       │                           # cloaking, UTM, CSV export, criar/editar/apagar modais, 4 eventos PostHog
-│       ├── remarketing/          # Remarketing — SSR + RemarketingClient (dados reais)
-│       │   ├── page.tsx          # Server Component: SSR campaigns + bots em paralelo
-│       │   └── RemarketingClient.tsx # Client Component: CRUD real, Realtime, Templates, PostHog
+│       ├── remarketing/          # Remarketing — SSR + RemarketingClient (dados reais, auditoria completa)
+│       │   ├── page.tsx          # Server Component: SSR campaigns (limit 50, sem step_stats) + bots em paralelo
+│       │   │                     # select otimizado (step_stats omitido — lazy-load no editor)
+│       │   │                     # initialHasMore: boolean → paginação client-side
+│       │   └── RemarketingClient.tsx # Client Component: CRUD real, Realtime, Templates, 5 PostHog events
+│       │                             # Auto-save 30s (debounce + stateRef estável)
+│       │                             # CSV export com BOM UTF-8 + event csv_exported
+│       │                             # Paginação: loadMore() .range() + "Carregar mais campanhas"
+│       │                             # openCampaign(): lazy-load step_stats ao abrir editor
+│       │                             # ExecutionHistoryCard: histórico de remarketing_executions lazy
+│       │                             # Aviso mudanças não salvas: dirty check ao clicar Voltar
+│       │                             # Prévia oculta em xl: (sidebar já exibe)
 │       ├── broadcasts/           # Disparador (mock)
 │       ├── tools/                # Ferramentas (mock)
 │       ├── gateways/             # Gateways (mock)
@@ -450,6 +459,17 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Remarketing — triggerConfig dinâmico: campos extras por tipo (tag, dias, horas) | ✅ Implementado |
 | Remarketing — 5 eventos PostHog: campaign_created/saved/activated/paused/deleted | ✅ Implementado |
 | Remarketing — migração 067: bot_id FK + last_run_at + total_sent | ✅ Criada |
+| Remarketing — migração 068: next_run_at + tabela remarketing_executions (RLS re_owner) | ✅ Criada |
+| Remarketing — auto-save 30 s: debounce + stateRef/campaignRef estáveis (pula se nome vazio) | ✅ Implementado |
+| Remarketing — indicador "Auto-save em 30 s" na topbar quando dirty=true | ✅ Implementado |
+| Remarketing — aviso de mudanças não salvas ao clicar Voltar (backConfirmOpen + dirty check) | ✅ Implementado |
+| Remarketing — botão Prévia oculto em xl: (sidebar já exibe a prévia — sem duplicação) | ✅ Implementado |
+| Remarketing — CSV export: arquivo remarketing_YYYY-MM-DD.csv com BOM UTF-8 | ✅ Implementado |
+| Remarketing — csv_exported via PostHog { section: 'remarketing', rows } | ✅ Implementado |
+| Remarketing — ExecutionHistoryCard: histórico lazy de remarketing_executions no editor | ✅ Implementado |
+| Remarketing — paginação: limit 50 no SSR + "Carregar mais campanhas" client-side (.range()) | ✅ Implementado |
+| Remarketing — select SSR otimizado: step_stats omitido (lazy-load ao abrir editor) | ✅ Implementado |
+| Remarketing — openCampaign(): lazy-load step_stats sob demanda para PerformanceCard | ✅ Implementado |
 | Fluxos — Server Component SSR + FlowsClient (dados reais, sem MOCK_FLOWS) | ✅ Funcional |
 | Fluxos — createFlow: INSERT real no banco, UUID real retornado (sem fake ID) | ✅ Implementado |
 | Fluxos — saveFlow: .update() com feedback de erro via Toast | ✅ Implementado |
@@ -648,6 +668,7 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | `campaign_activated` | `RemarketingClient.tsx` — ao ativar campanha (inclui trigger, step_count) |
 | `campaign_paused` | `RemarketingClient.tsx` — ao pausar campanha (inclui trigger) |
 | `campaign_deleted` | `RemarketingClient.tsx` — ao apagar campanha (confirmação modal) |
+| `csv_exported` | `RemarketingClient.tsx` (CampaignList) — ao exportar CSV de campanhas (inclui section: 'remarketing', rows) |
 
 ---
 
