@@ -88,7 +88,7 @@ function mapRaw(row: RawRedirect, appUrl: string): LinkItem {
     url: `${appUrl}/r/${row.slug}`,
     destination: row.destination,
     destinationLabel: row.destination_label || row.destination,
-    clicks: row.clicks, uniqueClicks: row.unique_clicks,
+    clicks: row.clicks ?? 0, uniqueClicks: row.unique_clicks ?? 0,
     createdAt: new Date(row.created_at).getTime(),
     status: row.status, cloaking: row.cloaking,
     decoyUrl: row.decoy_url ?? '',
@@ -1313,7 +1313,7 @@ export function RedirectsClient({ initialRedirects, userId, appUrl, currClicks, 
         <SummaryCard
           label="Top link"
           value={topLink ? fmtNum(topLink.clicks) : '—'}
-          sub={topLink?.slug || ''}
+          sub={topLink ? `r/${topLink.slug} · total acumulado` : 'Nenhum link criado'}
           icon={TrendingUp}
         />
       </div>
