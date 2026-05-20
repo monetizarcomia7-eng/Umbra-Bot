@@ -1556,9 +1556,9 @@ export default function BroadcastsClient({
           setBroadcasts(prev => prev.map(b => {
             if (b.id !== row.id) return b
             const next = mapRaw(row)
-            // Ignora evento stale do saveBroadcast que carrega status='draft'
-            // enquanto já estamos em 'sending' (evita race condition Realtime vs. setState)
-            if (b.status === 'sending' && next.status === 'draft') return b
+            // Bloqueia evento stale 'draft' (do saveBroadcast antes do envio) de sobrescrever
+            // qualquer estado que já avançou além de draft — incluindo done/failed/canceled.
+            if ((['sending', 'done', 'failed', 'canceled'] as BroadcastStatus[]).includes(b.status) && next.status === 'draft') return b
             return next
           }))
         },
