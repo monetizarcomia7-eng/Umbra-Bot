@@ -176,10 +176,18 @@ umbra-bot/
 │       ├── broadcasts/           # Disparador — dados reais do Supabase (SSR + Realtime)
 │       │   ├── page.tsx          # Server Component: SSR broadcasts (limit 50) + bots + RPC audience counts em paralelo
 │       │   └── BroadcastsClient.tsx # Client Component: CRUD real, Realtime UPDATE+INSERT, BotPicker real,
-│       │                            # AudiencePicker dinâmico (all/leads/buyers/tag:), paginação .range()
-│       │                            # sendBroadcastNow → POST /api/broadcasts/send (fire-and-forget)
-│       │                            # cancelBroadcast → UPDATE status='canceled', deleteBroadcast → DELETE
+│       │                            # AudiencePicker dinâmico (all/leads/buyers/tag:) com re-fetch por bot,
+│       │                            # paginação .range() 50/página, "Carregar mais disparos"
+│       │                            # sendBroadcastNow → POST /api/broadcasts/send (20s timeout, otimista)
+│       │                            # cancelBroadcast → UPDATE status='canceled'/'draft', deleteBroadcast → DELETE
+│       │                            # duplicateBroadcast → INSERT cópia com status='draft' + "(cópia)" no título
 │       │                            # now=Date.now() real, sem Math.random(), progresso via Realtime
+│       │                            # Realtime stale-draft guard: bloqueia draft de sobrescrever sending/done/failed/canceled
+│       │                            # MessageComposer: texto 4096 chars + mídia URL (image/video/file) + 3 botões inline
+│       │                            # BestPracticesModal: 6 dicas de disparo responsável
+│       │                            # Filtros avançados: registered_after + registered_before (JSONB filters)
+│       │                            # KPI cards: Disparos no mês / Mensagens enviadas / Taxa de entrega / Em andamento
+│       │                            # Filtros de listagem: busca título/mensagem + status + bot dropdown
 │       ├── tools/                # Ferramentas (mock)
 │       ├── gateways/             # Gateways (mock)
 │       ├── tracking/             # Trackeamento (mock)
@@ -453,18 +461,30 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Tabela withdrawals + API /api/withdrawals (zod + Sentry) | ✅ Implementado |
 | Cron job para processar saques pendentes (vercel.json, horário) | ✅ Implementado |
 | Broadcasts — Server Component SSR + BroadcastsClient (dados reais, sem mock) | ✅ Funcional |
-| Broadcasts — CRUD real (criar/salvar/cancelar/deletar) com .eq('user_id') IDOR-safe | ✅ Implementado |
+| Broadcasts — CRUD real (criar/salvar/cancelar/deletar/duplicar) com .eq('user_id') IDOR-safe | ✅ Implementado |
 | Broadcasts — BotPicker: bots reais do banco (sem SENDER_BOTS hardcoded) | ✅ Implementado |
 | Broadcasts — AudiencePicker dinâmico via RPC broadcasts_audience_counts (all/leads/buyers/tag:) | ✅ Implementado |
-| Broadcasts — sendBroadcastNow: chama POST /api/broadcasts/send real (sem simulação) | ✅ Implementado |
+| Broadcasts — AudiencePicker: contagens re-fetched por bot (localCounts via RPC ao trocar botId) | ✅ Implementado |
+| Broadcasts — sendBroadcastNow: chama POST /api/broadcasts/send (otimista 'sending' + 20s timeout) | ✅ Implementado |
 | Broadcasts — progresso em tempo real via Supabase Realtime (sem Math.random()) | ✅ Implementado |
+| Broadcasts — Realtime stale-draft guard: bloqueia draft de sobrescrever sending/done/failed/canceled | ✅ Implementado |
 | Broadcasts — cancelamento mid-flight: UPDATE status='canceled' → API verifica a cada 50 msgs | ✅ Implementado |
+| Broadcasts — duplicateBroadcast: copia source como draft, título + "(cópia)", preserva media/buttons/filters | ✅ Implementado |
 | Broadcasts — cron process-broadcasts: agenda broadcasts (CRON_SECRET, cron-job.org 15 min) | ✅ Implementado |
 | Broadcasts — CAS lock no cron: UPDATE WHERE status='scheduled' evita duplo-processamento | ✅ Implementado |
 | Broadcasts — substituição de variáveis {nome}/{bot}/{data}/{produto}/{valor} | ✅ Implementado |
 | Broadcasts — segmentação por tag: audience='tag:VIP' usa .contains('tags', ['VIP']) | ✅ Implementado |
 | Broadcasts — migração 070: user_id NOT NULL + índice cron + RPC broadcasts_audience_counts | ✅ Criada |
 | Broadcasts — paginação: limit 50 no SSR + "Carregar mais" client-side (.range()) | ✅ Implementado |
+| Broadcasts — MessageComposer: texto 4096 chars + insert de variáveis + mídia URL + 3 botões inline | ✅ Implementado |
+| Broadcasts — BestPracticesModal: 6 dicas (segmentação, personalização, horário, limite TG, teste, frequência) | ✅ Implementado |
+| Broadcasts — Filtros avançados: registered_after + registered_before salvo em JSONB filters | ✅ Implementado |
+| Broadcasts — KPI cards (4): Disparos no mês / Mensagens enviadas / Taxa de entrega / Em andamento | ✅ Implementado |
+| Broadcasts — Filtros de listagem: busca por título/mensagem + dropdown status + dropdown bot | ✅ Implementado |
+| Broadcasts — SendingStatusCard: barra de progresso + entregues/falhas/velocidade + ETA + botão cancelar | ✅ Implementado |
+| Broadcasts — PreviewBroadcast: sidebar com prévia da mensagem (exibe imagem se URL for image) | ✅ Implementado |
+| Broadcasts — SummaryCard: bot/público/alcance/agendamento/estimativa em tempo real | ✅ Implementado |
+| Broadcasts — banner "N disparos em andamento" na listagem quando sendingCount > 0 | ✅ Implementado |
 | Web Push (VAPID) | ✅ Implementado |
 | Rate limiting (Upstash Redis + fallback) | ✅ Funcional |
 | Sentry (client Replay + server tracePropagation + captureException) | ✅ Configurado |
@@ -2734,3 +2754,300 @@ GET /r/{slug}
 - IP nunca armazenado em texto claro — SHA-256 truncado (16 chars hex), LGPD-safe
 - Cloaking null-safe: se `decoy_url` nulo, bots recebem `appUrl` (nunca o destino real)
 - `createAdminClient()` usado apenas na rota pública `/r/[slug]` — sem sessão de usuário
+
+---
+
+## 23. MÓDULO DE DISPARADOR (BROADCASTS)
+
+### Arquivos
+
+```
+app/dashboard/broadcasts/
+  ├── page.tsx            # Server Component — SSR broadcasts (limit 50) + bots + RPC counts em paralelo
+  └── BroadcastsClient.tsx # Client Component — listagem com KPIs/filtros + editor completo
+```
+
+### Fluxo de dados
+
+```
+BroadcastsPage (Server Component)
+  ├── Auth guard: if (!user) redirect('/login')
+  ├── Promise.all em paralelo:
+  │     ├── broadcasts: id, title, bot_id, bot, audience, audience_count, status,
+  │     │               sent, delivered, failed, scheduled_for, started_at, finished_at,
+  │     │               failure_reason, message, media, buttons, filters, created_at, updated_at
+  │     │               order: created_at desc, limit 50, filtrado por user_id
+  │     ├── bots: id, name, username, color — order: added_at desc
+  │     └── RPC broadcasts_audience_counts(p_user_id): { all, leads, buyers, tags }
+  │           fallback seguro: {} → zeroes se RPC ainda não aplicada
+  └── passa como props:
+        initialBroadcasts: RawBroadcast[]
+        bots: RawBotOption[]
+        audienceCounts: AudienceCounts
+        userId: string
+        initialHasMore: boolean (initialBroadcasts.length >= 50)
+
+BroadcastsClient (Client Component)
+  ├── broadcasts state: initialBroadcasts.map(mapRaw)
+  ├── editingId state: string | null — null = BroadcastList; string = BroadcastEditor
+  ├── now state: Date.now() — tick a cada 30s (timestamps relativos corretos)
+  ├── hasMore / loadingMore state + offsetRef: controle de paginação server-side
+  │
+  ├── audienceOptions useMemo: [all, leads, buyers, ...tag:X] a partir de audienceCounts
+  │
+  ├── Supabase Realtime ('broadcasts-realtime'):
+  │     UPDATE → mapRaw(row) + stale-draft guard:
+  │       if (b.status in [sending|done|failed|canceled] && next.status === 'draft') → ignora
+  │       (impede evento antigo do saveBroadcast de reverter um broadcast já disparado)
+  │     INSERT → prepend se id ainda não existe no state
+  │
+  ├── createBroadcast():
+  │     INSERT { user_id, title='Novo disparo', bot_id=bots[0].id, audience='leads',
+  │              audience_count=audienceCounts.leads, message='', buttons=[], status='draft',
+  │              sent=0, delivered=0, failed=0, filters={} }
+  │     retorna id real → setEditingId(id)
+  │
+  ├── saveBroadcast(updated):
+  │     optimistic local update → DB UPDATE com .eq('user_id', userId)
+  │     mapToDb() inclui user_id + todos os campos → IDOR duplo
+  │
+  ├── sendBroadcastNow(updated): → string | null (null = sucesso)
+  │     1. saveBroadcast(updated) — persiste estado atual
+  │     2. Otimista: setBroadcasts → status='sending', startedAt=Date.now()
+  │        (roda antes de qualquer evento Realtime do saveBroadcast)
+  │     3. fetch POST /api/broadcasts/send { broadcast_id } com AbortController 20s
+  │        res.ok=false → reverte status para 'draft', retorna msg de erro
+  │        AbortError (timeout) → audiência grande, Realtime cuida do progresso
+  │
+  ├── scheduleBroadcast(updated):
+  │     saveBroadcast({ ...updated, status: 'scheduled' })
+  │
+  ├── cancelBroadcast(id):
+  │     sending → canceled (+ finishedAt=now); scheduled → draft (+ scheduledFor=null)
+  │     optimistic + DB UPDATE
+  │
+  ├── deleteBroadcast(id):
+  │     remove do state + DELETE .eq('user_id')
+  │
+  ├── duplicateBroadcast(id):
+  │     INSERT cópia com title + "(cópia)", status='draft', preserva message/media/buttons/filters/botId
+  │     retorna row completa → prepend ao state (sem INSERT duplicado via Realtime: dedup por id)
+  │
+  └── loadMore():
+        .range(offsetRef.current, offsetRef.current + 49) → acumula em broadcasts
+        offsetRef avança +N, setHasMore(data.length === 50)
+```
+
+### BroadcastList (sub-componente — listagem)
+
+```
+BroadcastList
+  ├── filters state: { search: string, status: string, bot: string }
+  │     (estado local — não persiste em localStorage)
+  │     search: filtra por title.includes(q) || message.includes(q)
+  │     status: compara STATUS_MAP[b.status].label
+  │     bot: compara b.botId via botIdByDisplay Map
+  ├── creating state: boolean — botão "Novo disparo" com Loader2
+  ├── bestOpen state: boolean — abre BestPracticesModal
+  │
+  ├── KPI cards (4 colunas):
+  │     "Disparos no mês"    — broadcasts criados/iniciados nos últimos 30d
+  │     "Mensagens enviadas" — SUM(sent) de todos os broadcasts
+  │     "Taxa de entrega"    — SUM(delivered) / SUM(sent) × 100% (highlight verde ≥ 95%)
+  │     "Em andamento"       — count(status='sending') com pulse animation
+  │
+  ├── Banner informativo quando sendingCount > 0:
+  │     "N disparos em andamento — progresso atualizado em tempo real via Supabase Realtime"
+  │
+  ├── FilterBar: busca + select status + select bot + botão Limpar + contador "N disparos"
+  │
+  ├── Tabela com 6 colunas: Título/Bot | Público-alvo | Agendamento | Status | Progresso | Ações
+  │     BroadcastRow: linha clicável → abre editor
+  │       Ações:
+  │         sending   → "Cancelar"
+  │         scheduled → "Desagendar"
+  │         done/draft/failed/canceled → "Copiar" (duplicateBroadcast)
+  │
+  ├── Estado vazio:
+  │     sem broadcasts → "Crie seu primeiro broadcast" + botão Novo disparo
+  │     com filtros ativos sem resultados → "Tente limpar os filtros"
+  │
+  ├── "Carregar mais disparos" quando hasMore=true
+  └── BestPracticesModal → 6 dicas (segmentação, personalização, horário, limite TG, teste, frequência)
+```
+
+### BroadcastEditor (sub-componente — editor)
+
+```
+BroadcastEditor
+  ├── editable: status === 'draft' || status === 'scheduled'
+  │
+  ├── Estado local:
+  │     title, botId, audience, message, media, buttons (padrão do broadcast)
+  │     scheduleMode: 'now' | 'later'
+  │     scheduledFor: timestamp (padrão: now + 1h)
+  │     regAfter, regBefore: strings ISO date (filtros avançados)
+  │     localCounts: AudienceCounts | null — re-fetched via RPC ao trocar botId
+  │
+  ├── localCounts re-fetch:
+  │     useEffect([botId]) → supabase.rpc('broadcasts_audience_counts', { p_user_id, p_bot_id })
+  │     effectiveOptions: usa localCounts se disponível, senão audienceOptions do prop
+  │     (garante contagens corretas para o bot selecionado, não o global)
+  │
+  ├── buildPatch(extra?): monta Broadcast com estado atual
+  │     filters: { registered_after?, registered_before? } — só inclui se preenchido
+  │     audienceCount: audOpt?.count do effectiveOptions (contagem real do bot)
+  │
+  ├── handleSaveDraft(): valida título → onSave(buildPatch({ status:'draft' }))
+  ├── handleSchedule():  valida título + mensagem → onSchedule(buildPatch({ scheduledFor }))
+  ├── handleSendNow():   valida botId + mensagem → confirmOpen=true → onSendNow(buildPatch())
+  ├── handleCancel():    onCancel(broadcast.id)
+  ├── handleDelete():    onDelete(broadcast.id) → onBack()
+  │
+  ├── Topbar sticky (h-60px):
+  │     ← Disparos | título editável | Badge status
+  │     Ações: Excluir (draft) | Salvar rascunho | Enviar agora / Agendar envio
+  │             Cancelar envio (se sending)
+  │
+  ├── Layout xl: grid [1fr 380px]
+  │     Coluna esquerda:
+  │       BotPicker: card grid de bots (cor + @handle + radio)
+  │       AudiencePicker: all/leads/buyers/tag:X com contagem badge
+  │       MessageComposer: texto + mídia + botões
+  │       Filtros avançados: registered_after + registered_before (date inputs)
+  │       SchedulePicker: agora ou datetime-local — estimativa de tempo
+  │     Coluna direita (sticky top-80px):
+  │       PreviewBroadcast: prévia visual com {nome}→João, {produto}→'Mentoria Premium', etc.
+  │       SummaryCard: bot / público / alcance / envio / estimativa
+  │
+  ├── SendingStatusCard (só quando status='sending'):
+  │     Barra de progresso (sent / audienceCount)
+  │     Grid 3: entregues (%) | falhas (%) | velocidade ~28/s
+  │     ETA: remaining / 1800 min (1800 = 30 msg/s × 60s)
+  │     Info tip: "Telegram limita ~30 msgs/segundo"
+  │
+  ├── Modal confirmar envio: público / contatos / bot / ETA
+  └── Modal confirmar exclusão (só para drafts)
+```
+
+### MessageComposer (sub-componente)
+
+```
+MessageComposer
+  ├── Textarea: 4096 chars max, placeholder "Olá {nome}, …", resize-none
+  ├── Botões de variável: {nome} {produto} {valor} {bot} {data}
+  │     insertVar(): insere no cursor (selectionStart/End) + requestAnimationFrame restore focus
+  │
+  ├── Mídia (opcional):
+  │     MediaUrlInput quando media=null:
+  │       Selector: Imagem | Vídeo | Documento
+  │       Input URL: https://… + botão "Adicionar"
+  │       Suporte: Telegram CDN, S3, Cloudflare R2
+  │     MediaPreview quando media!=null:
+  │       Ícone do tipo + label + URL truncada + botão X (remove)
+  │       Se kind='image' e url: tenta <img> com onError fallback
+  │
+  └── Botões inline (até 3):
+        Adicionar botão → grows list
+        Cada botão: [label input] [url input] [trash button]
+        "+ Adicionar outro botão" quando length < 3
+```
+
+### SchedulePicker (sub-componente)
+
+```
+SchedulePicker
+  ├── 'now':   "Enviar agora"  — inicia imediatamente após confirmar
+  └── 'later': "Agendar envio" — datetime-local input, min=now, valor inicial now+1h
+```
+
+### Status dos broadcasts
+
+| status | Label | tom | Descrição |
+|---|---|---|---|
+| `draft` | Rascunho | muted | Não enviado — editável |
+| `scheduled` | Agendado | warning | Aguarda cron process-broadcasts — editável |
+| `sending` | Enviando | primary + pulse | Em andamento — cancellable |
+| `done` | Concluído | success | Finalizado |
+| `failed` | Falhou | danger | Interrompido com erro |
+| `canceled` | Cancelado | muted | Cancelado pelo usuário |
+
+### /api/broadcasts/send (rota de envio imediato)
+
+```
+POST /api/broadcasts/send { broadcast_id }
+├── Auth + rate limit 5/hora
+├── Busca broadcast + bot (token criptografado)
+├── Filtra contatos por audience (all/leads/buyers/tag:XYZ) + bot_id
+│     se filters.registered_after:  .gte('created_at', date)
+│     se filters.registered_before: .lte('created_at', date)
+├── Rate limit 35ms/msg (Telegram: ~28 msgs/s máximo seguro)
+├── substituteVars(text, contact): {nome}/{produto}/{valor}/{bot}/{data}
+├── sendTelegramMessage() + (mídia e botões se presentes)
+├── Atualiza sent/delivered/failed no banco a cada mensagem
+├── Cancellation check a cada 50 msgs: SELECT status — se 'canceled' → break
+└── Atualiza status='done' + finished_at ao concluir
+```
+
+### /api/cron/process-broadcasts (cron de agendamentos)
+
+```
+GET /api/cron/process-broadcasts (CRON_SECRET, cron-job.org a cada 15 min)
+├── CAS lock: UPDATE broadcasts SET status='sending' WHERE status='scheduled'
+│            AND scheduled_for <= now() LIMIT 1 RETURNING *
+│   (evita duplo-processamento: só 1 broadcast por rodada de cron)
+├── Segmentação idêntica ao /api/broadcasts/send
+├── Rate limit 35ms/msg, cancellation check a cada 50 msgs
+└── Registra no cron_log (fire-and-forget) + Sentry captureCheckIn
+```
+
+### /api/cron/register-webhooks (utilitário admin)
+
+```
+GET /api/cron/register-webhooks (CRON_SECRET)
+├── Busca todos os bots com token cadastrado (createAdminClient)
+├── Para cada bot: decryptToken → Telegram setWebhook(url, secret_token)
+├── Atualiza status='online' + webhook_url + last_sync se bem-sucedido
+└── Retorna { registered: N, results: [{ bot, ok, detail }] }
+Útil para recuperar webhook após deploy, mudança de URL ou rotação de secret.
+```
+
+### Tipos internos
+
+```typescript
+interface RawBroadcast {
+  id, title, bot_id, bot, audience, audience_count, status
+  sent, delivered, failed, scheduled_for, started_at, finished_at, failure_reason
+  message, media: MediaAttachment | null, buttons: BroadcastButton[], filters, created_at, updated_at
+}
+
+interface Broadcast { /* camelCase version */
+  id, title, botId, bot, audience, audienceCount, status: BroadcastStatus
+  sent, delivered, failed, scheduledFor, startedAt, finishedAt, failureReason
+  message, media, buttons, createdAt, filters
+}
+
+interface MediaAttachment { kind: 'image' | 'video' | 'file'; label: string; url?: string }
+interface BroadcastButton  { label: string; url: string }
+interface AudienceCounts   { all: number; leads: number; buyers: number; tags: Record<string, number> }
+type BroadcastStatus = 'draft' | 'scheduled' | 'sending' | 'done' | 'failed' | 'canceled'
+```
+
+### RPC broadcasts_audience_counts (migração 070)
+
+```sql
+-- Retorna contagens segmentadas para um user_id e bot_id opcionais
+broadcasts_audience_counts(p_user_id uuid, p_bot_id uuid default null) → json
+  { all, leads, buyers, tags: Record<string, number> }
+  -- all:    count(contacts WHERE user_id = p_user_id [AND bot_id = p_bot_id])
+  -- leads:  count WHERE orders_count IS NULL OR orders_count = 0
+  -- buyers: count WHERE orders_count > 0
+  -- tags:   object com count por tag (JSONB tags)
+```
+
+### Segurança
+
+- Toda operação DB usa `.eq('user_id', userId)` — IDOR duplo (código + RLS)
+- `mapToDb()` sempre inclui `user_id` no payload de INSERT/UPDATE
+- `sendBroadcastNow` valida `botId` e `message` antes de chamar a API
+- Rate limit 5 disparos/hora por usuário em `/api/broadcasts/send`
