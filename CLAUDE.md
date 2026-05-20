@@ -147,6 +147,17 @@ umbra-bot/
 │       │   ├── page.tsx          # Server Component: SSR prefs + firstBot em paralelo; passa userId + userEmail
 │       │   └── NotificationsClient.tsx # Client Component: salva via upsert ON CONFLICT user_id;
 │       │                               # email e Telegram reais (user.email + bot.username do banco)
+│       ├── docs/                 # Documentação para usuários — renderizador de artigos Markdown
+│       │   ├── layout.tsx        # Layout com DocsSidebar (sidebar fixa à esquerda)
+│       │   ├── page.tsx          # Redireciona para /dashboard/docs/01-comecando/introducao
+│       │   ├── _nav.ts           # Definição central da navegação (11 seções, 30 artigos)
+│       │   ├── DocsSidebar.tsx   # Client Component: sidebar com toggle dark/light, back link,
+│       │   │                     # item ativo destacado, switch visual de tema (useTheme)
+│       │   ├── DocPager.tsx      # Client Component: navegação Anterior / Próximo entre artigos
+│       │   └── [section]/[article]/page.tsx  # Server Component: lê .md de /docs/ via fs,
+│       │                                     # strip frontmatter, marked() → HTML, processHtml()
+│       │                                     # TL;DR → callout, screenshots → placeholder visual,
+│       │                                     # TODO → removido, blockquotes coloridos por tipo
 │       ├── guide/                # Guia da plataforma (mock)
 │       └── academy/              # Academia (mock)
 ├── components/
@@ -195,6 +206,21 @@ umbra-bot/
 │   └── DashboardProvider.tsx     # Contexto global: user, alerts, botsCount, logout — 1 fetch
 ├── public/
 │   └── sw.js                     # Service Worker para Web Push
+├── docs/                         # 30 artigos Markdown de documentação para usuários (não técnica)
+│   ├── 01-comecando/             # introducao, criar-conta, primeiro-bot, primeiro-pix
+│   ├── 02-bots/                  # como-criar-bot-botfather, conectar-bot-umbra,
+│   │                             # gerenciar-multiplos-bots, desconectar-bot
+│   ├── 03-financeiro/            # entender-painel-financeiro, transacoes, solicitar-saque,
+│   │                             # adicionar-conta-bancaria
+│   ├── 04-clientes/              # entender-lista-clientes, filtrar-clientes,
+│   │                             # adicionar-cliente-manual, importar-clientes-csv
+│   ├── 05-atividade/             # feed-atividade, filtros-atividade, exportar-atividade
+│   ├── 06-alertas/               # entender-alertas, resolver-alertas
+│   ├── 07-analytics/             # visao-geral-analytics, funil-conversao, relatorios-por-bot
+│   ├── 08-afiliados/             # programa-afiliados, aprovar-afiliados, pagar-afiliados
+│   ├── 09-notificacoes/          # configurar-notificacoes
+│   ├── 10-perfil/                # editar-perfil
+│   └── 11-faq/                   # perguntas-frequentes (20 perguntas organizadas por tema)
 ├── supabase/migrations/          # 62 migrações SQL (000 a 062)
 ├── vercel.json                   # 4 Cron jobs: process-withdrawals (06:00 UTC) + cleanup-activity (02:00 UTC) + check-bots (a cada 30 min) + cleanup-alerts (04:00 UTC)
 ├── sentry.*.config.ts            # Sentry (client com Replay / server com tracePropagation)
@@ -223,6 +249,8 @@ umbra-bot/
 | Monitoring | Sentry + PostHog + Vercel Analytics | — |
 | Pagamentos | Mercado Pago (PIX) | — |
 | Push | web-push (VAPID) | — |
+| Markdown render | marked | — |
+| Typography plugin | @tailwindcss/typography | — |
 
 ---
 
@@ -460,6 +488,11 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Clientes — 5 eventos PostHog: filter_changed, profile_opened, tag_added, added, imported | ✅ Implementado |
 | Clientes — ordenação clicável em todas as colunas (persiste em localStorage) | ✅ Implementado |
 | Clientes — apagar cliente com confirmação inline no painel lateral (DELETE → contacts) | ✅ Implementado |
+| Documentação para usuários — /docs/ (30 artigos Markdown, 11 seções) | ✅ Completo |
+| Documentação — renderizador /dashboard/docs (sidebar + artigo + paginação) | ✅ Funcional |
+| Documentação — toggle dark/light na sidebar da docs | ✅ Implementado |
+| Documentação — TL;DR callout, screenshots placeholder, blockquotes coloridos | ✅ Implementado |
+| Documentação — botão "Documentação" em Gerenciar Bots navega para /dashboard/docs | ✅ Implementado |
 | Testes (unit/e2e) | ❌ Não iniciado |
 | CI/CD | ❌ Não iniciado |
 
@@ -1904,3 +1937,111 @@ interface QuietHours {
 | 018 | Criou a tabela com RLS aberta (`using true`) — sem user_id |
 | 060 | Adicionou `user_id` + índice parcial (bugado) + corrigiu RLS |
 | 061 | Removeu índice parcial, adicionou `CONSTRAINT UNIQUE` completo (compatível com PostgREST upsert) |
+
+---
+
+## 20. DOCUMENTAÇÃO PARA USUÁRIOS
+
+### Visão geral
+
+Documentação **não-técnica** voltada para infoprodutores, criadores de conteúdo e vendedores digitais. Escrita em Português (BR), tom direto, sem jargão de API/webhook/JSON.
+
+### Estrutura de arquivos
+
+```
+docs/                           ← artigos Markdown (fonte da documentação)
+  01-comecando/
+    introducao.md               — O que é o Umbra Bot, para quem é
+    criar-conta.md              — Cadastro por e-mail ou Google
+    primeiro-bot.md             — Criar no BotFather + conectar ao Umbra Bot
+    primeiro-pix.md             — Guia completo: zero ao primeiro PIX confirmado (artigo mais importante)
+  02-bots/
+    como-criar-bot-botfather.md — Passo a passo do BotFather com detalhe do token
+    conectar-bot-umbra.md       — Adicionar bot no painel, variáveis de mensagem
+    gerenciar-multiplos-bots.md — Lista, status, monitoramento automático 30 min
+    desconectar-bot.md          — 3 soluções, como testar, como prevenir
+  03-financeiro/
+    entender-painel-financeiro.md — 4 cards, seletor período, 3 abas, exportar CSV
+    transacoes.md               — Status (aprovada/pendente/expirado/cancelado/falhou), detalhes
+    solicitar-saque.md          — Fluxo, limite 3/dia, processamento 06:00 UTC
+    adicionar-conta-bancaria.md — PIX/conta corrente/TED, maskPixKey
+  04-clientes/
+    entender-lista-clientes.md  — Lead vs comprador, colunas, perfil lateral, apagar
+    filtrar-clientes.md         — Filtros (status/origem/tag/período/busca), sort, bulk tag, CSV
+    adicionar-cliente-manual.md — INSERT direto em contacts
+    importar-clientes-csv.md    — Formato, Google Sheets/Excel, preview, lotes de 50
+  05-atividade/
+    feed-atividade.md           — Tipos de evento, modo ao vivo, links "Ver X"
+    filtros-atividade.md        — Categoria/bot/período/busca, TTL 90 dias, carregar mais
+    exportar-atividade.md       — CSV com campos, filtros aplicados
+  06-alertas/
+    entender-alertas.md         — Crítico/aviso/informativo, monitoramento 30 min, filtros
+    resolver-alertas.md         — Resolver/reabrir/apagar, ação rápida, limpeza 30 dias
+  07-analytics/
+    visao-geral-analytics.md    — Filtros globais, seções, Comparar, exportar
+    funil-conversao.md          — 4 etapas, como é registrado, taxa entre etapas, gargalos
+    relatorios-por-bot.md       — Por bot/produto/origem/coorte/status
+  08-afiliados/
+    programa-afiliados.md       — Ativar, comissão %, last_click/first_click, cookie_window
+    aprovar-afiliados.md        — Candidaturas pending, ApproveModal (bots+produtos), status
+    pagar-afiliados.md          — Marcar como pago manualmente, histórico
+  09-notificacoes/
+    configurar-notificacoes.md  — 3 canais, EVENT_CATALOG 17 eventos, horário de silêncio
+  10-perfil/
+    editar-perfil.md            — Foto (Supabase Storage), nome, senha, logout
+  11-faq/
+    perguntas-frequentes.md     — 20 perguntas por tema (bots, financeiro, clientes, afiliados)
+
+app/dashboard/docs/             ← renderizador Next.js das docs
+  layout.tsx                    — Layout com DocsSidebar (sidebar fixa)
+  page.tsx                      — Redirect → /dashboard/docs/01-comecando/introducao
+  _nav.ts                       — Array DOC_NAV: 11 seções, 30 artigos (único ponto de verdade)
+  DocsSidebar.tsx               — Client Component: usePathname + useTheme
+                                  Toggle dark/light com switch visual + ícone Sol/Lua
+                                  Link "← Voltar ao painel" + logo roxo
+  DocPager.tsx                  — Client Component: Anterior / Próximo com cards bordados
+  [section]/[article]/page.tsx  — Server Component:
+                                  fs.readFileSync → stripFrontmatter → marked() → processHtml()
+                                  Breadcrumb + hero (title, description, read time)
+                                  processHtml(): TL;DR → callout, screenshots → placeholder visual,
+                                  TODOs removidos, blockquotes coloridos (tip/warn/note)
+```
+
+### Convenções dos artigos Markdown
+
+- Frontmatter YAML: `title`, `description`, `order`, `category`
+- **TL;DR** sempre logo após o H1 — renderizado como callout verde
+- `<!-- screenshot: descrição -->` — renderizado como placeholder visual tracejado (📸)
+- `<!-- TODO: confirmar se feature existe -->` — removido do output para o usuário
+- Blockquotes com `**Dica:**`, `**Atenção:**`, `**Nota:**` recebem cores diferentes
+- Sem jargão técnico: API → sistema, webhook → integração, JSON → configuração
+
+### processHtml() — transformações no HTML gerado pelo marked
+
+```typescript
+// TL;DR → callout destacado
+/<p><strong>TL;DR:<\/strong>([\s\S]*?)<\/p>/g → <div class="tldr-box">...</div>
+
+// Screenshot comments → placeholder visual
+/<!-- screenshot: (desc) -->/ → <div class="screenshot-ph"><span>📸 (desc)</span></div>
+
+// TODO comments → removidos (invisíveis para o usuário)
+/<!-- TODO: ... -->/ → ''
+
+// Blockquotes tipados → classes de cor
+bq-tip (verde) | bq-warn (amarelo) | bq-note (azul)
+```
+
+### Como adicionar um novo artigo
+
+1. Criar o arquivo `.md` na pasta correta dentro de `/docs/`
+2. Adicionar o artigo em `app/dashboard/docs/_nav.ts` (array DOC_NAV)
+3. A rota `/dashboard/docs/[section]/[article]` é dinâmica — funciona automaticamente
+4. O artigo aparece na sidebar e na paginação Anterior/Próximo automaticamente
+
+### Dependências adicionadas
+
+| Pacote | Uso |
+|---|---|
+| `marked` | Converte Markdown → HTML no Server Component |
+| `@tailwindcss/typography` | Plugin Tailwind (ativo via `@plugin` no globals.css) — classes `prose` |
