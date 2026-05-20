@@ -349,6 +349,11 @@ function DetailsCard({ link, onStatusChange, onEdit, onDelete }: {
   onEdit: (link: LinkItem) => void
   onDelete: (id: string) => void
 }) {
+  const [confirmPause, setConfirmPause] = useState(false)
+
+  // Resetar confirmação quando o link muda de status
+  useEffect(() => { setConfirmPause(false) }, [link.status])
+
   return (
     <div className="bg-surface border border-border rounded-lg p-4">
       <div className="text-[12.5px] font-semibold text-text mb-3">Detalhes & ações</div>
@@ -377,18 +382,31 @@ function DetailsCard({ link, onStatusChange, onEdit, onDelete }: {
         <Btn variant="secondary" size="sm" onClick={() => window.open(link.url, '_blank')}>
           <Link2 size={13} /> Testar link
         </Btn>
-        {/* Ações de status */}
-        {link.status === 'active' && (
-          <Btn variant="secondary" size="sm" onClick={() => onStatusChange(link.id, 'paused')}>
+
+        {/* Pausar — com confirmação inline para evitar ação acidental */}
+        {link.status === 'active' && !confirmPause && (
+          <Btn variant="secondary" size="sm" onClick={() => setConfirmPause(true)}>
             <Pause size={13} /> Pausar
           </Btn>
         )}
+        {link.status === 'active' && confirmPause && (
+          <>
+            <span className="text-[11.5px] text-text-muted">Pausar o link?</span>
+            <Btn variant="danger" size="sm" onClick={() => { onStatusChange(link.id, 'paused'); setConfirmPause(false) }}>
+              <Check size={13} /> Confirmar
+            </Btn>
+            <Btn variant="ghost" size="sm" onClick={() => setConfirmPause(false)}>
+              Cancelar
+            </Btn>
+          </>
+        )}
+
         {link.status === 'paused' && (
           <Btn variant="primary" size="sm" onClick={() => onStatusChange(link.id, 'active')}>
             <Play size={13} /> Retomar
           </Btn>
         )}
-        {(link.status === 'active' || link.status === 'paused') && (
+        {(link.status === 'active' || link.status === 'paused') && !confirmPause && (
           <Btn variant="ghost" size="sm" onClick={() => onStatusChange(link.id, 'archived')}>
             <Archive size={13} /> Arquivar
           </Btn>
@@ -398,6 +416,7 @@ function DetailsCard({ link, onStatusChange, onEdit, onDelete }: {
             <RotateCcw size={13} /> Ativar
           </Btn>
         )}
+
         {/* Abrir destino final */}
         <Btn variant="ghost" size="sm" onClick={() => window.open(link.destination, '_blank')}>
           <ExternalLink size={13} /> Abrir destino
@@ -1034,6 +1053,11 @@ export function RedirectsClient({ initialRedirects, userId, appUrl, currClicks, 
   // Analytics lazy: chave "${id}:${period}", valor: AnalyticsState
   const [analyticsMap, setAnalyticsMap] = useState<Record<string, AnalyticsState>>({})
 
+  // Refs para loadAnalytics estável sem dep no analyticsMap (evita loop infinito no preload)
+  const analyticsMapRef = React.useRef<Record<string, AnalyticsState>>({})
+  const inflightRef     = React.useRef(new Set<string>())
+  useEffect(() => { analyticsMapRef.current = analyticsMap }, [analyticsMap])
+
   const perPage    = 8
   const slugPrefix = `${shortUrl(appUrl)}/r/`
 
@@ -1077,43 +1101,63 @@ export function RedirectsClient({ initialRedirects, userId, appUrl, currClicks, 
   const topLink = useMemo(() => [...links].sort((a, b) => b.clicks - a.clicks)[0], [links])
 
   // ── Analytics lazy load com cache por período ──────────────────────────────
+  // useCallback estável ([] deps) — usa refs para evitar stale closure sem loop
 
   const loadAnalytics = useCallback(async (id: string, period: number) => {
     const key = `${id}:${period}`
-    const current = analyticsMap[key]
-    // Não recarrega se já tiver dado ou estiver carregando
+    // inflightRef previne fetches duplicados mesmo com referência estável
+    if (inflightRef.current.has(key)) return
+    const current = analyticsMapRef.current[key]
     if (current && current !== 'error') return
 
+    inflightRef.current.add(key)
     setAnalyticsMap(prev => ({ ...prev, [key]: 'loading' }))
     try {
       const supabase = createClient()
       const { data, error } = await supabase.rpc('redirect_analytics', { p_redirect_id: id, p_days: period })
-      if (error || !data) {
-        setAnalyticsMap(prev => ({ ...prev, [key]: 'error' }))
-      } else {
-        setAnalyticsMap(prev => ({ ...prev, [key]: data as LinkAnalytics }))
-      }
+      setAnalyticsMap(prev => ({ ...prev, [key]: error || !data ? 'error' : data as LinkAnalytics }))
     } catch {
       setAnalyticsMap(prev => ({ ...prev, [key]: 'error' }))
+    } finally {
+      inflightRef.current.delete(key)
     }
-  }, [analyticsMap])
+  }, []) // estável — lê estado via refs
+
+  // Pré-carrega sparklines (14d) automaticamente para todos os links visíveis
+  const pageItemIds = pageItems.map(l => l.id).join(',')
+  useEffect(() => {
+    pageItems.forEach(l => loadAnalytics(l.id, 14))
+  // pageItems excluído: o join de IDs já captura mudanças; loadAnalytics é estável
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pageItemIds, loadAnalytics])
 
   function handleToggle(id: string) {
     const opening = expanded !== id
     setExpanded(opening ? id : null)
-    // Pré-carrega o período padrão ao expandir pela primeira vez
     if (opening) loadAnalytics(id, 14)
   }
 
   // ── CRUD ──────────────────────────────────────────────────────────────────
 
   async function createLink(opts: CreateOpts) {
+    // Re-sanitiza slug defensivamente (segunda camada além do modal)
+    const safeSlug = opts.slug
+      .toLowerCase()
+      .normalize('NFD').replace(/[̀-ͯ]/g, '')
+      .replace(/[^a-z0-9-]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 64)
+    if (safeSlug.length < 2) {
+      showToast('Slug inválido. Use ao menos 2 caracteres alfanuméricos.', 'error')
+      return
+    }
+
     const supabase = createClient()
     const { data, error } = await supabase
       .from('redirects')
       .insert({
         user_id:           userId,
-        slug:              opts.slug,
+        slug:              safeSlug,
         destination:       opts.destination,
         destination_label: opts.destinationLabel,
         redirect_type:     String(opts.redirectType),
@@ -1129,8 +1173,8 @@ export function RedirectsClient({ initialRedirects, userId, appUrl, currClicks, 
       return
     }
     setLinks(arr => [mapRaw(data as RawRedirect, appUrl), ...arr])
-    showToast(`Link criado: ${slugPrefix}${opts.slug}`)
-    track('redirect_created', { slug: opts.slug, cloaking: opts.cloaking, utm_enabled: !!opts.utm, redirect_type: String(opts.redirectType) })
+    showToast(`Link criado: ${slugPrefix}${safeSlug}`)
+    track('redirect_created', { slug: safeSlug, cloaking: opts.cloaking, utm_enabled: !!opts.utm, redirect_type: String(opts.redirectType) })
   }
 
   async function saveLink(id: string, patch: Partial<RawRedirect>) {
