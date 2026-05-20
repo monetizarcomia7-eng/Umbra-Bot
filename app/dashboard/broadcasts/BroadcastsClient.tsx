@@ -135,7 +135,7 @@ const STATUS_MAP: Record<BroadcastStatus, { label: string; tone: string; icon: s
   draft:     { label: 'Rascunho',  tone: 'muted',   icon: 'file-text' },
   scheduled: { label: 'Agendado',  tone: 'warning', icon: 'clock' },
   sending:   { label: 'Enviando',  tone: 'primary', icon: 'send', pulse: true },
-  done:      { label: 'Concluído', tone: 'success', icon: 'check-circle-2' },
+  done:      { label: 'Disparado', tone: 'success', icon: 'check-circle-2' },
   failed:    { label: 'Falhou',    tone: 'danger',  icon: 'alert-triangle' },
   canceled:  { label: 'Cancelado', tone: 'muted',   icon: 'x-circle' },
 }
@@ -826,10 +826,11 @@ function SummaryLine({ icon, label, value, tnum }: {
 
 /* ── BroadcastRow ────────────────────────────────────────────────── */
 
-function BroadcastRow({ b, now, botName, audienceLabel, onOpen, onCancel, onDuplicate }: {
+function BroadcastRow({ b, now, botName, audienceLabel, onOpen, onCancel, onDuplicate, onMarkDone }: {
   b: Broadcast; now: number
   botName: string; audienceLabel: string
   onOpen: () => void; onCancel: (id: string) => void; onDuplicate: (id: string) => void
+  onMarkDone: (id: string) => void
 }) {
   const st       = STATUS_MAP[b.status]
   const progress = b.audienceCount > 0 ? (b.sent / b.audienceCount) * 100 : 0
@@ -932,6 +933,15 @@ function BroadcastRow({ b, now, botName, audienceLabel, onOpen, onCancel, onDupl
               className="h-7 px-2 text-[11px] font-medium text-text-muted hover:bg-surface-2 hover:text-text rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
             >
               Desagendar
+            </button>
+          )}
+          {b.status === 'draft' && (
+            <button
+              onClick={() => onMarkDone(b.id)}
+              title="Marcar como disparado"
+              className="h-7 px-2 text-[11px] font-medium text-success hover:bg-success-soft rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            >
+              Disparado
             </button>
           )}
           {(b.status === 'done' || b.status === 'draft' || b.status === 'failed' || b.status === 'canceled') && (
@@ -1293,7 +1303,7 @@ interface FilterState { search: string; status: string; bot: string }
 
 function BroadcastList({
   broadcasts, now, bots, audienceOptions,
-  onOpen, onCancel, onCreate, onDuplicate, hasMore, onLoadMore, loadingMore,
+  onOpen, onCancel, onCreate, onDuplicate, onMarkDone, hasMore, onLoadMore, loadingMore,
 }: {
   broadcasts:    Broadcast[]
   now:           number
@@ -1303,6 +1313,7 @@ function BroadcastList({
   onCancel:      (id: string) => Promise<void>
   onCreate:      () => Promise<void>
   onDuplicate:   (id: string) => Promise<void>
+  onMarkDone:    (id: string) => Promise<void>
   hasMore:       boolean
   onLoadMore:    () => Promise<void>
   loadingMore:   boolean
@@ -1483,6 +1494,7 @@ function BroadcastList({
                     onOpen={() => onOpen(b.id)}
                     onCancel={onCancel}
                     onDuplicate={onDuplicate}
+                    onMarkDone={onMarkDone}
                   />
                 ))}
               </tbody>
@@ -1691,6 +1703,20 @@ export default function BroadcastsClient({
       .eq('user_id', userId)
   }, [userId, supabase])
 
+  const markBroadcastDone = useCallback(async (id: string) => {
+    const b = broadcasts.find(x => x.id === id)
+    if (!b) return
+    const finishedAt = new Date().toISOString()
+    setBroadcasts(prev => prev.map(x =>
+      x.id === id ? { ...x, status: 'done', finishedAt: Date.now() } : x,
+    ))
+    await supabase
+      .from('broadcasts')
+      .update({ status: 'done', finished_at: finishedAt })
+      .eq('id', id)
+      .eq('user_id', userId)
+  }, [broadcasts, userId, supabase])
+
   const duplicateBroadcast = useCallback(async (id: string) => {
     const source = broadcasts.find(b => b.id === id)
     if (!source) return
@@ -1771,6 +1797,7 @@ export default function BroadcastsClient({
       onCancel={cancelBroadcast}
       onCreate={createBroadcast}
       onDuplicate={duplicateBroadcast}
+      onMarkDone={markBroadcastDone}
       hasMore={hasMore}
       onLoadMore={loadMore}
       loadingMore={loadingMore}
