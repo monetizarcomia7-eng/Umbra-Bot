@@ -470,6 +470,13 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Bots — active_flow_id: FK com ON DELETE SET NULL (migração 062) | ✅ Corrigido |
 | Bots — OnboardingWizard: adapta BotStep ao novo saveBotAction (params object) | ✅ Corrigido |
 | Bots — webhook/route.ts: substitui variáveis {nome}/{bot}/{data} na welcome_message | ✅ Implementado |
+| Bots — BotCard: 4 métricas (Leads, Vendas, Conversão, Receita) em grid 2×2 | ✅ Implementado |
+| Bots — BotCard: CTA "Compartilhe o link…" quando leads=0 e vendas=0 | ✅ Implementado |
+| Bots — BotCard: footer do fluxo clicável → abre config na aba Fluxo; "+ Vincular fluxo" quando vazio | ✅ Implementado |
+| Bots — BotCard: ações rápidas no hover (copiar link t.me, abrir no Telegram, reconectar, configurar) | ✅ Implementado |
+| Bots — BotsList: dropdown de ordenação (Maior receita / Mais leads / Mais vendas / Alfabético / Status) | ✅ Implementado |
+| Bots — BotsList: subtítulo exibe receita total dos bots | ✅ Implementado |
+| Bots — BotConfig: prop defaultTab para abrir diretamente em aba específica | ✅ Implementado |
 | Gateways — configuração real de credenciais | ❌ Ainda mock |
 | Clientes — Server Component SSR + dados reais (sem mock) | ✅ Funcional |
 | Clientes — colunas origin, first_purchase, last_purchase, avg_ticket (mig 052) | ✅ Implementado |
@@ -1708,6 +1715,10 @@ BotsPage (Server Component)
 
 BotsClient (Client Component)
   ├── bots state: initialBots.map(mapRaw) — nunca usa MOCK_BOTS
+  ├── selectedId state: string | null — id do bot aberto
+  ├── selectedTab state: string — aba inicial ao abrir config ('geral' | 'messages' | 'flow')
+  ├── openBot(id, tab='geral'): seta selectedId + selectedTab em conjunto
+  │     → chamado por BotsList.onOpen (tab='geral') e BotsList.onOpenTab (tab qualquer)
   ├── Supabase Realtime:
   │     canal 'bots-realtime', event UPDATE, tabela bots
   │     filtro: user_id=eq.${userId}
@@ -1726,6 +1737,31 @@ BotsClient (Client Component)
   ├── GeneralTab: webhook warning quando webhookUrl vazio + RegisterWebhookButton inline
   ├── FlowTab: usa flows prop (dados reais do banco) — sem mock FLOWS
   └── Toast system: { msg, type: 'success' | 'error' }
+
+BotsList (sub-componente da lista)
+  ├── search, statusF: filtros persistidos em estado local
+  ├── sortBy state: SortOption ('Maior receita' | 'Mais leads' | 'Mais vendas' | 'Alfabético' | 'Status')
+  │     sortBots(filtered, sortBy): retorna cópia ordenada — nunca muta o array original
+  ├── totals: online, offline, banned, totalLeads, totalSales, totalRevenue
+  │     subtitle: "${n} bots · ${fmtNum(leads)} leads · ${fmtBRLdec(revenue)} em receita"
+  ├── Dropdown de ordenação ao lado do dropdown de status
+  └── Passa onOpenTab ao BotCard para abrir config em aba específica
+
+BotCard (sub-componente do card)
+  ├── Stats grid 2×2: Leads | Vendas / Conversão | Receita
+  │     revenue: fmtBRLdec(bot.revenue) — '—' quando zero
+  ├── CTA quando leads=0 e sales=0: "Compartilhe o link do bot para capturar seus primeiros leads."
+  ├── Flow footer clicável (onClick stopPropagation + onOpenTab('flow')):
+  │     flow vinculado → "Fluxo: nome" + seta; sem fluxo → "+ Vincular fluxo" em roxo
+  └── Quick actions no hover (top-right, onClick stopPropagation no container):
+        CopyButton → copia https://t.me/@username
+        <a> ExternalLink → abre t.me em nova aba
+        Webhook (se offline) → chama onOpen (navega para config)
+        Settings → chama onOpen (navega para config)
+
+BotConfig (sub-componente de detalhe)
+  ├── defaultTab?: string prop — tab inicial ('geral', 'messages' ou 'flow')
+  └── useState(defaultTab) — usado quando BotCard abre diretamente na aba Fluxo
 ```
 
 ### Status válidos do campo bots.status
