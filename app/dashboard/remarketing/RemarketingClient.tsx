@@ -7,7 +7,7 @@ import {
   Play, Users, CircleDollarSign, Target, Search, ArrowUpRight, ArrowDownRight,
   Layers, ChevronUp, ChevronDown, Trash2, ShoppingBag, X, Plus,
   ChevronLeft, Check, Eye, Save, Pause, ArrowDown, MessageSquarePlus,
-  HelpCircle, Copy, Loader2, Bot,
+  HelpCircle, Copy, Loader2, Bot, FileDown, History, Clock,
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { useAnalytics } from '@/hooks/use-analytics'
@@ -38,6 +38,16 @@ export interface RawBotOption {
   name: string
   username: string | null
   color: string | null
+}
+
+interface RawExecution {
+  id: string
+  step_index: number
+  status: 'pending' | 'sent' | 'failed' | 'skipped'
+  message_sent: string | null
+  error_message: string | null
+  scheduled_at: string
+  executed_at: string | null
 }
 
 /* ── App types ───────────────────────────────────────────────── */
@@ -217,6 +227,35 @@ function fmtNum(n: number) { return n.toLocaleString('pt-BR') }
 function fmtBRL(n: number) { return `R$ ${n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` }
 function fmtPct(n: number) { return `${n.toFixed(1)}%` }
 function fmtDate(ts: number) { return new Date(ts).toLocaleDateString('pt-BR') }
+function fmtDateTime(iso: string) {
+  return new Date(iso).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })
+}
+
+function exportCSV(campaigns: Campaign[]) {
+  const rows: string[][] = [
+    ['Nome', 'Gatilho', 'Público', 'Status', 'Etapas', 'Leads recuperados', 'Receita recuperada (R$)', 'Conversão (%)', 'Criado em'],
+    ...campaigns.map((c) => [
+      c.name,
+      TRIGGERS[c.trigger]?.label ?? c.trigger,
+      AUDIENCES[c.audience] ?? c.audience,
+      STATUS_MAP[c.status].label,
+      String(c.steps.length),
+      String(c.leadsRecovered),
+      c.revenueRecovered.toFixed(2),
+      c.conversion.toFixed(1),
+      fmtDate(c.createdAt),
+    ]),
+  ]
+  const bom = '﻿'
+  const content = bom + rows.map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n')
+  const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' })
+  const url  = URL.createObjectURL(blob)
+  const a    = document.createElement('a')
+  a.href     = url
+  a.download = `remarketing_${new Date().toISOString().slice(0, 10)}.csv`
+  a.click()
+  URL.revokeObjectURL(url)
+}
 
 /* ── Icon system ─────────────────────────────────────────────── */
 
@@ -229,7 +268,7 @@ const ICON_MAP: Record<string, React.ElementType> = {
   'trash-2': Trash2, 'shopping-bag': ShoppingBag, 'x': X, 'plus': Plus,
   'chevron-left': ChevronLeft, 'check': Check, 'eye': Eye, 'save': Save,
   'pause': Pause, 'arrow-down': ArrowDown, 'message-square-plus': MessageSquarePlus,
-  'copy': Copy, 'bot': Bot,
+  'copy': Copy, 'bot': Bot, 'file-down': FileDown, 'history': History, 'clock': Clock,
 }
 
 function Icon({ name, size = 16, className, style }: {
@@ -923,6 +962,120 @@ function PerformanceCard({ campaign }: { campaign: Campaign }) {
   )
 }
 
+/* ── Execution History Card ──────────────────────────────────── */
+
+const EXEC_STATUS: Record<string, { label: string; tone: BadgeTone }> = {
+  sent:    { label: 'Enviado',  tone: 'success' },
+  failed:  { label: 'Falhou',   tone: 'danger'  },
+  pending: { label: 'Pendente', tone: 'warning' },
+  skipped: { label: 'Pulado',   tone: 'muted'   },
+}
+
+function ExecutionHistoryCard({ campaignId }: { campaignId: string }) {
+  const supabase = createClient()
+  const [open,    setOpen]    = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [execs,   setExecs]   = useState<RawExecution[]>([])
+  const [hasMore, setHasMore] = useState(false)
+  const [offset,  setOffset]  = useState(0)
+  const loaded = useRef(false)
+
+  async function load(off = 0) {
+    setLoading(true)
+    const { data } = await supabase
+      .from('remarketing_executions')
+      .select('id, step_index, status, message_sent, error_message, scheduled_at, executed_at')
+      .eq('campaign_id', campaignId)
+      .order('scheduled_at', { ascending: false })
+      .range(off, off + 19)
+    setLoading(false)
+    const rows = (data ?? []) as RawExecution[]
+    if (off === 0) setExecs(rows)
+    else setExecs((prev) => [...prev, ...rows])
+    setHasMore(rows.length === 20)
+    setOffset(off + rows.length)
+    loaded.current = true
+  }
+
+  function toggle() {
+    const next = !open
+    setOpen(next)
+    if (next && !loaded.current) load(0)
+  }
+
+  return (
+    <div className="bg-surface border border-border rounded-xl overflow-hidden">
+      <button
+        onClick={toggle}
+        className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-surface-2/40 focus:outline-none transition-colors"
+      >
+        <div className="flex items-center gap-2">
+          <History size={14} className="text-text-muted" />
+          <span className="text-[13px] font-semibold text-text">Histórico de execuções</span>
+          {execs.length > 0 && (
+            <span className="text-[10.5px] bg-surface-2 border border-border px-1.5 py-0.5 rounded-md text-text-muted font-medium">
+              {execs.length}{hasMore ? '+' : ''}
+            </span>
+          )}
+        </div>
+        <Icon name={open ? 'chevron-up' : 'chevron-down'} size={14} className="text-text-muted" />
+      </button>
+
+      {open && (
+        <div className="border-t border-border">
+          {loading && execs.length === 0 ? (
+            <div className="flex items-center justify-center py-8 gap-2 text-[12.5px] text-text-muted">
+              <Loader2 size={14} className="animate-spin" /> Carregando…
+            </div>
+          ) : execs.length === 0 ? (
+            <div className="py-8 text-center">
+              <div className="w-10 h-10 rounded-xl bg-surface-2 text-text-muted flex items-center justify-center mx-auto mb-2">
+                <Clock size={18} />
+              </div>
+              <p className="text-[12.5px] text-text-muted">Nenhuma execução registrada ainda.</p>
+              <p className="text-[11.5px] text-text-subtle mt-0.5">As execuções aparecerão aqui quando a campanha disparar.</p>
+            </div>
+          ) : (
+            <div className="divide-y divide-border">
+              {execs.map((ex) => {
+                const es = EXEC_STATUS[ex.status] ?? { label: ex.status, tone: 'muted' as BadgeTone }
+                return (
+                  <div key={ex.id} className="px-5 py-3 flex items-start gap-3">
+                    <div className="shrink-0 pt-0.5">
+                      <Badge tone={es.tone}>{es.label}</Badge>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[11.5px] font-medium text-text">Etapa {ex.step_index + 1}</span>
+                        <span className="text-[11px] text-text-muted">
+                          {ex.executed_at ? fmtDateTime(ex.executed_at) : fmtDateTime(ex.scheduled_at)}
+                        </span>
+                      </div>
+                      {ex.message_sent && (
+                        <p className="text-[11.5px] text-text-muted mt-0.5 line-clamp-2 leading-snug">{ex.message_sent}</p>
+                      )}
+                      {ex.error_message && (
+                        <p className="text-[11px] text-danger mt-0.5 leading-snug">{ex.error_message}</p>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+              {hasMore && (
+                <div className="px-5 py-3">
+                  <Btn variant="ghost" size="sm" loading={loading} onClick={() => load(offset)}>
+                    Carregar mais
+                  </Btn>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 /* ── Campaign Editor ─────────────────────────────────────────── */
 
 function CampaignEditor({ campaign, bots, saving, onBack, onSave, onActivate, onPause }: {
@@ -946,6 +1099,12 @@ function CampaignEditor({ campaign, bots, saving, onBack, onSave, onActivate, on
   const [nameError,        setNameError]        = useState(false)
   const [backConfirmOpen,  setBackConfirmOpen]  = useState(false)
 
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const campaignRef      = useRef(campaign)
+  campaignRef.current    = campaign
+  const stateRef = useRef({ name, desc: '', trigger, audience, triggerConfig, botId, steps })
+  stateRef.current = { name, desc, trigger, audience, triggerConfig, botId, steps }
+
   const dirty = name !== campaign.name
     || desc !== campaign.description
     || trigger !== campaign.trigger
@@ -953,6 +1112,29 @@ function CampaignEditor({ campaign, bots, saving, onBack, onSave, onActivate, on
     || JSON.stringify(triggerConfig) !== JSON.stringify(campaign.triggerConfig)
     || botId !== campaign.botId
     || JSON.stringify(steps) !== JSON.stringify(campaign.steps)
+
+  // Auto-save: debounce 30 s após a última alteração (pula se nome vazio)
+  useEffect(() => {
+    if (!dirty || !name.trim()) return
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current)
+    autoSaveTimerRef.current = setTimeout(async () => {
+      const s = stateRef.current
+      if (!s.name.trim()) return
+      await onSave({
+        ...campaignRef.current,
+        name: s.name, description: s.desc,
+        trigger: s.trigger, audience: s.audience,
+        triggerConfig: s.triggerConfig, botId: s.botId, steps: s.steps,
+      })
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2500)
+    }, 30_000)
+    return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current) }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dirty, name, desc, trigger, audience, botId,
+      // Objetos: serializar para detectar mudanças profundas
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      JSON.stringify(triggerConfig), JSON.stringify(steps)])
 
   function updateStep(updated: CampaignStep) { setSteps((arr) => arr.map((s) => s.id === updated.id ? updated : s)) }
   function deleteStep(id: string)            { setSteps((arr) => arr.filter((s) => s.id !== id)) }
@@ -1018,6 +1200,9 @@ function CampaignEditor({ campaign, bots, saving, onBack, onSave, onActivate, on
               <Icon name="check" size={12} /> Salvo
             </span>
           )}
+          {dirty && !saved && (
+            <span className="hidden sm:inline text-[10.5px] text-text-subtle mr-1">Auto-save em 30 s</span>
+          )}
           <Btn variant="ghost" size="sm" icon="eye" className="xl:hidden" onClick={() => setPreviewOpen(true)}>Prévia</Btn>
           <Btn variant="secondary" size="sm" icon="save" loading={saving} disabled={!dirty} onClick={save}>Salvar</Btn>
           {campaign.status === 'active'
@@ -1082,6 +1267,7 @@ function CampaignEditor({ campaign, bots, saving, onBack, onSave, onActivate, on
             </div>
 
             {campaign.leadsTriggered > 0 && <PerformanceCard campaign={campaign} />}
+            <ExecutionHistoryCard campaignId={campaign.id} />
           </div>
 
           <div className="xl:sticky xl:top-[80px]">
@@ -1126,6 +1312,7 @@ function CampaignList({ campaigns, onOpen, onCreate, onDuplicate, onDelete, onSh
   onDelete: (id: string) => void
   onShowTemplates: () => void
 }) {
+  const { track } = useAnalytics()
   const [search, setSearch]   = useState('')
   const [statusF, setStatusF] = useState('Todos')
 
@@ -1157,6 +1344,14 @@ function CampaignList({ campaigns, onOpen, onCreate, onDuplicate, onDelete, onSh
           <p className="text-[13px] text-text-muted mt-0.5">Sequências automáticas para recuperar leads e impulsionar recompras.</p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          {campaigns.length > 0 && (
+            <Btn variant="ghost" size="sm" icon="file-down" onClick={() => {
+              exportCSV(filtered)
+              track('csv_exported', { section: 'remarketing', rows: filtered.length })
+            }}>
+              Exportar
+            </Btn>
+          )}
           <Btn variant="secondary" icon="eye" onClick={onShowTemplates}>Templates</Btn>
           <Btn variant="primary" icon="plus" onClick={onCreate}>Nova campanha</Btn>
         </div>
