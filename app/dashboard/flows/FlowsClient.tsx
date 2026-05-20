@@ -9,7 +9,7 @@ import {
   ArrowUpRight, Zap, Maximize, Minus, Save, Rocket, Eye, GitBranch,
   MessageSquare, HelpCircle, MousePointerClick, Split, Clock,
   ShoppingBag, Tag, UserRound, Loader2, AlertCircle, Bot,
-  Flag, Copy, ChevronRight,
+  Flag, Copy, ChevronRight, Undo2, Redo2,
 } from 'lucide-react'
 
 // ─── Public types (imported by page.tsx) ───────────────────────────────────────
@@ -617,7 +617,7 @@ function NodeHandle({ variant, x, y, label, active, highlighted, onClick }: {
 function FlowNodeComp({ node, selected, isStart, onMouseDown, onClick, onHandleClick, connecting }: {
   node: FlowNodeType; selected: boolean; isStart: boolean
   onMouseDown: (e: React.MouseEvent, id: string) => void
-  onClick: (id: string) => void
+  onClick: (id: string, shift: boolean) => void
   onHandleClick: (nodeId: string, type: 'input' | 'output', idx?: number) => void
   connecting: { nodeId: string; handle: number } | null
 }) {
@@ -631,7 +631,7 @@ function FlowNodeComp({ node, selected, isStart, onMouseDown, onClick, onHandleC
     <div
       data-node-id={node.id}
       onMouseDown={e => onMouseDown(e, node.id)}
-      onClick={e => { e.stopPropagation(); onClick(node.id) }}
+      onClick={e => { e.stopPropagation(); onClick(node.id, e.shiftKey) }}
       className={`absolute select-none rounded-xl border-2 bg-surface cursor-grab active:cursor-grabbing transition-shadow ${selected ? 'border-primary' : 'border-border hover:border-border-strong'}`}
       style={{ left: node.position.x, top: node.position.y, width: NODE_W, boxShadow: selected ? '0 0 0 4px color-mix(in oklab, var(--primary) 18%, transparent)' : 'var(--shadow-md)' }}
     >
@@ -973,19 +973,31 @@ interface CanvasProps {
   nodes: FlowNodeType[]; edges: FlowEdgeType[]
   vp: { x: number; y: number; zoom: number }
   setVp: React.Dispatch<React.SetStateAction<{ x: number; y: number; zoom: number }>>
-  selected: string | null; selectedEdgeId: string | null
-  onSelectNode: (id: string | null) => void; onSelectEdge: (id: string | null) => void
-  onUpdateNode: (n: FlowNodeType) => void; onAddEdge: (e: FlowEdgeType) => void
+  selectedIds: Set<string>; selectedEdgeId: string | null
+  onSelectNode: (id: string | null, shift?: boolean) => void
+  onSelectNodes: (ids: string[]) => void
+  onSelectEdge: (id: string | null) => void
+  onUpdateNode: (n: FlowNodeType) => void
+  onUpdateNodes: (ns: FlowNodeType[]) => void
+  onAddEdge: (e: FlowEdgeType) => void
+  onDragEnd: () => void
   connecting: { nodeId: string; handle: number } | null
   setConnecting: React.Dispatch<React.SetStateAction<{ nodeId: string; handle: number } | null>>
   containerRef: React.RefObject<HTMLDivElement | null>
 }
 
-function Canvas({ nodes, edges, vp, setVp, selected, selectedEdgeId, onSelectNode, onSelectEdge, onUpdateNode, onAddEdge, connecting, setConnecting, containerRef }: CanvasProps) {
-  const [draggingNode, setDraggingNode] = useState<{ id: string; startX: number; startY: number; x0: number; y0: number } | null>(null)
+function Canvas({ nodes, edges, vp, setVp, selectedIds, selectedEdgeId, onSelectNode, onSelectNodes, onSelectEdge, onUpdateNode, onUpdateNodes, onAddEdge, onDragEnd, connecting, setConnecting, containerRef }: CanvasProps) {
+  const [dragging, setDragging] = useState<{
+    nodeIds: string[]
+    primaryNodeId: string
+    startX: number; startY: number
+    initialPositions: Record<string, { x: number; y: number }>
+    shift: boolean
+  } | null>(null)
   const [panning, setPanning] = useState<{ x0: number; y0: number; vpX0: number; vpY0: number } | null>(null)
+  const [boxSelect, setBoxSelect] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null)
+  const movedRef = useRef(false)
 
-  // Compute which nodes have no incoming edges (start nodes)
   const startNodeIds = useMemo(() => {
     const hasIncoming = new Set(edges.map(e => e.target))
     return new Set(nodes.map(n => n.id).filter(id => !hasIncoming.has(id)))
@@ -994,34 +1006,83 @@ function Canvas({ nodes, edges, vp, setVp, selected, selectedEdgeId, onSelectNod
   function onBgMouseDown(e: React.MouseEvent) {
     if (e.button !== 0 && e.button !== 1) return
     if ((e.target as HTMLElement).closest('[data-node-id]')) return
-    setPanning({ x0: e.clientX, y0: e.clientY, vpX0: vp.x, vpY0: vp.y })
-    onSelectNode(null); onSelectEdge(null); setConnecting(null)
+    if (e.shiftKey) {
+      const rect = containerRef.current?.getBoundingClientRect()
+      if (rect) {
+        const rx = e.clientX - rect.left, ry = e.clientY - rect.top
+        setBoxSelect({ x0: rx, y0: ry, x1: rx, y1: ry })
+      }
+    } else {
+      setPanning({ x0: e.clientX, y0: e.clientY, vpX0: vp.x, vpY0: vp.y })
+      onSelectNode(null); onSelectEdge(null); setConnecting(null)
+    }
   }
+
   function onNodeMouseDown(e: React.MouseEvent, nodeId: string) {
     if (e.button !== 0) return
     e.stopPropagation()
     const node = nodes.find(n => n.id === nodeId)
     if (!node) return
-    setDraggingNode({ id: nodeId, startX: e.clientX, startY: e.clientY, x0: node.position.x, y0: node.position.y })
+    movedRef.current = false
+    // Se o nó já está selecionado (sem shift), arrasta toda a seleção. Senão, só este nó.
+    const dragIds = (selectedIds.has(nodeId) && !e.shiftKey) ? [...selectedIds] : [nodeId]
+    const initialPositions: Record<string, { x: number; y: number }> = {}
+    dragIds.forEach(id => {
+      const n = nodes.find(x => x.id === id)
+      if (n) initialPositions[id] = { ...n.position }
+    })
+    setDragging({ nodeIds: dragIds, primaryNodeId: nodeId, startX: e.clientX, startY: e.clientY, initialPositions, shift: e.shiftKey })
   }
 
   useEffect(() => {
     function move(e: MouseEvent) {
-      if (draggingNode) {
-        const dx = (e.clientX - draggingNode.startX) / vp.zoom
-        const dy = (e.clientY - draggingNode.startY) / vp.zoom
-        const n = nodes.find(n => n.id === draggingNode.id)
-        if (n) onUpdateNode({ ...n, position: { x: draggingNode.x0 + dx, y: draggingNode.y0 + dy } })
+      if (dragging) {
+        const dx = (e.clientX - dragging.startX) / vp.zoom
+        const dy = (e.clientY - dragging.startY) / vp.zoom
+        const movedEnough = Math.abs(e.clientX - dragging.startX) > 3 || Math.abs(e.clientY - dragging.startY) > 3
+        if (movedEnough) {
+          movedRef.current = true
+          const updates = dragging.nodeIds
+            .map(id => {
+              const n = nodes.find(x => x.id === id)
+              const ip = dragging.initialPositions[id]
+              if (!n || !ip) return null
+              return { ...n, position: { x: ip.x + dx, y: ip.y + dy } }
+            })
+            .filter((n): n is FlowNodeType => n !== null)
+          if (updates.length > 0) onUpdateNodes(updates)
+        }
       } else if (panning) {
         setVp(v => ({ ...v, x: panning.vpX0 + (e.clientX - panning.x0), y: panning.vpY0 + (e.clientY - panning.y0) }))
+      } else if (boxSelect) {
+        const rect = containerRef.current?.getBoundingClientRect()
+        if (rect) setBoxSelect(bs => bs ? { ...bs, x1: e.clientX - rect.left, y1: e.clientY - rect.top } : null)
       }
     }
-    function up() { setDraggingNode(null); setPanning(null) }
-    if (draggingNode || panning) {
-      window.addEventListener('mousemove', move); window.addEventListener('mouseup', up)
+    function up() {
+      if (boxSelect) {
+        const x0c = (Math.min(boxSelect.x0, boxSelect.x1) - vp.x) / vp.zoom
+        const y0c = (Math.min(boxSelect.y0, boxSelect.y1) - vp.y) / vp.zoom
+        const x1c = (Math.max(boxSelect.x0, boxSelect.x1) - vp.x) / vp.zoom
+        const y1c = (Math.max(boxSelect.y0, boxSelect.y1) - vp.y) / vp.zoom
+        const hit = nodes
+          .filter(n => n.position.x < x1c && n.position.x + NODE_W > x0c && n.position.y < y1c && n.position.y + NODE_H > y0c)
+          .map(n => n.id)
+        if (hit.length > 0) onSelectNodes(hit)
+        setBoxSelect(null)
+      }
+      if (dragging) {
+        if (movedRef.current) onDragEnd()
+        setDragging(null)
+      }
+      setPanning(null)
+    }
+    if (dragging || panning || boxSelect) {
+      window.addEventListener('mousemove', move)
+      window.addEventListener('mouseup', up)
       return () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up) }
     }
-  }, [draggingNode, panning, vp.zoom, nodes, onUpdateNode, setVp])
+  }, [dragging, panning, boxSelect, vp, nodes, onUpdateNodes, onSelectNodes, onDragEnd, setVp])
 
   function onWheel(e: React.WheelEvent) {
     e.preventDefault()
@@ -1055,12 +1116,23 @@ function Canvas({ nodes, edges, vp, setVp, selected, selectedEdgeId, onSelectNod
         <div className="relative" style={{ width: 3000, height: 2000 }}>
           <FlowEdges nodes={nodes} edges={edges} selectedEdgeId={selectedEdgeId} onSelectEdge={id => onSelectEdge(id)} />
           {nodes.map(n => (
-            <FlowNodeComp key={n.id} node={n} selected={selected === n.id} isStart={startNodeIds.has(n.id)}
-              onMouseDown={onNodeMouseDown} onClick={id => { onSelectNode(id); onSelectEdge(null) }}
+            <FlowNodeComp key={n.id} node={n} selected={selectedIds.has(n.id)} isStart={startNodeIds.has(n.id)}
+              onMouseDown={onNodeMouseDown}
+              onClick={(id, shift) => { if (!movedRef.current) { onSelectNode(id, shift); onSelectEdge(null) } }}
               onHandleClick={handleClick} connecting={connecting} />
           ))}
         </div>
       </div>
+      {/* Retângulo de seleção por arrasto (Shift+drag) */}
+      {boxSelect && (
+        <div className="absolute border border-primary bg-primary/10 pointer-events-none rounded-sm" style={{
+          zIndex: 25,
+          left: Math.min(boxSelect.x0, boxSelect.x1),
+          top: Math.min(boxSelect.y0, boxSelect.y1),
+          width: Math.abs(boxSelect.x1 - boxSelect.x0),
+          height: Math.abs(boxSelect.y1 - boxSelect.y0),
+        }} />
+      )}
     </div>
   )
 }
@@ -1324,25 +1396,76 @@ function FlowEditor({ flow, bots, onBack, onSave, onPublish, showToast }: {
   onPublish: (f: FlowEditorData) => Promise<boolean>
   showToast: (msg: string, type: 'success' | 'error') => void
 }) {
-  const [name, setName]                       = useState(flow.name)
-  const [nameError, setNameError]             = useState(false)
-  const [bot, setBot]                         = useState(flow.bot)
-  const [botColor, setBotColor]               = useState(flow.botColor)
-  const [nodes, setNodes]                     = useState<FlowNodeType[]>(flow.nodes)
-  const [edges, setEdges]                     = useState<FlowEdgeType[]>(flow.edges)
-  const [vp, setVp]                           = useState({ x: 40, y: 30, zoom: 0.85 })
-  const [selectedNodeId, setSelectedNodeId]   = useState<string | null>(null)
-  const [selectedEdgeId, setSelectedEdgeId]   = useState<string | null>(null)
-  const [connecting, setConnecting]           = useState<{ nodeId: string; handle: number } | null>(null)
-  const [viewportSize, setViewportSize]       = useState({ w: 800, h: 600 })
-  const [saving, setSaving]                   = useState(false)
-  const [publishing, setPublishing]           = useState(false)
-  const [savedAt, setSavedAt]                 = useState<number | null>(null)
-  const [previewOpen, setPreviewOpen]         = useState(false)
+  const [name, setName]                         = useState(flow.name)
+  const [nameError, setNameError]               = useState(false)
+  const [bot, setBot]                           = useState(flow.bot)
+  const [botColor, setBotColor]                 = useState(flow.botColor)
+  const [nodes, setNodes]                       = useState<FlowNodeType[]>(flow.nodes)
+  const [edges, setEdges]                       = useState<FlowEdgeType[]>(flow.edges)
+  const [vp, setVp]                             = useState({ x: 40, y: 30, zoom: 0.85 })
+  const [selectedNodeIds, setSelectedNodeIds]   = useState<Set<string>>(new Set())
+  const [selectedEdgeId, setSelectedEdgeId]     = useState<string | null>(null)
+  const [connecting, setConnecting]             = useState<{ nodeId: string; handle: number } | null>(null)
+  const [viewportSize, setViewportSize]         = useState({ w: 800, h: 600 })
+  const [saving, setSaving]                     = useState(false)
+  const [publishing, setPublishing]             = useState(false)
+  const [savedAt, setSavedAt]                   = useState<number | null>(null)
+  const [previewOpen, setPreviewOpen]           = useState(false)
+  const [canUndo, setCanUndo]                   = useState(false)
+  const [canRedo, setCanRedo]                   = useState(false)
+
   const containerRef = useRef<HTMLDivElement | null>(null)
   const autoSaveRef  = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const onSaveRef    = useRef(onSave)
   onSaveRef.current  = onSave
+
+  // Refs para leitura síncrona do estado mais recente
+  const nodesRef = useRef(nodes)
+  nodesRef.current = nodes
+  const edgesRef = useRef(edges)
+  edgesRef.current = edges
+  const selectedNodeIdsRef = useRef(selectedNodeIds)
+  selectedNodeIdsRef.current = selectedNodeIds
+  const selectedEdgeIdRef = useRef(selectedEdgeId)
+  selectedEdgeIdRef.current = selectedEdgeId
+
+  // ── History (Undo/Redo) ────────────────────────────────────────────────────
+  const MAX_HISTORY = 50
+  const histRef    = useRef<Array<{ nodes: FlowNodeType[]; edges: FlowEdgeType[] }>>([{ nodes: flow.nodes, edges: flow.edges }])
+  const histIdxRef = useRef(0)
+
+  function refreshUndoRedo() {
+    setCanUndo(histIdxRef.current > 0)
+    setCanRedo(histIdxRef.current < histRef.current.length - 1)
+  }
+
+  function pushHistory(n: FlowNodeType[], e: FlowEdgeType[]) {
+    histRef.current = histRef.current.slice(0, histIdxRef.current + 1)
+    histRef.current.push({ nodes: n, edges: e })
+    if (histRef.current.length > MAX_HISTORY) histRef.current.shift()
+    histIdxRef.current = histRef.current.length - 1
+    refreshUndoRedo()
+  }
+
+  function undoAction() {
+    if (histIdxRef.current <= 0) return
+    histIdxRef.current--
+    const snap = histRef.current[histIdxRef.current]
+    setNodes(snap.nodes)
+    setEdges(snap.edges)
+    setSelectedNodeIds(new Set())
+    refreshUndoRedo()
+  }
+
+  function redoAction() {
+    if (histIdxRef.current >= histRef.current.length - 1) return
+    histIdxRef.current++
+    const snap = histRef.current[histIdxRef.current]
+    setNodes(snap.nodes)
+    setEdges(snap.edges)
+    setSelectedNodeIds(new Set())
+    refreshUndoRedo()
+  }
 
   // Medição do canvas
   useEffect(() => {
@@ -1358,19 +1481,36 @@ function FlowEditor({ flow, bots, onBack, onSave, onPublish, showToast }: {
     return () => ro.disconnect()
   }, [])
 
-  // Atalhos de teclado
+  // Atalhos de teclado (usa refs para evitar stale closure — deps: [])
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
+      const ctrl = e.ctrlKey || e.metaKey
+      // Undo/Redo — antes do guard de input
+      if (ctrl && e.key === 'z' && !e.shiftKey) { e.preventDefault(); undoAction(); return }
+      if (ctrl && (e.key === 'y' || (e.shiftKey && e.key === 'Z'))) { e.preventDefault(); redoAction(); return }
+
       if ((e.target as HTMLElement).matches('input, textarea, select')) return
+
       if (e.key === 'Delete' || e.key === 'Backspace') {
-        if (selectedNodeId) deleteNode(selectedNodeId)
-        if (selectedEdgeId) { setEdges(es => es.filter(x => x.id !== selectedEdgeId)); setSelectedEdgeId(null) }
-      } else if (e.key === 'Escape') { setSelectedNodeId(null); setSelectedEdgeId(null); setConnecting(null) }
+        const ids = [...selectedNodeIdsRef.current]
+        if (ids.length > 0) {
+          const nextNodes = nodesRef.current.filter(n => !ids.includes(n.id))
+          const nextEdges = edgesRef.current.filter(ed => !ids.includes(ed.source) && !ids.includes(ed.target))
+          setNodes(nextNodes); setEdges(nextEdges); setSelectedNodeIds(new Set())
+          pushHistory(nextNodes, nextEdges)
+        } else if (selectedEdgeIdRef.current) {
+          const nextEdges = edgesRef.current.filter(x => x.id !== selectedEdgeIdRef.current)
+          setEdges(nextEdges); setSelectedEdgeId(null)
+          pushHistory(nodesRef.current, nextEdges)
+        }
+      } else if (e.key === 'Escape') {
+        setSelectedNodeIds(new Set()); setSelectedEdgeId(null); setConnecting(null)
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedNodeId, selectedEdgeId])
+  }, [])
 
   // Auto-save 30s após última edição
   useEffect(() => {
@@ -1385,19 +1525,60 @@ function FlowEditor({ flow, bots, onBack, onSave, onPublish, showToast }: {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodes, edges, name, bot, botColor])
 
+  // ── Seleção múltipla ────────────────────────────────────────────────────────
+  function onSelectNode(id: string | null, shift = false) {
+    if (!id) { setSelectedNodeIds(new Set()); return }
+    if (shift) {
+      setSelectedNodeIds(prev => {
+        const next = new Set(prev)
+        if (next.has(id)) next.delete(id); else next.add(id)
+        return next
+      })
+    } else {
+      setSelectedNodeIds(new Set([id]))
+    }
+    setSelectedEdgeId(null)
+  }
+
+  function onSelectNodes(ids: string[]) {
+    setSelectedNodeIds(new Set(ids))
+    setSelectedEdgeId(null)
+  }
+
+  // ── Ações no canvas ─────────────────────────────────────────────────────────
   const addNode = useCallback((type: string) => {
     const def = nodeTypes[type]
     if (!def) return
     const id = 'n_' + Date.now()
     const cx = (viewportSize.w / 2 - vp.x) / vp.zoom - NODE_W / 2
     const cy = (viewportSize.h / 2 - vp.y) / vp.zoom - NODE_H / 2
-    setNodes(ns => [...ns, { id, type, position: { x: cx, y: cy }, data: JSON.parse(JSON.stringify(def.defaultData)) }])
-    setSelectedNodeId(id)
-  }, [viewportSize, vp])
+    const newNode: FlowNodeType = { id, type, position: { x: cx, y: cy }, data: JSON.parse(JSON.stringify(def.defaultData)) }
+    const nextNodes = [...nodesRef.current, newNode]
+    setNodes(nextNodes)
+    setSelectedNodeIds(new Set([id]))
+    pushHistory(nextNodes, edgesRef.current)
+  }, [viewportSize, vp]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  function updateNode(updated: FlowNodeType) { setNodes(ns => ns.map(n => n.id === updated.id ? updated : n)) }
-  function deleteNode(id: string) { setNodes(ns => ns.filter(n => n.id !== id)); setEdges(es => es.filter(e => e.source !== id && e.target !== id)); setSelectedNodeId(null) }
-  function addEdge(edge: FlowEdgeType) { setEdges(es => [...es, edge]) }
+  function updateNode(updated: FlowNodeType) {
+    setNodes(ns => ns.map(n => n.id === updated.id ? updated : n))
+  }
+
+  function updateNodes(updates: FlowNodeType[]) {
+    setNodes(ns => {
+      const map = new Map(updates.map(u => [u.id, u]))
+      return ns.map(n => map.has(n.id) ? map.get(n.id)! : n)
+    })
+  }
+
+  function handleDragEnd() {
+    pushHistory(nodesRef.current, edgesRef.current)
+  }
+
+  function addEdge(edge: FlowEdgeType) {
+    const nextEdges = [...edgesRef.current, edge]
+    setEdges(nextEdges)
+    pushHistory(nodesRef.current, nextEdges)
+  }
 
   function fitView() {
     if (nodes.length === 0) { setVp({ x: 40, y: 30, zoom: 1 }); return }
@@ -1435,7 +1616,9 @@ function FlowEditor({ flow, bots, onBack, onSave, onPublish, showToast }: {
     if (ok) setSavedAt(Date.now())
   }
 
-  const selectedNode = nodes.find(n => n.id === selectedNodeId)
+  // Nó único selecionado (para o inspector)
+  const singleSelectedId = selectedNodeIds.size === 1 ? [...selectedNodeIds][0] : null
+  const selectedNode = singleSelectedId ? nodes.find(n => n.id === singleSelectedId) : undefined
   const st = flowStatusMap[flow.status] ?? flowStatusMap.draft
   const savedRecently = savedAt && Date.now() - savedAt < 5000
 
@@ -1446,6 +1629,19 @@ function FlowEditor({ flow, bots, onBack, onSave, onPublish, showToast }: {
         <button onClick={onBack} className="inline-flex items-center gap-1.5 h-9 px-2.5 text-[12.5px] text-text-muted hover:text-text rounded-lg hover:bg-surface-2 shrink-0">
           <ChevronLeft size={14} /> Fluxos
         </button>
+        <div className="w-px h-6 bg-border shrink-0" />
+
+        {/* Undo / Redo */}
+        <div className="flex items-center gap-0.5 shrink-0">
+          <button onClick={undoAction} disabled={!canUndo} title="Desfazer (Ctrl+Z)"
+            className="w-8 h-8 inline-flex items-center justify-center rounded-md text-text-muted hover:bg-surface-2 hover:text-text disabled:opacity-30 disabled:pointer-events-none">
+            <Undo2 size={14} />
+          </button>
+          <button onClick={redoAction} disabled={!canRedo} title="Refazer (Ctrl+Y)"
+            className="w-8 h-8 inline-flex items-center justify-center rounded-md text-text-muted hover:bg-surface-2 hover:text-text disabled:opacity-30 disabled:pointer-events-none">
+            <Redo2 size={14} />
+          </button>
+        </div>
         <div className="w-px h-6 bg-border shrink-0" />
 
         <div className="flex items-center gap-2 min-w-0 flex-1">
@@ -1492,15 +1688,61 @@ function FlowEditor({ flow, bots, onBack, onSave, onPublish, showToast }: {
       <div className="relative" style={{ height: 'calc(100vh - 64px - 60px)' }}>
         <Canvas
           nodes={nodes} edges={edges} vp={vp} setVp={setVp}
-          selected={selectedNodeId} selectedEdgeId={selectedEdgeId}
-          onSelectNode={id => { setSelectedNodeId(id); setSelectedEdgeId(null) }}
-          onSelectEdge={id => { setSelectedEdgeId(id); setSelectedNodeId(null) }}
-          onUpdateNode={updateNode} onAddEdge={addEdge}
+          selectedIds={selectedNodeIds} selectedEdgeId={selectedEdgeId}
+          onSelectNode={onSelectNode}
+          onSelectNodes={onSelectNodes}
+          onSelectEdge={id => { setSelectedEdgeId(id); setSelectedNodeIds(new Set()) }}
+          onUpdateNode={updateNode}
+          onUpdateNodes={updateNodes}
+          onAddEdge={addEdge}
+          onDragEnd={handleDragEnd}
           connecting={connecting} setConnecting={setConnecting} containerRef={containerRef}
         />
 
         <Palette onAddNode={addNode} />
-        <Inspector node={selectedNode} onUpdate={updateNode} onClose={() => setSelectedNodeId(null)} onDelete={deleteNode} />
+
+        {/* Inspector — só quando 1 nó selecionado */}
+        {selectedNodeIds.size <= 1 && (
+          <Inspector
+            node={selectedNode}
+            onUpdate={updateNode}
+            onClose={() => setSelectedNodeIds(new Set())}
+            onDelete={id => {
+              const nextNodes = nodesRef.current.filter(n => n.id !== id)
+              const nextEdges = edgesRef.current.filter(e => e.source !== id && e.target !== id)
+              setNodes(nextNodes); setEdges(nextEdges); setSelectedNodeIds(new Set())
+              pushHistory(nextNodes, nextEdges)
+            }}
+          />
+        )}
+
+        {/* Painel de seleção múltipla */}
+        {selectedNodeIds.size > 1 && (
+          <aside className="absolute top-3 right-3 z-20 w-[260px] bg-surface border border-border rounded-xl p-4" style={{ boxShadow: 'var(--shadow-lg)' }}>
+            <div className="text-[13px] font-semibold text-text">{selectedNodeIds.size} nós selecionados</div>
+            <div className="text-[11.5px] text-text-muted mt-1 leading-snug">
+              Arraste para mover o grupo. Use Delete para remover todos. Shift+clique para ajustar a seleção.
+            </div>
+            <button
+              onClick={() => {
+                const ids = [...selectedNodeIds]
+                const nextNodes = nodesRef.current.filter(n => !ids.includes(n.id))
+                const nextEdges = edgesRef.current.filter(e => !ids.includes(e.source) && !ids.includes(e.target))
+                setNodes(nextNodes); setEdges(nextEdges); setSelectedNodeIds(new Set())
+                pushHistory(nextNodes, nextEdges)
+              }}
+              className="mt-3 w-full h-8 inline-flex items-center justify-center gap-1.5 text-[12px] font-medium text-danger hover:bg-danger-soft rounded-md"
+            >
+              <Trash2 size={12} /> Remover seleção
+            </button>
+            <button
+              onClick={() => setSelectedNodeIds(new Set())}
+              className="mt-1.5 w-full h-8 inline-flex items-center justify-center gap-1.5 text-[12px] font-medium text-text-muted hover:bg-surface-2 rounded-md"
+            >
+              <X size={12} /> Cancelar seleção
+            </button>
+          </aside>
+        )}
 
         {connecting && (
           <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 bg-primary text-primary-fg px-3 py-1.5 rounded-lg text-[12px] font-medium flex items-center gap-2" style={{ boxShadow: 'var(--shadow-lg)' }}>
@@ -1552,6 +1794,39 @@ export default function FlowsClient({ initialFlows, bots, userId }: {
   function showToast(msg: string, type: 'success' | 'error') {
     setToast({ msg, type })
   }
+
+  // Realtime — sincroniza listagem entre dispositivos
+  useEffect(() => {
+    const supabase = createClient()
+    const channel = supabase
+      .channel('flows-realtime')
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'flows', filter: `user_id=eq.${userId}` },
+        (payload) => {
+          const updated = payload.new as RawFlowRow
+          setFlows(arr => arr.map(f => f.id === updated.id ? mapRawMeta(updated) : f))
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'flows', filter: `user_id=eq.${userId}` },
+        (payload) => {
+          const inserted = payload.new as RawFlowRow
+          setFlows(arr => arr.some(f => f.id === inserted.id) ? arr : [mapRawMeta(inserted), ...arr])
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'DELETE', schema: 'public', table: 'flows', filter: `user_id=eq.${userId}` },
+        (payload) => {
+          const deleted = payload.old as { id: string }
+          setFlows(arr => arr.filter(f => f.id !== deleted.id))
+        }
+      )
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [userId])
 
   // Carrega nodes+edges ao abrir o editor
   useEffect(() => {

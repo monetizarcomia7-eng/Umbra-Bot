@@ -445,6 +445,9 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Fluxos — showToast passado ao FlowEditor para feedback interno do editor | ✅ Implementado |
 | Fluxos — auto-save pula quando nome está vazio (evita salvar estado inválido) | ✅ Implementado |
 | Fluxos — use-analytics: flow_published e flow_deleted adicionados ao EventMap | ✅ Implementado |
+| Fluxos — Undo/Redo (Ctrl+Z / Ctrl+Y): stack de histórico com MAX_HISTORY=50, refs para evitar stale closures | ✅ Implementado |
+| Fluxos — Realtime na listagem: canal 'flows-realtime' (UPDATE/INSERT/DELETE) filtrado por user_id | ✅ Implementado |
+| Fluxos — Seleção múltipla: Shift+click, box select com Shift+drag, multi-drag, Delete remove todos | ✅ Implementado |
 | Afiliados — Server Component SSR + Client Component (dados reais) | ✅ Funcional |
 | Afiliados — CRUD real (add/edit/pause/archive/delete) + confirmação modal | ✅ Implementado |
 | Afiliados — link de afiliado copiável (slug-based) | ✅ Implementado |
@@ -2268,10 +2271,7 @@ if (!name.trim()) {
 
 | Item | Prioridade |
 |---|---|
-| Undo/Redo (Ctrl+Z) — deletar nó é irreversível | 🔴 Alta |
 | Confirmação ao sair com mudanças não salvas | 🔴 Alta |
-| Realtime na listagem (canal flows-realtime) | 🔴 Alta |
-| Seleção múltipla de nós | 🟡 Média |
 | Snap to grid (Math.round ao arrastar) | 🟡 Média |
 | Editar descrição dentro do editor | 🟡 Média |
 | Nós de Imagem e Link (Telegram InlineKeyboard) | 🟡 Média |
