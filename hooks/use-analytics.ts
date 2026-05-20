@@ -5,6 +5,8 @@ import { usePostHog } from 'posthog-js/react'
 type EventMap = {
   bot_connected:             { bot_username?: string; is_first_bot?: boolean }
   flow_created:              { flow_name?: string; trigger_type?: string }
+  flow_published:            { flow_name: string; node_count: number }
+  flow_deleted:              Record<string, never>
   gateway_connected:         { gateway: string }
   broadcast_sent:            { contacts_count: number; delivered: number; failed: number; audience?: string }
   onboarding_completed:      Record<string, never>

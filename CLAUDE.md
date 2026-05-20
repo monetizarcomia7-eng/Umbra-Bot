@@ -132,7 +132,11 @@ umbra-bot/
 │       │   ├── page.tsx          # Server Component: SSR affiliates (+ notes) + payments + config + bots em paralelo
 │       │   │                     # passa appUrl + bots ao Client; DEFAULT_CONFIG inclui active/programName/etc.
 │       │   └── AffiliatesClient.tsx # Client Component: CRUD, ApproveAffiliateModal, config v2, comissão, PostHog
-│       ├── flows/                # Fluxos de venda (placeholder)
+│       ├── flows/                # Fluxos de venda — dados reais do Supabase (SSR + Client)
+│       │   ├── page.tsx          # Server Component: SSR flows metadata + bots em paralelo (sem nodes/edges)
+│       │   └── FlowsClient.tsx   # Client Component: lista, editor visual, CRUD real, PostHog
+│       │                         # Templates modal (3 templates), duplicar fluxo, handles dinâmicos,
+│       │                         # indicador nó inicial, validação nome, preview com ramificações
 │       ├── redirects/            # Redirecionadores (mock)
 │       ├── remarketing/          # Remarketing (mock)
 │       ├── broadcasts/           # Disparador (mock)
@@ -422,7 +426,25 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Notificações — RLS corrigida: política por usuário em vez de open (migração 060) | ✅ Corrigido |
 | Notificações — migração 061: fix CONSTRAINT UNIQUE completo (substitui índice parcial incompatível) | ✅ Corrigido |
 | Sistema de planos/billing | ❌ Não iniciado |
-| Editor de fluxos de venda | ❌ Não iniciado |
+| Fluxos — Server Component SSR + FlowsClient (dados reais, sem MOCK_FLOWS) | ✅ Funcional |
+| Fluxos — createFlow: INSERT real no banco, UUID real retornado (sem fake ID) | ✅ Implementado |
+| Fluxos — saveFlow: .update() com feedback de erro via Toast | ✅ Implementado |
+| Fluxos — deleteFlow: DELETE com modal de confirmação + PostHog | ✅ Implementado |
+| Fluxos — publishFlow: salva + insere activity_event type='flowPublished' + PostHog | ✅ Implementado |
+| Fluxos — lazy load: SSR só busca metadata (sem nodes/edges); editor busca ao abrir | ✅ Implementado |
+| Fluxos — BotSelector: dropdown com bots reais do banco (cor + @username) | ✅ Implementado |
+| Fluxos — NoDataState: estado vazio visual quando flows.length === 0 | ✅ Implementado |
+| Fluxos — auto-save: debounce 30s no editor (useRef estável) | ✅ Implementado |
+| Fluxos — 3 eventos PostHog: flow_created, flow_published, flow_deleted | ✅ Implementado |
+| Fluxos — Templates modal: 3 templates (branco, captura de lead, vendas simples) | ✅ Implementado |
+| Fluxos — duplicateFlow: copia nodes+edges, nome + "(cópia)", status draft | ✅ Implementado |
+| Fluxos — handles dinâmicos no nó Botões: outputs = options.length (até 6) | ✅ Implementado |
+| Fluxos — indicador de nó inicial: badge "▷ INÍCIO" no nó sem aresta de entrada | ✅ Implementado |
+| Fluxos — validação de nome: bloqueia save/publish + toast + destaque visual | ✅ Implementado |
+| Fluxos — preview com ramificações: buildPreviewPath recursivo (Botões + Condição) | ✅ Implementado |
+| Fluxos — showToast passado ao FlowEditor para feedback interno do editor | ✅ Implementado |
+| Fluxos — auto-save pula quando nome está vazio (evita salvar estado inválido) | ✅ Implementado |
+| Fluxos — use-analytics: flow_published e flow_deleted adicionados ao EventMap | ✅ Implementado |
 | Afiliados — Server Component SSR + Client Component (dados reais) | ✅ Funcional |
 | Afiliados — CRUD real (add/edit/pause/archive/delete) + confirmação modal | ✅ Implementado |
 | Afiliados — link de afiliado copiável (slug-based) | ✅ Implementado |
@@ -518,7 +540,9 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | `csv_exported` | `FinanceDashboard`, `customers/page.tsx`, `AnalyticsClient.tsx` e `ActivityClient.tsx` — inclui campo `period` ou `section` |
 | `avatar_updated` | `dashboard/profile/page.tsx` |
 | `broadcast_sent` | disponível no EventMap |
-| `flow_created` | disponível no EventMap |
+| `flow_created` | `FlowsClient.tsx` — ao criar novo fluxo (inclui flow_name) |
+| `flow_published` | `FlowsClient.tsx` — ao publicar fluxo (inclui flow_name + node_count) |
+| `flow_deleted` | `FlowsClient.tsx` — ao apagar fluxo (confirmação) |
 | `plan_upgraded` | disponível no EventMap |
 | `analytics_filter_changed` | `AnalyticsClient.tsx` — toda mudança de filtro ou Limpar (period, compare, bot, produto, fluxo, UTM) |
 | `analytics_cohort_error` | `analytics/page.tsx` (server-side via `captureEvent`) — erro na RPC de coorte |
@@ -610,7 +634,7 @@ DashboardLayout (components/dashboard/Layout.tsx)
 
 - **Vulnerabilidade corrigida:** tabela `flows` criada com `using (true)` → qualquer usuário autenticado via Supabase SDK direto podia ler fluxos de outros
 - **Fix:** migração 040 adiciona `user_id uuid references auth.users(id)` + policy `flows_owner (auth.uid() = user_id)` — reforça migração 021
-- **Código:** `saveFlow()` em `app/dashboard/flows/page.tsx` inclui `user_id: user.id` no upsert (sem isso o INSERT seria bloqueado pelo `with check` pós-migração)
+- **Código:** `createFlow()` em `FlowsClient.tsx` inclui `user_id: userId` no INSERT; `saveFlow()` usa `.update().eq('user_id', userId)` (proteção IDOR no client + RLS no banco)
 - **SQL consolidado:** `supabase/migrations/_pending_analytics_037_to_041.sql` — contém migrações 037–045 prontas para rodar no Supabase SQL Editor
 
 ---
@@ -2081,3 +2105,177 @@ bq-tip (verde) | bq-warn (amarelo) | bq-note (azul)
 |---|---|
 | `marked` | Converte Markdown → HTML no Server Component |
 | `@tailwindcss/typography` | Plugin Tailwind (ativo via `@plugin` no globals.css) — classes `prose` |
+
+---
+
+## 21. MÓDULO DE FLUXOS DE VENDA
+
+### Arquivos
+
+```
+app/dashboard/flows/
+  ├── page.tsx          # Server Component — SSR flows metadata + bots em paralelo
+  │                     # select sem nodes/edges (lazy load); passa initialFlows + bots + userId
+  └── FlowsClient.tsx   # Client Component — listagem, editor visual, CRUD real, PostHog
+```
+
+### Fluxo de dados
+
+```
+FlowsPage (Server Component)
+  ├── Auth guard: if (!user) redirect('/login')
+  ├── Promise.all em paralelo:
+  │     ├── flows: id, name, bot, bot_color, status, executions, conversion,
+  │     │          description, updated_at   ← SEM nodes/edges (otimização de payload)
+  │     └── bots: id, name, username, color  ← para BotSelector e FlowCard
+  └── passa como props:
+        initialFlows: RawFlowRow[]
+        bots: RawBotOption[]
+        userId: string
+
+FlowsClient (Client Component)
+  ├── flows state: initialFlows.map(mapRawMeta) — nunca usa MOCK_FLOWS
+  ├── editingId state: string | null — id do fluxo aberto no editor
+  ├── editorData state: FlowEditorData | null — carregado ao abrir editor
+  ├── showTemplates state: boolean — abre TemplatesModal
+  ├── deleteId / deleting: controle do modal de exclusão
+  ├── duplicating: boolean — evita race condition ao duplicar
+  ├── toast state: feedback visual (success/error, auto-fecha em 4s)
+  │
+  ├── useEffect on editingId:
+  │     SELECT nodes, edges ao abrir editor (lazy load)
+  │     → mapRawFull() → setEditorData()
+  │
+  ├── createFlow(template?):
+  │     INSERT { user_id, name, status:'draft', nodes, edges }  ← nodes/edges do template
+  │     retorna id real → setEditingId(data.id) → track('flow_created')
+  │
+  ├── duplicateFlow(id):
+  │     SELECT nodes+edges do fluxo original (.eq user_id)
+  │     INSERT com nome + "(cópia)" + status:'draft'
+  │     prepend à lista → showToast('Fluxo duplicado')
+  │
+  ├── saveFlow(updated): .update() com user_id guard → update local state
+  │     retorna boolean → FlowEditor mostra toast de erro se false
+  │
+  ├── publishFlow(updated):
+  │     saveFlow({ status: 'published' }) → activity_events INSERT (fire-and-forget)
+  │     → track('flow_published', { flow_name, node_count })
+  │     → showToast('Fluxo publicado!')
+  │
+  └── deleteFlow(id):
+        DELETE .eq user_id → remove do state → track('flow_deleted')
+
+FlowEditor (sub-componente — editor visual completo)
+  ├── Props: flow, bots, onBack, onSave, onPublish, showToast
+  ├── name state + nameError: validação — bloqueia save/publish se vazio
+  ├── nodes state / edges state: FlowNodeType[] / FlowEdgeType[]
+  ├── vp state: { x, y, zoom } — viewport do canvas
+  ├── connecting state: { nodeId, handle } — modo de conexão entre nós
+  ├── autoSaveRef: debounce 30s (pula se name vazio)
+  ├── handleSave: valida nome → onSave → showToast('Rascunho salvo')
+  ├── handlePublish: valida nome → onPublish
+  └── fitView(): calcula zoom/pan para encaixar todos os nós na tela
+```
+
+### Tipos internos
+
+```typescript
+interface FlowMeta {           // Listagem — sem nodes/edges (SSR leve)
+  id, name, bot, botColor, status: 'published'|'draft',
+  executions, conversion, updatedAt, description
+}
+interface FlowEditorData extends FlowMeta { // Editor — com nodes/edges (lazy)
+  nodes: FlowNodeType[]; edges: FlowEdgeType[]
+}
+interface FlowNodeType { id, type, position: {x,y}, data: NodeData }
+interface FlowEdgeType { id, source, target, sourceHandle?, label? }
+```
+
+### Templates disponíveis
+
+| ID | Nome | Nós | Descrição |
+|---|---|---|---|
+| `blank` | Fluxo em branco | 0 | Canvas limpo |
+| `lead-capture` | Captura de lead | 5 | mensagem → pergunta nome → pergunta e-mail → tag → confirmação |
+| `sales` | Vendas simples | 6 | mensagem → oferta → botões (3 saídas) → respostas por branch |
+
+### Tipos de nó disponíveis
+
+| Tipo | Categoria | Saídas | Descrição |
+|---|---|---|---|
+| `message` | Conversa | 1 | Envia texto |
+| `question` | Conversa | 1 | Pergunta + captura em `{variavel}` |
+| `buttons` | Conversa | N (dinâmico) | Botões de escolha — 1 handle por opção (até 6) |
+| `condition` | Lógica | 2 | Bifurca por variável (Sim/Não) |
+| `delay` | Lógica | 1 | Pausa o fluxo (segundos/min/h/dias) |
+| `offer` | Comercial | 1 | Produto com preço e CTA |
+| `tag` | CRM | 1 | Adiciona/remove tag do contato |
+| `handoff` | CRM | 0 | Encaminha para time humano (terminal) |
+
+**Handles dinâmicos (buttons):** `outputs = -1` no `nodeTypes` sinaliza contagem variável.
+`getButtonHandleX(idx, count)` distribui as posições X uniformemente de `padding=30` até `NODE_W-30`.
+
+### Nó inicial
+
+O Canvas computa `startNodeIds` via `useMemo`:
+```typescript
+const startNodeIds = useMemo(() => {
+  const hasIncoming = new Set(edges.map(e => e.target))
+  return new Set(nodes.map(n => n.id).filter(id => !hasIncoming.has(id)))
+}, [nodes, edges])
+```
+`FlowNodeComp` recebe `isStart: boolean` → renderiza badge amarelo "▷ INÍCIO" acima do nó.
+
+### Preview com ramificações
+
+`buildPreviewPath(startNode, nodeById, edgesBySource, visited, depth)` é recursivo:
+- Para `buttons`: chama `buildPreviewPath` para cada opção, retorna `PreviewEntry[]` por branch
+- Para `condition`: chama recursivamente para "Sim" e "Não"
+- Limite de profundidade: `depth < 30` — proteção contra loops
+- `RenderPreviewEntries` renderiza a árvore com `<PreviewBranch>` aninhados
+
+### Validação de nome
+
+```typescript
+// handleSave e handlePublish em FlowEditor
+if (!name.trim()) {
+  setNameError(true)
+  showToast('O nome do fluxo não pode ficar vazio.', 'error')
+  return
+}
+// input com destaque visual: ring-2 ring-danger/50 bg-danger-soft/30
+// label "Nome obrigatório" abaixo do campo
+// autoSave também pula: if (!name.trim()) return
+```
+
+### Segurança
+
+- `saveFlow` e `deleteFlow` usam `.eq('user_id', userId)` — proteção IDOR
+- `duplicateFlow` faz SELECT com `.eq('user_id', userId)` antes do INSERT
+- `userId` sempre lido do servidor em `page.tsx` via `supabase.auth.getUser()`
+- Tokens não são expostos (flows não tocam em bots.token)
+
+### Eventos PostHog
+
+| Evento | Quando | Props |
+|---|---|---|
+| `flow_created` | ao criar (blank ou template) | `{ flow_name }` |
+| `flow_published` | ao publicar | `{ flow_name, node_count }` |
+| `flow_deleted` | ao confirmar exclusão | `{}` |
+
+### Pendências conhecidas (backlog)
+
+| Item | Prioridade |
+|---|---|
+| Undo/Redo (Ctrl+Z) — deletar nó é irreversível | 🔴 Alta |
+| Confirmação ao sair com mudanças não salvas | 🔴 Alta |
+| Realtime na listagem (canal flows-realtime) | 🔴 Alta |
+| Seleção múltipla de nós | 🟡 Média |
+| Snap to grid (Math.round ao arrastar) | 🟡 Média |
+| Editar descrição dentro do editor | 🟡 Média |
+| Nós de Imagem e Link (Telegram InlineKeyboard) | 🟡 Média |
+| Copiar/colar nó (Ctrl+C/V) | 🟢 Baixa |
+| Export/Import JSON | 🟢 Baixa |
+| Gatilho por palavra-chave (ativar fluxo sem /start) | 🟢 Baixa |
+| Estatísticas reais (executions++ no webhook) | 🟢 Baixa |
