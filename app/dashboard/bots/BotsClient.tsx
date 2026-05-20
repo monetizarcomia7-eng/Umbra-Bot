@@ -840,17 +840,27 @@ function TelegramProfileModal({ bot, open, onClose }: {
 
   async function save() {
     setSaving(true); setError('')
+    let photoErr = ''
     try {
-      if (newPhoto) await setBotPhotoAction(bot.id, newPhoto)
-      await saveBotTelegramProfileAction(bot.id, {
+      if (newPhoto) {
+        const rp = await setBotPhotoAction(bot.id, newPhoto)
+        if (!rp.ok) photoErr = rp.error ?? 'Erro ao atualizar foto.'
+      }
+      const r = await saveBotTelegramProfileAction(bot.id, {
         name:             name.trim(),
         description:      desc,
         shortDescription: short,
         commands:         cmds.filter(c => c.command.trim() && c.description.trim()),
       })
-      onClose()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Erro ao salvar.')
+      if (!r.ok) {
+        setError(r.error ?? 'Erro ao salvar no Telegram.')
+      } else if (photoErr) {
+        setError('Texto salvo! Foto não atualizada: ' + photoErr)
+      } else {
+        onClose()
+      }
+    } catch {
+      setError('Erro inesperado. Tente novamente.')
     } finally {
       setSaving(false)
     }

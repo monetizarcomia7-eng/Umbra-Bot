@@ -293,6 +293,7 @@ export async function getBotTelegramProfileAction(botId: string): Promise<{
 
 // ─── saveBotTelegramProfileAction ─────────────────────────────────────────────
 // Atualiza nome, descrição, short description e comandos via Telegram Bot API.
+// Retorna { ok, error } em vez de lançar — evita sanitização do Next.js em produção.
 export async function saveBotTelegramProfileAction(
   botId: string,
   data: {
@@ -301,80 +302,93 @@ export async function saveBotTelegramProfileAction(
     shortDescription?: string
     commands?: Array<{ command: string; description: string }>
   },
-): Promise<void> {
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-  if (authError || !user) throw new Error('Não autorizado.')
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const supabase = await createClient()
+    const { data: { user }, error: authError } = await supabase.auth.getUser()
+    if (authError || !user) return { ok: false, error: 'Não autorizado.' }
 
-  const rl = await rateLimit(`tg-profile-save:${user.id}`, 5, 60 * 1000)
-  if (!rl.ok) throw new Error('Muitas requisições. Aguarde um momento.')
+    const rl = await rateLimit(`tg-profile-save:${user.id}`, 5, 60 * 1000)
+    if (!rl.ok) return { ok: false, error: 'Muitas requisições. Aguarde um momento.' }
 
-  const { data: bot } = await supabase
-    .from('bots')
-    .select('token')
-    .eq('id', botId)
-    .eq('user_id', user.id)
-    .single()
+    const { data: bot } = await supabase
+      .from('bots')
+      .select('token')
+      .eq('id', botId)
+      .eq('user_id', user.id)
+      .single()
 
-  if (!bot?.token) throw new Error('Bot não encontrado.')
-  const token = decryptToken(bot.token as string)
+    if (!bot?.token) return { ok: false, error: 'Bot não encontrado.' }
+    const token = decryptToken(bot.token as string)
 
-  async function tgPost(method: string, body: Record<string, unknown>) {
-    const r = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      cache: 'no-store',
-    })
-    const d = await r.json() as { ok: boolean; description?: string }
-    if (!d.ok) throw new Error(d.description ?? `Erro em ${method}`)
+    async function tgPost(method: string, body: Record<string, unknown>) {
+      const r = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        cache: 'no-store',
+      })
+      const d = await r.json() as { ok: boolean; description?: string }
+      if (!d.ok) throw new Error(d.description ?? `Erro em ${method}`)
+    }
+
+    const calls: Promise<void>[] = []
+    if (data.name             !== undefined) calls.push(tgPost('setMyName',             { name: data.name }))
+    if (data.description      !== undefined) calls.push(tgPost('setMyDescription',      { description: data.description }))
+    if (data.shortDescription !== undefined) calls.push(tgPost('setMyShortDescription', { short_description: data.shortDescription }))
+    if (data.commands         !== undefined) calls.push(tgPost('setMyCommands',          { commands: data.commands }))
+
+    const results = await Promise.allSettled(calls)
+    const failed  = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected')
+    if (failed.length > 0) return { ok: false, error: failed[0].reason?.message ?? 'Erro ao salvar no Telegram.' }
+
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Erro ao salvar.' }
   }
-
-  const calls: Promise<void>[] = []
-  if (data.name             !== undefined) calls.push(tgPost('setMyName',             { name: data.name }))
-  if (data.description      !== undefined) calls.push(tgPost('setMyDescription',      { description: data.description }))
-  if (data.shortDescription !== undefined) calls.push(tgPost('setMyShortDescription', { short_description: data.shortDescription }))
-  if (data.commands         !== undefined) calls.push(tgPost('setMyCommands',          { commands: data.commands }))
-
-  const results = await Promise.allSettled(calls)
-  const failed  = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected')
-  if (failed.length > 0) throw new Error(failed[0].reason?.message ?? 'Erro ao salvar no Telegram.')
 }
 
 // ─── setBotPhotoAction ─────────────────────────────────────────────────────────
 // Define a foto de perfil do bot no Telegram via multipart upload.
-export async function setBotPhotoAction(botId: string, photo: File): Promise<void> {
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-  if (authError || !user) throw new Error('Não autorizado.')
+// Retorna { ok, error } em vez de lançar — evita sanitização do Next.js em produção.
+export async function setBotPhotoAction(botId: string, photo: File): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const supabase = await createClient()
+    const { data: { user }, error: authError } = await supabase.auth.getUser()
+    if (authError || !user) return { ok: false, error: 'Não autorizado.' }
 
-  const rl = await rateLimit(`tg-photo:${user.id}`, 3, 60 * 1000)
-  if (!rl.ok) throw new Error('Muitas requisições. Aguarde um momento.')
+    const rl = await rateLimit(`tg-photo:${user.id}`, 3, 60 * 1000)
+    if (!rl.ok) return { ok: false, error: 'Muitas requisições. Aguarde um momento.' }
 
-  if (!['image/jpeg', 'image/png', 'image/gif'].includes(photo.type))
-    throw new Error('Formato inválido. Use JPG, PNG ou GIF.')
-  if (photo.size > 10 * 1024 * 1024)
-    throw new Error('Imagem muito grande. Máximo 10MB.')
+    if (!['image/jpeg', 'image/png', 'image/gif'].includes(photo.type))
+      return { ok: false, error: 'Formato inválido. Use JPG, PNG ou GIF.' }
+    if (photo.size > 10 * 1024 * 1024)
+      return { ok: false, error: 'Imagem muito grande. Máximo 10MB.' }
 
-  const { data: bot } = await supabase
-    .from('bots')
-    .select('token')
-    .eq('id', botId)
-    .eq('user_id', user.id)
-    .single()
+    const { data: bot } = await supabase
+      .from('bots')
+      .select('token')
+      .eq('id', botId)
+      .eq('user_id', user.id)
+      .single()
 
-  if (!bot?.token) throw new Error('Bot não encontrado.')
-  const token = decryptToken(bot.token as string)
+    if (!bot?.token) return { ok: false, error: 'Bot não encontrado.' }
+    const token = decryptToken(bot.token as string)
 
-  const fd  = new FormData()
-  const buf = await photo.arrayBuffer()
-  fd.append('photo', new Blob([buf], { type: photo.type }), photo.name)
+    const fd  = new FormData()
+    const buf = await photo.arrayBuffer()
+    fd.append('photo', new Blob([buf], { type: photo.type }), photo.name)
 
-  const res = await fetch(`https://api.telegram.org/bot${token}/setMyPhoto`, {
-    method: 'POST',
-    body: fd,
-    cache: 'no-store',
-  })
-  const d = await res.json() as { ok: boolean; description?: string }
-  if (!d.ok) throw new Error(d.description ?? 'Erro ao definir foto do perfil.')
+    const res = await fetch(`https://api.telegram.org/bot${token}/setMyPhoto`, {
+      method: 'POST',
+      body: fd,
+      cache: 'no-store',
+    })
+    const d = await res.json() as { ok: boolean; description?: string }
+    if (!d.ok) return { ok: false, error: d.description ?? 'Telegram recusou a foto.' }
+
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Erro ao enviar foto.' }
+  }
 }
