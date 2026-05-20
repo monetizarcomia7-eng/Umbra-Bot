@@ -305,7 +305,7 @@ export async function GET(request: Request) {
         .from('remarketing_executions')
         .update({ status: 'failed', error_message: errMsg, executed_at: new Date().toISOString() })
         .eq('id', exec.id)
-        .catch(() => {})
+        .then(() => {}, () => {})
 
       Sentry.captureException(err, {
         extra: { execId: exec.id, context: 'remarketing_send' },
