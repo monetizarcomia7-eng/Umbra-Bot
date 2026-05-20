@@ -22,9 +22,11 @@ umbra-bot/
 │   ├── page.tsx                  # Redirect para /dashboard
 │   ├── globals.css               # Design tokens (light/dark), Tailwind v4
 │   ├── actions/
-│   │   └── bots.ts               # 6 Server Actions: validateBotTokenAction (getMe real), saveBotAction (AES-256-GCM),
+│   │   └── bots.ts               # 9 Server Actions: validateBotTokenAction (getMe real), saveBotAction (AES-256-GCM),
 │   │                             # registerWebhookAction (decryptToken + status='online'), getBotTokenAction,
 │   │                             # updateBotAction, deleteBotAction — userId sempre do servidor (sem IDOR)
+│   │                             # getBotTelegramProfileAction (perfil + foto base64), saveBotTelegramProfileAction,
+│   │                             # setBotPhotoAction (multipart → setMyPhoto Bot API 7.3)
 │   ├── (auth)/
 │   │   ├── login/page.tsx        # Login com email + Google OAuth
 │   │   ├── register/page.tsx     # Registro com email + Google OAuth
@@ -454,6 +456,13 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Fluxos — Nós Imagem e Link: novos tipos em categoria Mídia no editor + inspector + preview | ✅ Implementado |
 | Fluxos — Gatilho configurável: trigger_type (start/keyword) + keywords[] em Configurações do fluxo | ✅ Implementado |
 | Fluxos — migração 063: colunas trigger_type e keywords na tabela flows | ✅ Implementado |
+| Fluxos — migração 064: flow_id, flow_node_id, flow_vars na tabela contacts (estado de execução de fluxo) | ✅ Implementado |
+| Fluxos — webhook: executa fluxo ativo ao /start de contato novo (executeFlowNode recursivo, depth ≤ 10) | ✅ Implementado |
+| Fluxos — webhook: 9 tipos de nó executados: message, question, buttons, tag, delay, image, link, offer, condition | ✅ Implementado |
+| Fluxos — webhook: callback_query → avança nó pelo índice do botão pressionado (sourceHandle matching) | ✅ Implementado |
+| Fluxos — webhook: welcome_message enviada apenas para contatos NOVOS (isNewContact check antes do upsert) | ✅ Implementado |
+| Fluxos — editor: inspector desaparecia ao soltar nó corrigido (deselect movido de mousedown → onClick + bgPannedRef) | ✅ Corrigido |
+| Fluxos — editor: nó Question lê data.text ?? data.question (compatibilidade entre templates e editor) | ✅ Corrigido |
 | Afiliados — Server Component SSR + Client Component (dados reais) | ✅ Funcional |
 | Afiliados — CRUD real (add/edit/pause/archive/delete) + confirmação modal | ✅ Implementado |
 | Afiliados — link de afiliado copiável (slug-based) | ✅ Implementado |
@@ -508,6 +517,13 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Bots — BotsList: dropdown de ordenação (Maior receita / Mais leads / Mais vendas / Alfabético / Status) | ✅ Implementado |
 | Bots — BotsList: subtítulo exibe receita total dos bots | ✅ Implementado |
 | Bots — BotConfig: prop defaultTab para abrir diretamente em aba específica | ✅ Implementado |
+| Bots — webhook/route.ts: welcome_message enviada apenas para contatos NOVOS (isNewContact) | ✅ Implementado |
+| Bots — webhook/route.ts: motor de execução de fluxo (executeFlowNode + clearFlowState + loadFlow) | ✅ Implementado |
+| Bots — webhook/route.ts: callback_query handler avança fluxo pelo índice do botão (sourceHandle) | ✅ Implementado |
+| Bots — perfil no Telegram: TelegramProfileModal na aba Geral (foto, nome, descrição, short desc, comandos) | ✅ Implementado |
+| Bots — getBotTelegramProfileAction: getMe + getMyDescription + getMyShortDescription + getMyCommands + foto base64 | ✅ Implementado |
+| Bots — saveBotTelegramProfileAction: setMyName/setMyDescription/setMyShortDescription/setMyCommands em paralelo | ✅ Implementado |
+| Bots — setBotPhotoAction: upload multipart → setMyPhoto (Bot API 7.3); foto como base64 sem expor token | ✅ Implementado |
 | Gateways — configuração real de credenciais | ❌ Ainda mock |
 | Clientes — Server Component SSR + dados reais (sem mock) | ✅ Funcional |
 | Clientes — colunas origin, first_purchase, last_purchase, avg_ticket (mig 052) | ✅ Implementado |
@@ -1722,13 +1738,18 @@ app/dashboard/bots/
   ├── page.tsx       # Server Component — busca bots (sem token) + flows em paralelo; passa ao BotsClient
   └── BotsClient.tsx # Client Component — lista, detalhe, CRUD, Realtime, modais, tabs
 
-app/actions/bots.ts  # 6 Server Actions (todas autenticadas + rate-limit)
-  ├── validateBotTokenAction(token)     # Chama getMe, verifica is_bot, retorna { username, firstName, telegramId }
-  ├── saveBotAction(params)             # encryptToken + INSERT com user_id do servidor
-  ├── registerWebhookAction(botId)      # decryptToken + setWebhook + status='online' + PostHog
-  ├── getBotTokenAction(botId)          # decryptToken — chamado só ao clicar "Revelar"
-  ├── updateBotAction(id, patch)        # UPDATE com .eq('user_id', user.id)
-  └── deleteBotAction(id)              # DELETE com .eq('user_id', user.id)
+app/actions/bots.ts  # 9 Server Actions (todas autenticadas + rate-limit)
+  ├── validateBotTokenAction(token)              # Chama getMe, verifica is_bot, retorna { username, firstName, telegramId }
+  ├── saveBotAction(params)                      # encryptToken + INSERT com user_id do servidor
+  ├── registerWebhookAction(botId)               # decryptToken + setWebhook + status='online' + PostHog
+  ├── getBotTokenAction(botId)                   # decryptToken — chamado só ao clicar "Revelar"
+  ├── updateBotAction(id, patch)                 # UPDATE com .eq('user_id', user.id)
+  ├── deleteBotAction(id)                        # DELETE com .eq('user_id', user.id)
+  ├── getBotTelegramProfileAction(botId)         # getMe + getMyDescription + getMyShortDescription + getMyCommands
+  │                                              # + foto via getUserProfilePhotos → getFile → base64 data URL
+  ├── saveBotTelegramProfileAction(botId, data)  # setMyName / setMyDescription / setMyShortDescription / setMyCommands
+  │                                              # em Promise.allSettled — primeiro erro lançado ao caller
+  └── setBotPhotoAction(botId, photo: File)      # valida tipo/tamanho → multipart → setMyPhoto (Bot API 7.3)
 ```
 
 ### Fluxo de dados
@@ -1768,6 +1789,12 @@ BotsClient (Client Component)
   ├── TokenReveal: getBotTokenAction chamado só no clique do olho (token off-client até lá)
   ├── RegisterWebhookButton: chama registerWebhookAction para bots offline
   ├── GeneralTab: webhook warning quando webhookUrl vazio + RegisterWebhookButton inline
+  │     card "Perfil no Telegram" → botão "Editar perfil" → abre TelegramProfileModal (estado local: tgProfileOpen)
+  ├── TelegramProfileModal:
+  │     carrega perfil via getBotTelegramProfileAction ao abrir (cancela se fechar antes — flag `cancelled`)
+  │     foto: exibe base64 do Telegram ou preview local (URL.createObjectURL) após seleção de arquivo
+  │     comandos: lista editável com up/down para reordenar, nome + descrição por linha, DEFAULT_COMMANDS como padrão
+  │     save: setBotPhotoAction (se nova foto) → saveBotTelegramProfileAction → onClose()
   ├── FlowTab: usa flows prop (dados reais do banco) — sem mock FLOWS
   └── Toast system: { msg, type: 'success' | 'error' }
 
@@ -2275,6 +2302,53 @@ if (!name.trim()) {
 | `flow_published` | ao publicar | `{ flow_name, node_count }` |
 | `flow_deleted` | ao confirmar exclusão | `{}` |
 
+### Execução de fluxo pelo webhook (app/api/telegram/webhook/route.ts)
+
+O webhook implementa um motor de execução de fluxo completo com estado persistido em `contacts`:
+
+```
+Recebe /start (novo contato):
+  → carrega active_flow_id do bot → loadFlow(flowId) → findStartNode()
+  → executeFlowNode(startNodeId, …, depth=0) — recursivo até pausa ou terminal
+
+Recebe mensagem de texto (flow_node_id ≠ null):
+  → salva resposta em flow_vars[variavel_do_nó] → avança para próximo nó
+
+Recebe callback_query (botão clicado):
+  → answerCallbackQuery → busca edge pelo índice do botão (sourceHandle matching)
+  → executeFlowNode(nextNodeId, …)
+
+Funções auxiliares:
+  tgApi(token, method, body)               — fetch base para Telegram API
+  sendTelegramPhoto(token, chatId, photo)  — envia imagem (nó image)
+  sendTelegramWithKeyboard(…, keyboard)    — InlineKeyboard para nó buttons/link
+  buildEdgeMap(edges): Map<source, edges[]> — lookup O(1)
+  findStartNode(nodes, edges)              — nó sem arestas de entrada
+  subVars(text, flowVars, firstName, bot)  — substitui {nome}/{email}/{bot}/{data}
+  clearFlowState(contactId, supabase)      — flow_id=null, flow_node_id=null
+  loadFlow(flowId, supabase)               — SELECT flows WHERE status='published'
+```
+
+**Nós suportados na execução:**
+
+| Tipo | Comportamento | Estado salvo |
+|---|---|---|
+| `message` | Envia texto, avança automaticamente | — |
+| `question` | Envia texto, pausa aguardando resposta | `flow_node_id` |
+| `buttons` | Envia InlineKeyboard, pausa | `flow_node_id` |
+| `tag` | Adiciona/remove tag no contato, avança | — |
+| `delay` | Pulado (sem espera real), avança | — |
+| `image` | Envia foto (sendPhoto), avança | — |
+| `link` | Envia botão inline com URL, avança | — |
+| `offer` | Envia texto formatado com preço + CTA, avança | — |
+| `condition` | Pega primeiro branch disponível, avança | — |
+| `end` / `handoff` | Terminal — limpa estado do fluxo | — |
+
+**Estado persistido na tabela `contacts` (migração 064):**
+- `flow_id`: fluxo ativo (FK para flows, ON DELETE SET NULL)
+- `flow_node_id`: nó aguardando resposta (null = sem espera ativa)
+- `flow_vars`: JSONB com variáveis capturadas (`{"nome": "João", "email": "j@x.com"}`)
+
 ### Pendências conhecidas (backlog)
 
 | Item | Prioridade |
@@ -2283,4 +2357,4 @@ if (!name.trim()) {
 | Copiar/colar nó (Ctrl+C/V) | 🟢 Baixa |
 | Export/Import JSON | 🟢 Baixa |
 | Estatísticas reais (executions++ no webhook) | 🟢 Baixa |
-| Executar fluxo pelo webhook ao detectar keyword (webhook/route.ts) | 🟢 Baixa |
+| Keyword trigger no webhook (detectar palavras-chave e iniciar fluxo) | 🟢 Baixa |

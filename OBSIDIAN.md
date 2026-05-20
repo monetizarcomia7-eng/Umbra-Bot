@@ -25,7 +25,7 @@ C:\Users\Usuario\OneDrive\Documentos\Obsidian Vault\umbra-bot\
 | `Módulo - Notificações.md` | notification_prefs, upsert, canais |
 | `Módulo - Clientes.md` | Contacts, Realtime, sort, timeline, CSV |
 | `Módulo - Afiliados.md` | CRUD, /r/[slug], comissão, cookie de atribuição |
-| `Módulo - Bots.md` | SSR + BotsClient + 6 server actions + webhook + cron + card melhorado |
+| `Módulo - Bots.md` | SSR + BotsClient + 9 server actions + webhook (motor de fluxo) + cron + perfil no Telegram |
 | `Módulo - Fluxos.md` | SSR + FlowsClient, editor visual, templates, duplicar, handles dinâmicos, prévia com ramificações |
 | `Módulo - Documentação.md` | /docs/ 30 artigos, /dashboard/docs renderizador, marked, toggle tema |
 | `Referência - Eventos PostHog.md` | 28 eventos rastreados |
@@ -37,15 +37,10 @@ C:\Users\Usuario\OneDrive\Documentos\Obsidian Vault\umbra-bot\
 
 | Nota | O que atualizar |
 |---|---|
-| `Módulo - Fluxos.md` | **Criar** — arquitetura completa: SSR metadata-only + FlowsClient, 3 templates (blank/lead-capture/sales), duplicar fluxo, handles dinâmicos por botão (getButtonHandleX), indicador INÍCIO no nó sem entrada, validação de nome vazio, prévia com ramificações (buildPreviewPath recursivo), auto-save 30s, 3 eventos PostHog (flow_created/published/deleted), node types (trigger/message/buttons/condition/delay/tag/end), status published/draft |
-| `Módulo - Bots.md` | **Criar/Atualizar** — arquitetura completa: SSR, BotsClient, 6 server actions, webhook com admin client, welcome_message variáveis, cron check-bots, migração 062; **novo:** BotCard 2×2 (Leads/Vendas/Conversão/Receita), CTA quando zeros, fluxo clicável, ações rápidas no hover, openBot(id,tab), BotsList com sort, BotConfig defaultTab |
-| `Módulo - Documentação.md` | **Criar** — /docs/ (30 artigos, 11 seções), /dashboard/docs renderizador, DocsSidebar com toggle tema, DocPager, processHtml(), marked, @tailwindcss/typography |
-| `04 - Banco de Dados e Migrações.md` | Adicionar migração 062 (`bots_active_flow_id_fk`, ON DELETE SET NULL) |
-| `05 - Segurança.md` | Adicionar seção `createAdminClient()` — quando usar service role vs anon key |
-| `06 - Variáveis de Ambiente.md` | Adicionar `SUPABASE_SERVICE_ROLE_KEY` (obrigatória para webhook e cron) |
-| `03 - Estado do Projeto.md` | Marcar Fluxos como ✅ Funcional (todos os itens); marcar todos os itens de Bots como ✅ Funcional; marcar Documentação como ✅ Completo |
-| `02 - Stack e Arquitetura.md` | Adicionar `marked` e `@tailwindcss/typography` na stack |
-| `Referência - Eventos PostHog.md` | Adicionar flow_published e flow_deleted (agora 30 eventos rastreados) |
+| `Módulo - Fluxos.md` | **Atualizar** — adicionar: motor de execução de fluxo no webhook (executeFlowNode recursivo, 9 tipos de nó), migração 064 (flow_id/flow_node_id/flow_vars em contacts), correção inspector (bgPannedRef), correção campo Question (data.text ?? data.question) |
+| `Módulo - Bots.md` | **Atualizar** — 9 server actions (+ getBotTelegramProfileAction, saveBotTelegramProfileAction, setBotPhotoAction); TelegramProfileModal (foto base64, nome, descrição, short desc, comandos reordenáveis); welcome_message só para novos contatos (isNewContact); motor de fluxo no webhook |
+| `04 - Banco de Dados e Migrações.md` | Adicionar migração 063 (trigger_type + keywords em flows) e migração 064 (flow_id/flow_node_id/flow_vars em contacts) |
+| `03 - Estado do Projeto.md` | Marcar itens de fluxo/webhook/perfil-telegram como ✅ |
 
 ## Como Atualizar
 

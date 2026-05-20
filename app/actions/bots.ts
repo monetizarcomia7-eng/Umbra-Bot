@@ -208,3 +208,173 @@ export async function deleteBotAction(id: string): Promise<void> {
   if (error) throw new Error(error.message)
   revalidatePath('/dashboard/bots')
 }
+
+// ─── getBotTelegramProfileAction ──────────────────────────────────────────────
+// Busca o perfil atual do bot no Telegram: nome, descrição, short desc, comandos e foto.
+// A foto é retornada como data URL (base64) para não expor o token no src da imagem.
+export async function getBotTelegramProfileAction(botId: string): Promise<{
+  name: string
+  description: string
+  shortDescription: string
+  commands: Array<{ command: string; description: string }>
+  photoDataUrl: string | null
+}> {
+  const supabase = await createClient()
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
+  if (authError || !user) throw new Error('Não autorizado.')
+
+  const rl = await rateLimit(`tg-profile:${user.id}`, 10, 60 * 1000)
+  if (!rl.ok) throw new Error('Muitas requisições. Aguarde um momento.')
+
+  const { data: bot } = await supabase
+    .from('bots')
+    .select('token, telegram_id')
+    .eq('id', botId)
+    .eq('user_id', user.id)
+    .single()
+
+  if (!bot?.token) throw new Error('Bot não encontrado.')
+  const token = decryptToken(bot.token as string)
+
+  async function tgGet(method: string, qs = '') {
+    const r = await fetch(`https://api.telegram.org/bot${token}/${method}${qs}`, { cache: 'no-store' })
+    return r.json() as Promise<Record<string, unknown>>
+  }
+
+  type TgResult<T> = { ok: boolean; result?: T }
+
+  const [meRes, descRes, shortRes, cmdRes, photosRes] = await Promise.allSettled([
+    tgGet('getMe'),
+    tgGet('getMyDescription'),
+    tgGet('getMyShortDescription'),
+    tgGet('getMyCommands'),
+    bot.telegram_id
+      ? tgGet('getUserProfilePhotos', `?user_id=${bot.telegram_id}&limit=1`)
+      : Promise.resolve(null),
+  ])
+
+  const meData     = meRes.status    === 'fulfilled' ? meRes.value    as TgResult<{ first_name: string }> : null
+  const descData   = descRes.status  === 'fulfilled' ? descRes.value  as TgResult<{ description: string }> : null
+  const shortData  = shortRes.status === 'fulfilled' ? shortRes.value as TgResult<{ short_description: string }> : null
+  const cmdData    = cmdRes.status   === 'fulfilled' ? cmdRes.value   as TgResult<Array<{ command: string; description: string }>> : null
+  const photosData = photosRes.status === 'fulfilled' && photosRes.value
+    ? photosRes.value as TgResult<{ photos: Array<Array<{ file_id: string }>> }>
+    : null
+
+  const name             = meData?.result?.first_name ?? ''
+  const description      = descData?.result?.description ?? ''
+  const shortDescription = shortData?.result?.short_description ?? ''
+  const commands         = Array.isArray(cmdData?.result) ? cmdData!.result! : []
+
+  // Busca foto como base64 — evita expor token no URL
+  let photoDataUrl: string | null = null
+  const photos = photosData?.result?.photos
+  if (photos && photos.length > 0) {
+    const largest = photos[0].at(-1)
+    if (largest?.file_id) {
+      try {
+        const fileRes  = await tgGet('getFile', `?file_id=${largest.file_id}`)
+        const filePath = (fileRes as TgResult<{ file_path: string }>)?.result?.file_path
+        if (filePath) {
+          const imgRes    = await fetch(`https://api.telegram.org/file/bot${token}/${filePath}`, { cache: 'no-store' })
+          const imgBuf    = await imgRes.arrayBuffer()
+          const imgBase64 = Buffer.from(imgBuf).toString('base64')
+          const ct        = imgRes.headers.get('content-type') ?? 'image/jpeg'
+          photoDataUrl    = `data:${ct};base64,${imgBase64}`
+        }
+      } catch {
+        // foto não disponível — não bloqueia
+      }
+    }
+  }
+
+  return { name, description, shortDescription, commands, photoDataUrl }
+}
+
+// ─── saveBotTelegramProfileAction ─────────────────────────────────────────────
+// Atualiza nome, descrição, short description e comandos via Telegram Bot API.
+export async function saveBotTelegramProfileAction(
+  botId: string,
+  data: {
+    name?: string
+    description?: string
+    shortDescription?: string
+    commands?: Array<{ command: string; description: string }>
+  },
+): Promise<void> {
+  const supabase = await createClient()
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
+  if (authError || !user) throw new Error('Não autorizado.')
+
+  const rl = await rateLimit(`tg-profile-save:${user.id}`, 5, 60 * 1000)
+  if (!rl.ok) throw new Error('Muitas requisições. Aguarde um momento.')
+
+  const { data: bot } = await supabase
+    .from('bots')
+    .select('token')
+    .eq('id', botId)
+    .eq('user_id', user.id)
+    .single()
+
+  if (!bot?.token) throw new Error('Bot não encontrado.')
+  const token = decryptToken(bot.token as string)
+
+  async function tgPost(method: string, body: Record<string, unknown>) {
+    const r = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      cache: 'no-store',
+    })
+    const d = await r.json() as { ok: boolean; description?: string }
+    if (!d.ok) throw new Error(d.description ?? `Erro em ${method}`)
+  }
+
+  const calls: Promise<void>[] = []
+  if (data.name             !== undefined) calls.push(tgPost('setMyName',             { name: data.name }))
+  if (data.description      !== undefined) calls.push(tgPost('setMyDescription',      { description: data.description }))
+  if (data.shortDescription !== undefined) calls.push(tgPost('setMyShortDescription', { short_description: data.shortDescription }))
+  if (data.commands         !== undefined) calls.push(tgPost('setMyCommands',          { commands: data.commands }))
+
+  const results = await Promise.allSettled(calls)
+  const failed  = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected')
+  if (failed.length > 0) throw new Error(failed[0].reason?.message ?? 'Erro ao salvar no Telegram.')
+}
+
+// ─── setBotPhotoAction ─────────────────────────────────────────────────────────
+// Define a foto de perfil do bot no Telegram via multipart upload.
+export async function setBotPhotoAction(botId: string, photo: File): Promise<void> {
+  const supabase = await createClient()
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
+  if (authError || !user) throw new Error('Não autorizado.')
+
+  const rl = await rateLimit(`tg-photo:${user.id}`, 3, 60 * 1000)
+  if (!rl.ok) throw new Error('Muitas requisições. Aguarde um momento.')
+
+  if (!['image/jpeg', 'image/png', 'image/gif'].includes(photo.type))
+    throw new Error('Formato inválido. Use JPG, PNG ou GIF.')
+  if (photo.size > 10 * 1024 * 1024)
+    throw new Error('Imagem muito grande. Máximo 10MB.')
+
+  const { data: bot } = await supabase
+    .from('bots')
+    .select('token')
+    .eq('id', botId)
+    .eq('user_id', user.id)
+    .single()
+
+  if (!bot?.token) throw new Error('Bot não encontrado.')
+  const token = decryptToken(bot.token as string)
+
+  const fd  = new FormData()
+  const buf = await photo.arrayBuffer()
+  fd.append('photo', new Blob([buf], { type: photo.type }), photo.name)
+
+  const res = await fetch(`https://api.telegram.org/bot${token}/setMyPhoto`, {
+    method: 'POST',
+    body: fd,
+    cache: 'no-store',
+  })
+  const d = await res.json() as { ok: boolean; description?: string }
+  if (!d.ok) throw new Error(d.description ?? 'Erro ao definir foto do perfil.')
+}
