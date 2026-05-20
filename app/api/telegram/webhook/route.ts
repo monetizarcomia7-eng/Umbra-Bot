@@ -64,7 +64,17 @@ export async function POST(request: NextRequest) {
   const username   = msg.from.username ?? null
   const chatId     = msg.chat.id
 
-  // Upsert contact
+  // Verifica se o contato já existe antes do upsert para detectar novo lead
+  const { data: existingContact } = await supabase
+    .from('contacts')
+    .select('id')
+    .eq('bot_id', bot.id)
+    .eq('telegram_id', telegramId)
+    .maybeSingle()
+
+  const isNewContact = !existingContact
+
+  // Upsert contact (sempre atualiza nome/username em caso de mudança)
   const { data: contact } = await supabase
     .from('contacts')
     .upsert(
@@ -82,19 +92,21 @@ export async function POST(request: NextRequest) {
     .select('id')
     .single()
 
-  // Log activity event
-  await supabase.from('activity_events').insert({
-    user_id:     bot.user_id,
-    bot_id:      bot.id,
-    contact_id:  contact?.id ?? null,
-    type:        'lead',
-    bot:         bot.username ? `@${bot.username}` : bot.name,
-    title:       `Novo lead`,
-    description: `${firstName} iniciou conversa`,
-  })
+  // Registra "Novo lead" apenas na primeira vez
+  if (isNewContact) {
+    await supabase.from('activity_events').insert({
+      user_id:     bot.user_id,
+      bot_id:      bot.id,
+      contact_id:  contact?.id ?? null,
+      type:        'lead',
+      bot:         bot.username ? `@${bot.username}` : bot.name,
+      title:       'Novo lead',
+      description: `${firstName} iniciou conversa`,
+    })
+  }
 
-  // Handle /start command
-  if (msg.text?.startsWith('/start')) {
+  // Handle /start command — boas-vindas e funil apenas para contatos novos
+  if (msg.text?.startsWith('/start') && isNewContact) {
     // Registra evento de início de conversa no funil (fire-and-forget)
     supabase.from('checkout_events').insert({
       user_id:    bot.user_id,
