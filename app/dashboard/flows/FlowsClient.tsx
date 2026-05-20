@@ -254,7 +254,7 @@ function getHandlePos(node: FlowNodeType, handle: 'input' | 'output', outputIdx 
 function getNodePreview(node: FlowNodeType): string {
   switch (node.type) {
     case 'message':   return node.data.text || 'Mensagem vazia'
-    case 'question':  return node.data.question || 'Pergunta vazia'
+    case 'question':  return (node.data.text || node.data.question || '') || 'Pergunta vazia'
     case 'buttons':   return `${node.data.text || 'Botões'} (${node.data.options?.length || 0} opções)`
     case 'condition': return `Se {${node.data.variable}} ${node.data.operator} "${node.data.value || '?'}"`
     case 'delay':     return `Aguardar ${node.data.amount} ${node.data.unit}`
@@ -827,7 +827,7 @@ function Inspector({ node, onUpdate, onClose, onDelete }: {
         )}
         {node.type === 'question' && (
           <>
-            <InspField label="Pergunta"><textarea rows={3} value={node.data.question ?? ''} onChange={e => setData({ question: e.target.value })} className={inspTextarea} /></InspField>
+            <InspField label="Pergunta"><textarea rows={3} value={(node.data.text ?? node.data.question) ?? ''} onChange={e => setData({ text: e.target.value })} className={inspTextarea} /></InspField>
             <InspField label="Variável de captura">
               <div className="flex items-center bg-surface-2 border border-border rounded-lg overflow-hidden">
                 <span className="px-2 text-text-subtle text-[12px] font-mono">{'{'}</span>
