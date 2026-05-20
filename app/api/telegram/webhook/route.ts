@@ -30,10 +30,10 @@ export async function POST(request: NextRequest) {
   // Admin client bypassa RLS — segurança garantida pelo webhook_secret abaixo.
   const supabase = createAdminClient()
 
-  // Fetch bot to verify secret and get token
+  // Fetch bot to verify secret and get token + stored messages
   const { data: bot, error: botError } = await supabase
     .from('bots')
-    .select('id, user_id, token, webhook_secret, name, username')
+    .select('id, user_id, token, webhook_secret, name, username, welcome_message, fallback_message, status')
     .eq('id', botId)
     .single()
 
@@ -106,10 +106,22 @@ export async function POST(request: NextRequest) {
       if (error) console.error('[webhook] conversation_started error:', error.message)
     })
 
+    // Usa welcome_message do banco (com substituição de variáveis).
+    // Fallback para mensagem padrão se o campo estiver vazio.
+    const storedWelcome = (bot.welcome_message as string | null) ?? ''
+    const welcomeText = storedWelcome.trim()
+      ? storedWelcome
+          .replace(/\{nome\}/g,    firstName)
+          .replace(/\{bot\}/g,     bot.name as string)
+          .replace(/\{produto\}/g, '')
+          .replace(/\{valor\}/g,   '')
+          .replace(/\{data\}/g,    new Date().toLocaleDateString('pt-BR'))
+      : `Olá, <b>${firstName}</b>! 👋\n\nSeja bem-vindo ao <b>${bot.name}</b>. Em breve você receberá mais informações.`
+
     await sendTelegramMessage(
-      decryptToken(bot.token),
+      decryptToken(bot.token as string),
       chatId,
-      `Olá, <b>${firstName}</b>! 👋\n\nSeja bem-vindo ao <b>${bot.name}</b>. Em breve você receberá mais informações.`,
+      welcomeText,
     ).catch(() => {}) // não bloquear o 200 se falhar
   }
 
