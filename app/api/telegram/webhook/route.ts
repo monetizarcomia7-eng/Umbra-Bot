@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { decryptToken } from '@/lib/crypto'
 import { sendTelegramMessage } from '@/lib/telegram'
 
@@ -27,7 +27,8 @@ export async function POST(request: NextRequest) {
   const botId = request.nextUrl.searchParams.get('bot_id')
   if (!botId) return NextResponse.json({ error: 'bot_id required' }, { status: 400 })
 
-  const supabase = await createClient()
+  // Admin client bypassa RLS — segurança garantida pelo webhook_secret abaixo.
+  const supabase = createAdminClient()
 
   // Fetch bot to verify secret and get token
   const { data: bot, error: botError } = await supabase

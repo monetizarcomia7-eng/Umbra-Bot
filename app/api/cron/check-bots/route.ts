@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { decryptToken } from '@/lib/crypto'
 import * as Sentry from '@sentry/nextjs'
 
@@ -14,7 +14,8 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Não autorizado.' }, { status: 401 })
   }
 
-  const supabase = await createClient()
+  // Admin client bypassa RLS — o cron não possui sessão de usuário.
+  const supabase = createAdminClient()
 
   const { data: bots, error } = await supabase
     .from('bots')
