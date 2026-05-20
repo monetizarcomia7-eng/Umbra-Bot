@@ -1553,7 +1553,14 @@ export default function BroadcastsClient({
         { event: 'UPDATE', schema: 'public', table: 'broadcasts', filter: `user_id=eq.${userId}` },
         (payload) => {
           const row = payload.new as unknown as RawBroadcast
-          setBroadcasts(prev => prev.map(b => b.id === row.id ? mapRaw(row) : b))
+          setBroadcasts(prev => prev.map(b => {
+            if (b.id !== row.id) return b
+            const next = mapRaw(row)
+            // Ignora evento stale do saveBroadcast que carrega status='draft'
+            // enquanto já estamos em 'sending' (evita race condition Realtime vs. setState)
+            if (b.status === 'sending' && next.status === 'draft') return b
+            return next
+          }))
         },
       )
       .on(
@@ -1614,6 +1621,12 @@ export default function BroadcastsClient({
   const sendBroadcastNow = useCallback(async (updated: Broadcast): Promise<string | null> => {
     await saveBroadcast(updated)
 
+    // Otimista: mostra 'sending' imediatamente antes do fetch
+    // (deve rodar antes de qualquer evento Realtime do saveBroadcast chegar)
+    setBroadcasts(prev => prev.map(b =>
+      b.id === updated.id ? { ...updated, status: 'sending', startedAt: Date.now() } : b,
+    ))
+
     // Tenta aguardar resposta por até 20s para capturar erros imediatos
     // (rate limit, status inválido, bot não encontrado, etc.)
     // Se demorar mais, assuma que está processando audiência grande — Realtime cuida do progresso
@@ -1642,9 +1655,6 @@ export default function BroadcastsClient({
       // Outros = erro de rede → Realtime mostrará quando status mudar
     }
 
-    setBroadcasts(prev => prev.map(b =>
-      b.id === updated.id ? { ...updated, status: 'sending', startedAt: Date.now() } : b,
-    ))
     return null
   }, [saveBroadcast])
 
