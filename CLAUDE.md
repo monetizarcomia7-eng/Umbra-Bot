@@ -34,7 +34,11 @@ umbra-bot/
 │   │   └── reset-password/page.tsx   # Redefinição de senha (via link do e-mail)
 │   ├── api/
 │   │   ├── telegram/
-│   │   │   ├── webhook/route.ts  # Recebe updates do Telegram (descriptografa token)
+│   │   │   ├── webhook/route.ts  # Recebe updates do Telegram — createAdminClient (bypassa RLS)
+│   │   │   │                     # Verifica webhook_secret no header X-Telegram-Bot-Api-Secret-Token
+│   │   │   │                     # /start: envia welcome_message do banco (substitui {nome}/{bot}/{data})
+│   │   │   │                     # Fallback para mensagem padrão quando welcome_message está vazio
+│   │   │   │                     # Insere activity_event type='lead' + checkout_event 'conversation_started'
 │   │   │   └── register/route.ts # Registra webhook no Telegram (decryptToken + status='online')
 │   │   ├── payments/
 │   │   │   ├── pix/route.ts      # Cria pagamento PIX (Mercado Pago) + Sentry + analytics
@@ -55,6 +59,7 @@ umbra-bot/
 │   │   │   ├── cleanup-alerts/route.ts       # GET: deleta alertas resolvidos com >30 dias (CRON_SECRET, 04:00 UTC)
 │   │   │   │                                 # Lotes de 500, cron_log, Sentry
 │   │   │   └── check-bots/route.ts           # GET: verifica conectividade de todos os bots a cada 30 min
+│   │   │                                     # createAdminClient (bypassa RLS — cron não tem sessão de usuário)
 │   │   │                                     # disconnect → insere activity_event + alert critical (bot_offline, source='cron')
 │   │   │                                     # reconnect  → insere activity_event + auto-resolve alert (resolved_by='sistema (auto)')
 │   │   ├── push/
@@ -150,6 +155,7 @@ umbra-bot/
 │       ├── Sidebar.tsx           # Navegação colapsável (260px / 80px) + badge via DashboardProvider
 │       ├── Topbar.tsx            # Busca global (14 tabelas, race-condition safe) + notif + user
 │       ├── OnboardingWizard.tsx  # Modal 4 passos (welcome→bot→gateway→done) — aparece 1x
+│       │                         # BotStep: validateBotTokenAction → saveBotAction({ name, token, username, telegramId })
 │       ├── PageHeader.tsx
 │       ├── Button.tsx
 │       └── finance/              # Módulo completo do Financeiro (10 arquivos)
@@ -179,14 +185,17 @@ umbra-bot/
 │   ├── analytics-server.ts       # PostHog server-side capture
 │   ├── csv.ts                    # exportCSV()
 │   └── supabase/
-│       ├── server.ts             # createClient() para Server Components / API Routes
-│       └── client.ts             # createClient() para Client Components
+│       ├── server.ts             # createClient() para Server Components / API Routes (anon key + cookies)
+│       ├── client.ts             # createClient() para Client Components (browser)
+│       └── admin.ts              # createAdminClient() — service role, bypassa RLS
+│                                 # Usar APENAS em webhooks externos e cron jobs (sem sessão de usuário)
+│                                 # Requer SUPABASE_SERVICE_ROLE_KEY no ambiente
 ├── providers/
 │   ├── PostHogProvider.tsx       # PostHog init + pageview tracking
 │   └── DashboardProvider.tsx     # Contexto global: user, alerts, botsCount, logout — 1 fetch
 ├── public/
 │   └── sw.js                     # Service Worker para Web Push
-├── supabase/migrations/          # 61 migrações SQL (000 a 061)
+├── supabase/migrations/          # 62 migrações SQL (000 a 062)
 ├── vercel.json                   # 4 Cron jobs: process-withdrawals (06:00 UTC) + cleanup-activity (02:00 UTC) + check-bots (a cada 30 min) + cleanup-alerts (04:00 UTC)
 ├── sentry.*.config.ts            # Sentry (client com Replay / server com tracePropagation)
 ├── instrumentation.ts            # Next.js hook para Sentry server
@@ -427,6 +436,12 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Bots — FlowTab: fluxos reais do banco (sem mock FLOWS) | ✅ Implementado |
 | Bots — Otimista: rollback ao falhar update/delete | ✅ Implementado |
 | Bots — register/route.ts: bugs corrigidos (decryptToken + status='online') | ✅ Corrigido |
+| Bots — webhook/route.ts: createAdminClient (RLS bypass) + welcome_message do banco | ✅ Corrigido |
+| Bots — check-bots/route.ts: createAdminClient (RLS bypass para cron sem sessão) | ✅ Corrigido |
+| Bots — lib/supabase/admin.ts: cliente service role para rotas sem sessão de usuário | ✅ Implementado |
+| Bots — active_flow_id: FK com ON DELETE SET NULL (migração 062) | ✅ Corrigido |
+| Bots — OnboardingWizard: adapta BotStep ao novo saveBotAction (params object) | ✅ Corrigido |
+| Bots — webhook/route.ts: substitui variáveis {nome}/{bot}/{data} na welcome_message | ✅ Implementado |
 | Gateways — configuração real de credenciais | ❌ Ainda mock |
 | Clientes — Server Component SSR + dados reais (sem mock) | ✅ Funcional |
 | Clientes — colunas origin, first_purchase, last_purchase, avg_ticket (mig 052) | ✅ Implementado |
@@ -1019,6 +1034,9 @@ BOT_TOKEN_ENCRYPTION_KEY   # 64-char hex — gerar: openssl rand -hex 32
 Para produção completa, ver `.env.example` — todas as variáveis estão documentadas lá.
 
 Variáveis adicionais documentadas (além do básico):
+- `SUPABASE_SERVICE_ROLE_KEY` — **obrigatória** para `lib/supabase/admin.ts` (webhook Telegram + cron check-bots)
+  Encontrar em: Supabase Dashboard → Project Settings → API → service_role (secret)
+  **NUNCA expor ao cliente browser** — usar apenas em server-side routes
 - `MERCADOPAGO_ACCESS_TOKEN` / `MERCADOPAGO_WEBHOOK_SECRET`
 - `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN`
 - `CRON_SECRET` — protege `GET /api/cron/process-withdrawals`, `GET /api/cron/cleanup-activity` e `GET /api/cron/check-bots`
@@ -1709,6 +1727,54 @@ updateBot(patch)  // → otimista → updateBotAction → catch: rollback ao sna
 - `getBotTokenAction` valida propriedade com `.eq('user_id', user.id)` antes de descriptografar
 - `saveBotAction` e `registerWebhookAction` leem `user_id` do servidor (sem IDOR)
 - Rate limit: 10 validações de token / 10 min por usuário; 10 registros de webhook / 10 min
+- `webhook/route.ts`: segurança pelo `webhook_secret` no header — nunca pelo `bot_id` sozinho
+- `createAdminClient()` usado **apenas** em rotas sem sessão de usuário (webhook + cron)
+
+### Cliente admin (lib/supabase/admin.ts)
+
+```typescript
+// Bypassa RLS via service role key.
+// Necessário em rotas que rodam sem sessão de usuário:
+//   - POST /api/telegram/webhook  (chamado pelo Telegram)
+//   - GET  /api/cron/check-bots   (chamado pelo Vercel Cron)
+// Segurança garantida pelo mecanismo próprio de cada rota:
+//   - webhook: header X-Telegram-Bot-Api-Secret-Token
+//   - cron:    header Authorization: Bearer CRON_SECRET
+export function createAdminClient() {
+  return createClient(url, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  })
+}
+```
+
+**Regra:** Server Actions e Server Components usam `createClient()` (anon key + cookies).
+`createAdminClient()` é reservado para rotas sem sessão.
+
+### welcome_message no webhook
+
+Quando o usuário envia `/start`, o webhook busca `welcome_message` do banco e substitui variáveis:
+
+```typescript
+const welcomeText = storedWelcome.trim()
+  ? storedWelcome
+      .replace(/\{nome\}/g,    firstName)
+      .replace(/\{bot\}/g,     bot.name)
+      .replace(/\{data\}/g,    new Date().toLocaleDateString('pt-BR'))
+  : `Olá, <b>${firstName}</b>! …`  // fallback
+```
+
+Variáveis suportadas na aba Mensagens padrão: `{nome}`, `{bot}`, `{produto}`, `{valor}`, `{data}`.
+As variáveis `{produto}` e `{valor}` são substituídas por string vazia no `/start` (não há produto nesse momento).
+
+### active_flow_id FK (migração 062)
+
+```sql
+alter table public.bots
+  add constraint bots_active_flow_id_fk
+  foreign key (active_flow_id) references public.flows(id)
+  on delete set null;
+```
+Garante que ao deletar um fluxo, `bots.active_flow_id` é zerado automaticamente (sem UUID dangling).
 
 ---
 
