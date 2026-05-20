@@ -143,7 +143,8 @@ export async function GET(request: Request) {
   if (aud === 'buyers') {
     contactsQuery = contactsQuery.gt('orders_count', 0)
   } else if (aud === 'leads') {
-    contactsQuery = contactsQuery.eq('orders_count', 0)
+    // Novos contatos têm orders_count = NULL — coalesce(NULL, 0) = 0 → leads
+    contactsQuery = contactsQuery.or('orders_count.eq.0,orders_count.is.null')
   } else if (aud.startsWith('tag:')) {
     const tag = aud.slice(4)
     contactsQuery = contactsQuery.filter('tags', 'cs', `{${tag}}`)
