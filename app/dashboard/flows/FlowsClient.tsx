@@ -1033,7 +1033,8 @@ function Canvas({ nodes, edges, vp, setVp, selectedIds, selectedEdgeId, onSelect
   } | null>(null)
   const [panning, setPanning] = useState<{ x0: number; y0: number; vpX0: number; vpY0: number } | null>(null)
   const [boxSelect, setBoxSelect] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null)
-  const movedRef = useRef(false)
+  const movedRef    = useRef(false)
+  const bgPannedRef = useRef(false) // true quando o mousedown no fundo virou panning real
 
   const startNodeIds = useMemo(() => {
     const hasIncoming = new Set(edges.map(e => e.target))
@@ -1050,9 +1051,18 @@ function Canvas({ nodes, edges, vp, setVp, selectedIds, selectedEdgeId, onSelect
         setBoxSelect({ x0: rx, y0: ry, x1: rx, y1: ry })
       }
     } else {
+      bgPannedRef.current = false
       setPanning({ x0: e.clientX, y0: e.clientY, vpX0: vp.x, vpY0: vp.y })
-      onSelectNode(null); onSelectEdge(null); setConnecting(null)
+      setConnecting(null)
+      // Não desseleciona aqui — aguarda o onClick (só dispara se não houver arrasto)
     }
+  }
+
+  function onBgClick(e: React.MouseEvent) {
+    if ((e.target as HTMLElement).closest('[data-node-id]')) return
+    if (e.shiftKey) return
+    if (bgPannedRef.current) return // foi panning, não clique
+    onSelectNode(null); onSelectEdge(null)
   }
 
   function onNodeMouseDown(e: React.MouseEvent, nodeId: string) {
@@ -1090,6 +1100,9 @@ function Canvas({ nodes, edges, vp, setVp, selectedIds, selectedEdgeId, onSelect
           if (updates.length > 0) onUpdateNodes(updates)
         }
       } else if (panning) {
+        if (Math.abs(e.clientX - panning.x0) > 3 || Math.abs(e.clientY - panning.y0) > 3) {
+          bgPannedRef.current = true
+        }
         setVp(v => ({ ...v, x: panning.vpX0 + (e.clientX - panning.x0), y: panning.vpY0 + (e.clientY - panning.y0) }))
       } else if (boxSelect) {
         const rect = containerRef.current?.getBoundingClientRect()
@@ -1150,7 +1163,7 @@ function Canvas({ nodes, edges, vp, setVp, selectedIds, selectedEdgeId, onSelect
 
   return (
     <div ref={containerRef} className="absolute inset-0 overflow-hidden cursor-grab active:cursor-grabbing"
-      onMouseDown={onBgMouseDown} onWheel={onWheel}
+      onMouseDown={onBgMouseDown} onClick={onBgClick} onWheel={onWheel}
       style={{ backgroundColor: 'var(--bg)', backgroundImage: 'radial-gradient(circle, var(--border) 1px, transparent 1px)', backgroundSize: `${22 * vp.zoom}px ${22 * vp.zoom}px`, backgroundPosition: `${vp.x}px ${vp.y}px` }}
     >
       <div className="absolute top-0 left-0" style={{ transform: `translate(${vp.x}px, ${vp.y}px) scale(${vp.zoom})`, transformOrigin: '0 0', willChange: 'transform' }}>
