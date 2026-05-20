@@ -1,7 +1,8 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { DashboardLayout } from '@/components/dashboard/Layout'
-import BotsClient from './BotsClient'
+import BotsClient, { type RawBotRow } from './BotsClient'
+import type { FlowData } from './BotsClient'
 
 export default async function BotsPage() {
   const supabase = await createClient()
@@ -29,8 +30,8 @@ export default async function BotsPage() {
   return (
     <DashboardLayout>
       <BotsClient
-        initialBots={botsRes.data ?? []}
-        flows={flowsRes.data ?? []}
+        initialBots={(botsRes.data ?? []) as unknown as RawBotRow[]}
+        flows={(flowsRes.data ?? []) as unknown as FlowData[]}
         userId={user.id}
       />
     </DashboardLayout>

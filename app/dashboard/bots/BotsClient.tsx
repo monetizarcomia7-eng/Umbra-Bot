@@ -62,7 +62,7 @@ interface BotData {
   addedAt: number
 }
 
-interface FlowData {
+export interface FlowData {
   id: string
   name: string
   description: string | null
