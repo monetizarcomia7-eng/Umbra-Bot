@@ -72,6 +72,11 @@ type EventMap = {
   pixel_verified:            { provider: string; status: 'ok' | 'error' }
   pixel_test_sent:           { provider: string }
   utm_link_copied:           { has_utm: boolean }
+  // Aba Checkout
+  checkout_created:          { layout: string; gateway: string }
+  checkout_published:        { slug: string; price: number }
+  checkout_deleted:          { status: string }
+  checkout_duplicated:       Record<string, never>
   // Aba Ferramentas
   tool_opened:               { tool_id: string }
   test_message_sent:         { bot_id: string; success: boolean; time_ms: number; format: string }

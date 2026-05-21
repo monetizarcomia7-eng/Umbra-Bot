@@ -102,9 +102,13 @@ umbra-bot/
 │   │   │   ├── balance/route.ts  # GET: saldo fresco via RPC finance_summary (usado pelo WithdrawModal)
 │   │   │   └── transactions/route.ts # GET: paginação "carregar mais" (?offset=N, limit 500)
 │   │   ├── checkout/
-│   │   │   └── track/route.ts    # POST: registra eventos de funil (visited/cart_added/payment_initiated)
-│   │   │                         # Público (sem auth), CORS *, rate-limit 60/min por IP
-│   │   │                         # Usa RPC track_checkout_event (security definer, migração 041)
+│   │   │   ├── track/route.ts    # POST: registra eventos de funil (visited/cart_added/payment_initiated)
+│   │   │   │                     # Público (sem auth), CORS *, rate-limit 60/min por IP
+│   │   │   │                     # Usa RPC track_checkout_event (security definer, migração 041)
+│   │   │   └── pay/route.ts      # POST: cria pagamento PIX via checkout público (sem auth do comprador)
+│   │   │                         # Público, rate-limit 20/min por IP; usa createAdminClient para buscar
+│   │   │                         # credenciais do dono do checkout; valida checkout published + método habilitado
+│   │   │                         # Retorna pix_qr_code + pix_copy_paste + expires_at; registra transaction
 │   │   ├── affiliates/
 │   │   │   └── apply/route.ts    # POST: candidatura pública ao programa de afiliados
 │   │   │                         # Público (sem auth), rate-limit 10/h por IP
@@ -226,7 +230,12 @@ umbra-bot/
 │       │                          # dbStatus em PixelItem — computeStatus usa dbStatus quando sem eventos
 │       │                          #   (pixel verificado mostra 'healthy' em vez de 'waiting')
 │       │                          # SnippetCard — snippets HTML de instalação browser-side por provider
-│       ├── checkout/             # Checkout (mock)
+│       ├── checkout/             # Checkout — SSR + CheckoutClient (dados reais, migração 078)
+│       │   ├── page.tsx          # Server Component: SSR checkouts + gateways + pixels em paralelo; exporta RawCheckout/RawGateway/RawPixel
+│       │   └── CheckoutClient.tsx # Client Component: CRUD real (criar/salvar/publicar/duplicar/arquivar/apagar),
+│       │                          # templates modal (3 templates), auto-save 30s, BackConfirm, DeleteModal,
+│       │                          # Realtime canal 'checkouts-realtime', gateway+pixel pickers do banco,
+│       │                          # preview ao vivo, 4 eventos PostHog (checkout_created/published/deleted/duplicated)
 │       ├── biolink/              # Bio Link (mock)
 │       ├── webhooks/             # Webhooks (mock)
 │       ├── profile/              # Perfil + avatar upload (funcional + analytics)
@@ -537,6 +546,17 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Notificações — email e bot Telegram reais (user.email + bots.username do banco) | ✅ Implementado |
 | Notificações — RLS corrigida: política por usuário em vez de open (migração 060) | ✅ Corrigido |
 | Notificações — migração 061: fix CONSTRAINT UNIQUE completo (substitui índice parcial incompatível) | ✅ Corrigido |
+| Checkout — SSR + CheckoutClient (dados reais, sem mock) | ✅ Funcional |
+| Checkout — CRUD real: criar/salvar/publicar/duplicar/arquivar/apagar com user_id IDOR-safe | ✅ Implementado |
+| Checkout — gateway + pixel pickers do banco (SSR: connectedGateways + configuredPixels) | ✅ Implementado |
+| Checkout — auto-save 30s + BackConfirmModal + DeleteModal + TemplatesModal (3 templates) | ✅ Implementado |
+| Checkout — Realtime canal 'checkouts-realtime' filtrado por user_id | ✅ Implementado |
+| Checkout — preview ao vivo + editor visual completo (identidade, produto, pagamento, campos, layout) | ✅ Implementado |
+| Checkout — 4 eventos PostHog: checkout_created/published/deleted/duplicated | ✅ Implementado |
+| Checkout — migração 078: checkout_id em checkout_events + trigger sync_checkout_stats + RPC track_checkout_visit | ✅ Criada |
+| Checkout — página pública /c/[slug] (Server Component admin client + CheckoutPageClient) | ✅ Implementado |
+| Checkout — rastreamento de visita via RPC track_checkout_visit (grant to anon, migração 078) | ✅ Implementado |
+| Checkout — /api/checkout/pay: pagamento público via admin client (busca token do dono, cria PIX MP) | ✅ Implementado |
 | Sistema de planos/billing | ❌ Não iniciado |
 | Remarketing — Server Component SSR + RemarketingClient (dados reais, sem mock) | ✅ Funcional |
 | Remarketing — createCampaign: INSERT real com user_id + UUID real retornado | ✅ Implementado |
