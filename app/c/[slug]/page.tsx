@@ -27,6 +27,11 @@ export interface PublicCheckout {
   success_url:    string | null
   guarantee_days: number | null
   countdown_end:  string | null
+  extra_components: unknown[]
+  bg_image:       string | null
+  bg_fixed:       boolean
+  bg_repeat:      boolean
+  bg_cover:       boolean
 }
 
 /* ─── Server Component público ───────────────────────────── */
@@ -53,7 +58,8 @@ export default async function PublicCheckoutPage({
       id, slug, name, product_name, product_desc, product_image, price,
       installments, gateway, primary_color, bg_variant, font,
       logo, badge, fields, methods, layout, user_id,
-      success_url, guarantee_days, countdown_end
+      success_url, guarantee_days, countdown_end,
+      extra_components, bg_image, bg_fixed, bg_repeat, bg_cover
     `)
     .eq('slug', slug)
     .eq('status', 'published')

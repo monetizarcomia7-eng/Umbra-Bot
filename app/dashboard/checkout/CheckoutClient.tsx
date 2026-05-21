@@ -9,6 +9,9 @@ import {
   BadgeCheck, Phone, MapPin, Type, Copy, Trash2, MoreHorizontal,
   Layers, Clock, AlertTriangle, Loader2, Archive, Upload,
   Monitor, Smartphone, Shield, BarChart2, ChevronDown,
+  ChevronUp, Award, Star, MessageSquare, Play, Bell,
+  MessageCircle, List as ListIcon, Image as ImageIcon, LogOut,
+  GripVertical, MoveUp, MoveDown,
 } from 'lucide-react'
 import { DashboardLayout }  from '@/components/dashboard/Layout'
 import { PageHeader }       from '@/components/dashboard/PageHeader'
@@ -23,6 +26,26 @@ import type { RawCheckout, RawGateway, RawPixel } from './page'
 interface CheckoutFields  { name: boolean; email: boolean; cpf: boolean; phone: boolean; address: boolean; cep: boolean }
 interface CheckoutMethods { pix: boolean; card: boolean; boleto: boolean }
 
+export type ExtraComponentType =
+  | 'text' | 'image' | 'benefits' | 'badge' | 'header'
+  | 'list' | 'countdown' | 'testimonial' | 'video'
+  | 'facebook' | 'map' | 'exit_popup' | 'notification' | 'chat'
+
+export interface ExtraComponent {
+  id:        string
+  type:      ExtraComponentType
+  content?:  string
+  src?:      string
+  alt?:      string
+  items?:    string[]
+  author?:   string
+  rating?:   number
+  endsAt?:   string
+  phone?:    string
+  cta?:      string
+  subtitle?: string
+}
+
 interface Checkout {
   id: string; name: string; slug: string; productName: string; productDesc: string
   productImage: string; price: number; installments: number
@@ -31,9 +54,14 @@ interface Checkout {
   fields: CheckoutFields; methods: CheckoutMethods
   layout: 'two_col' | 'one_col'; status: 'published' | 'draft' | 'archived'
   visits: number; conversions: number; conversion: number; updatedAt: number
-  successUrl:    string
-  guaranteeDays: number | null
-  countdownEnd:  string | null
+  successUrl:      string
+  guaranteeDays:   number | null
+  countdownEnd:    string | null
+  extraComponents: ExtraComponent[]
+  bgImage:         string
+  bgFixed:         boolean
+  bgRepeat:        boolean
+  bgCover:         boolean
 }
 
 interface GatewayChoice { id: string; label: string; color: string }
@@ -144,6 +172,26 @@ const CHECKOUT_TEMPLATES: Array<{ id: string; title: string; desc: string; data:
   },
 ]
 
+const EXTRA_CATALOG: Array<{
+  type: ExtraComponentType; label: string; Icon: React.ElementType
+  defaultData: Partial<ExtraComponent>
+}> = [
+  { type: 'text',        label: 'Texto',       Icon: Type,          defaultData: { content: 'Digite seu texto aqui...' } },
+  { type: 'image',       label: 'Imagem',      Icon: ImageIcon,     defaultData: { src: '', alt: '' } },
+  { type: 'benefits',    label: 'Vantagens',   Icon: Check,         defaultData: { items: ['Vantagem 1', 'Vantagem 2', 'Vantagem 3'] } },
+  { type: 'badge',       label: 'Selo',        Icon: Award,         defaultData: { content: '⭐ Mais vendido' } },
+  { type: 'header',      label: 'Header',      Icon: Type,          defaultData: { content: 'Título da seção' } },
+  { type: 'list',        label: 'Lista',       Icon: ListIcon,      defaultData: { items: ['Item 1', 'Item 2', 'Item 3'] } },
+  { type: 'countdown',   label: 'Cronômetro',  Icon: Clock,         defaultData: { endsAt: '' } },
+  { type: 'testimonial', label: 'Depoimento',  Icon: MessageSquare, defaultData: { content: 'Produto incrível! Superou todas as minhas expectativas.', author: 'Maria S.', rating: 5 } },
+  { type: 'video',       label: 'Vídeo',       Icon: Play,          defaultData: { src: '' } },
+  { type: 'facebook',    label: 'Facebook',    Icon: ExternalLink,  defaultData: { src: '' } },
+  { type: 'map',         label: 'Mapa',        Icon: MapPin,        defaultData: { src: '' } },
+  { type: 'exit_popup',  label: 'Exit Popup',  Icon: LogOut,        defaultData: { content: 'Espere! Não perca esta oferta.', subtitle: 'Aproveite antes que acabe!', cta: 'Quero o desconto' } },
+  { type: 'notification',label: 'Notificação', Icon: Bell,          defaultData: { content: '🔥 Oferta por tempo limitado!' } },
+  { type: 'chat',        label: 'Chat',        Icon: MessageCircle, defaultData: { phone: '', subtitle: 'Precisa de ajuda?' } },
+]
+
 /* ============================================================
    Helpers
    ============================================================ */
@@ -173,9 +221,14 @@ function mapRaw(row: RawCheckout): Checkout {
     conversions:  row.conversions,
     conversion:   Number(row.conversion),
     updatedAt:    new Date(row.updated_at).getTime(),
-    successUrl:    row.success_url    ?? '',
-    guaranteeDays: row.guarantee_days ?? null,
-    countdownEnd:  row.countdown_end  ?? null,
+    successUrl:      row.success_url      ?? '',
+    guaranteeDays:   row.guarantee_days   ?? null,
+    countdownEnd:    row.countdown_end    ?? null,
+    extraComponents: (row.extra_components as ExtraComponent[]) ?? [],
+    bgImage:         row.bg_image         ?? '',
+    bgFixed:         row.bg_fixed         ?? false,
+    bgRepeat:        row.bg_repeat        ?? false,
+    bgCover:         row.bg_cover         ?? true,
   }
 }
 
@@ -410,6 +463,320 @@ function CheckoutMiniature({ checkout }: { checkout: Checkout }) {
 }
 
 /* ============================================================
+   Extra Components — sub-helpers
+   ============================================================ */
+
+function StarRating({ value, onChange }: { value: number; onChange: (n: number) => void }) {
+  return (
+    <div className="flex items-center gap-1">
+      {[1, 2, 3, 4, 5].map((n) => (
+        <button key={n} type="button" onClick={() => onChange(n)}>
+          <Star
+            size={16}
+            className={n <= value ? 'text-yellow-400 fill-yellow-400' : 'text-[var(--border)]'}
+          />
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function ListEditor({ items, onChange, placeholder }: {
+  items: string[]; onChange: (v: string[]) => void; placeholder?: string
+}) {
+  return (
+    <div className="space-y-1.5">
+      {items.map((item, i) => (
+        <div key={i} className="flex items-center gap-1.5">
+          <input
+            value={item}
+            onChange={(e) => { const next = [...items]; next[i] = e.target.value; onChange(next) }}
+            placeholder={placeholder ?? `Item ${i + 1}`}
+            className={inputCls + ' flex-1'}
+          />
+          <button
+            type="button"
+            onClick={() => onChange(items.filter((_, j) => j !== i))}
+            className="h-10 w-10 shrink-0 flex items-center justify-center rounded-lg border border-[var(--border)] text-[var(--text-muted)] hover:border-red-400 hover:text-red-500 transition-colors"
+          >
+            <X size={13} />
+          </button>
+        </div>
+      ))}
+      <button
+        type="button"
+        onClick={() => onChange([...items, ''])}
+        className="mt-1 h-8 px-3 text-[11.5px] font-medium text-[var(--primary)] border border-dashed border-[var(--primary)]/40 rounded-lg hover:bg-[var(--primary)]/5 transition-colors"
+      >
+        + Adicionar item
+      </button>
+    </div>
+  )
+}
+
+function ExtraComponentEditor({ comp, index, total, onChange, onMove, onRemove }: {
+  comp:     ExtraComponent
+  index:    number
+  total:    number
+  onChange: (patch: Partial<ExtraComponent>) => void
+  onMove:   (dir: 'up' | 'down') => void
+  onRemove: () => void
+}) {
+  const [open, setOpen] = useState(true)
+  const cat = EXTRA_CATALOG.find((c) => c.type === comp.type)
+  const Icon = cat?.Icon ?? Type
+
+  return (
+    <div className="border border-[var(--border)] rounded-xl overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center gap-2 px-3 py-2 bg-[var(--surface-2)]/60 cursor-pointer" onClick={() => setOpen((o) => !o)}>
+        <GripVertical size={13} className="text-[var(--text-muted)] shrink-0" />
+        <Icon size={13} className="text-[var(--primary)] shrink-0" />
+        <span className="text-[12.5px] font-medium text-[var(--text)] flex-1 min-w-0 truncate">{cat?.label ?? comp.type}</span>
+        <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+          <button
+            type="button" disabled={index === 0} onClick={() => onMove('up')}
+            className="h-7 w-7 flex items-center justify-center rounded-md text-[var(--text-muted)] hover:bg-[var(--surface)] disabled:opacity-30 transition-colors"
+          ><MoveUp size={12} /></button>
+          <button
+            type="button" disabled={index === total - 1} onClick={() => onMove('down')}
+            className="h-7 w-7 flex items-center justify-center rounded-md text-[var(--text-muted)] hover:bg-[var(--surface)] disabled:opacity-30 transition-colors"
+          ><MoveDown size={12} /></button>
+          <button
+            type="button" onClick={onRemove}
+            className="h-7 w-7 flex items-center justify-center rounded-md text-[var(--text-muted)] hover:bg-red-500/10 hover:text-red-500 transition-colors"
+          ><Trash2 size={12} /></button>
+          {open ? <ChevronUp size={13} className="text-[var(--text-muted)]" /> : <ChevronDown size={13} className="text-[var(--text-muted)]" />}
+        </div>
+      </div>
+
+      {/* Body */}
+      {open && (
+        <div className="p-3 space-y-3 bg-[var(--surface)]">
+          {/* text, header, badge, notification */}
+          {(comp.type === 'text' || comp.type === 'header' || comp.type === 'badge' || comp.type === 'notification') && (
+            <FieldC label={comp.type === 'header' ? 'Título' : comp.type === 'badge' ? 'Texto do selo' : 'Conteúdo'}>
+              <textarea
+                value={comp.content ?? ''}
+                onChange={(e) => onChange({ content: e.target.value })}
+                rows={comp.type === 'text' ? 3 : 1}
+                className={textareaCls}
+                placeholder={comp.type === 'notification' ? '🔥 Oferta por tempo limitado!' : undefined}
+              />
+            </FieldC>
+          )}
+
+          {/* image */}
+          {comp.type === 'image' && (
+            <>
+              <FieldC label="URL da imagem">
+                <input value={comp.src ?? ''} onChange={(e) => onChange({ src: e.target.value })} className={inputCls} placeholder="https://..." />
+              </FieldC>
+              <FieldC label="Texto alternativo (alt)">
+                <input value={comp.alt ?? ''} onChange={(e) => onChange({ alt: e.target.value })} className={inputCls} placeholder="Descrição da imagem" />
+              </FieldC>
+            </>
+          )}
+
+          {/* video */}
+          {comp.type === 'video' && (
+            <FieldC label="URL do vídeo (YouTube ou Vimeo)" hint="Use a URL de incorporação: youtube.com/embed/ID">
+              <input value={comp.src ?? ''} onChange={(e) => onChange({ src: e.target.value })} className={inputCls} placeholder="https://www.youtube.com/embed/..." />
+            </FieldC>
+          )}
+
+          {/* facebook / map */}
+          {(comp.type === 'facebook' || comp.type === 'map') && (
+            <FieldC label={comp.type === 'map' ? 'URL de incorporação do mapa' : 'URL do plugin do Facebook'} hint={comp.type === 'map' ? 'Google Maps → Compartilhar → Incorporar' : undefined}>
+              <input value={comp.src ?? ''} onChange={(e) => onChange({ src: e.target.value })} className={inputCls} placeholder="https://..." />
+            </FieldC>
+          )}
+
+          {/* benefits / list */}
+          {(comp.type === 'benefits' || comp.type === 'list') && (
+            <FieldC label={comp.type === 'benefits' ? 'Vantagens' : 'Itens da lista'}>
+              <ListEditor
+                items={comp.items ?? []}
+                onChange={(items) => onChange({ items })}
+                placeholder={comp.type === 'benefits' ? 'Vantagem' : 'Item'}
+              />
+            </FieldC>
+          )}
+
+          {/* countdown */}
+          {comp.type === 'countdown' && (
+            <FieldC label="Data e hora de término">
+              <input
+                type="datetime-local"
+                value={comp.endsAt ? comp.endsAt.slice(0, 16) : ''}
+                onChange={(e) => onChange({ endsAt: e.target.value ? new Date(e.target.value).toISOString() : '' })}
+                className={inputCls}
+              />
+            </FieldC>
+          )}
+
+          {/* testimonial */}
+          {comp.type === 'testimonial' && (
+            <>
+              <FieldC label="Depoimento">
+                <textarea value={comp.content ?? ''} onChange={(e) => onChange({ content: e.target.value })} rows={2} className={textareaCls} placeholder="Texto do depoimento..." />
+              </FieldC>
+              <FieldC label="Autor">
+                <input value={comp.author ?? ''} onChange={(e) => onChange({ author: e.target.value })} className={inputCls} placeholder="Nome do cliente" />
+              </FieldC>
+              <FieldC label="Avaliação">
+                <StarRating value={comp.rating ?? 5} onChange={(rating) => onChange({ rating })} />
+              </FieldC>
+            </>
+          )}
+
+          {/* exit_popup */}
+          {comp.type === 'exit_popup' && (
+            <>
+              <FieldC label="Título do popup">
+                <input value={comp.content ?? ''} onChange={(e) => onChange({ content: e.target.value })} className={inputCls} placeholder="Espere! Não perca esta oferta." />
+              </FieldC>
+              <FieldC label="Corpo do popup">
+                <textarea value={comp.subtitle ?? ''} onChange={(e) => onChange({ subtitle: e.target.value })} rows={2} className={textareaCls} placeholder="Aproveite esta chance única!" />
+              </FieldC>
+              <FieldC label="Texto do botão">
+                <input value={comp.cta ?? ''} onChange={(e) => onChange({ cta: e.target.value })} className={inputCls} placeholder="Quero o desconto" />
+              </FieldC>
+            </>
+          )}
+
+          {/* chat */}
+          {comp.type === 'chat' && (
+            <>
+              <FieldC label="Número do WhatsApp (com DDI)" hint="Ex: 5511999990000">
+                <input value={comp.phone ?? ''} onChange={(e) => onChange({ phone: e.target.value.replace(/\D/g, '') })} className={inputCls} placeholder="5511999990000" />
+              </FieldC>
+              <FieldC label="Mensagem inicial">
+                <input value={comp.subtitle ?? ''} onChange={(e) => onChange({ subtitle: e.target.value })} className={inputCls} placeholder="Olá! Tenho uma dúvida sobre o produto." />
+              </FieldC>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ExtraComponentsSection({ components, bgImage, bgFixed, bgRepeat, bgCover, onChange, onBg }: {
+  components: ExtraComponent[]
+  bgImage:    string
+  bgFixed:    boolean
+  bgRepeat:   boolean
+  bgCover:    boolean
+  onChange:   (comps: ExtraComponent[]) => void
+  onBg:       (patch: { bgImage?: string; bgFixed?: boolean; bgRepeat?: boolean; bgCover?: boolean }) => void
+}) {
+  function addComponent(type: ExtraComponentType) {
+    const cat = EXTRA_CATALOG.find((c) => c.type === type)!
+    const comp: ExtraComponent = { id: crypto.randomUUID(), type, ...cat.defaultData }
+    onChange([...components, comp])
+  }
+
+  function updateComponent(id: string, patch: Partial<ExtraComponent>) {
+    onChange(components.map((c) => c.id === id ? { ...c, ...patch } : c))
+  }
+
+  function moveComponent(index: number, dir: 'up' | 'down') {
+    const next = [...components]
+    const target = dir === 'up' ? index - 1 : index + 1
+    if (target < 0 || target >= next.length) return
+    ;[next[index], next[target]] = [next[target], next[index]]
+    onChange(next)
+  }
+
+  function removeComponent(id: string) {
+    onChange(components.filter((c) => c.id !== id))
+  }
+
+  return (
+    <div className="space-y-5">
+      {/* Catalog grid */}
+      <div>
+        <div className="text-[12px] font-medium text-[var(--text-muted)] mb-2">Clique para adicionar um componente</div>
+        <div className="grid grid-cols-4 sm:grid-cols-5 gap-1.5">
+          {EXTRA_CATALOG.map(({ type, label, Icon }) => (
+            <button
+              key={type}
+              type="button"
+              onClick={() => addComponent(type)}
+              className="flex flex-col items-center gap-1.5 p-2 rounded-xl border border-[var(--border)] hover:border-[var(--primary)] hover:bg-[var(--primary)]/5 transition-colors text-center"
+            >
+              <div className="w-8 h-8 rounded-lg bg-[var(--primary)]/10 flex items-center justify-center">
+                <Icon size={15} className="text-[var(--primary)]" />
+              </div>
+              <span className="text-[10.5px] text-[var(--text-muted)] leading-tight">{label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Components list */}
+      {components.length > 0 && (
+        <div className="space-y-2">
+          <div className="text-[12px] font-medium text-[var(--text-muted)]">Componentes adicionados ({components.length})</div>
+          {components.map((comp, i) => (
+            <ExtraComponentEditor
+              key={comp.id}
+              comp={comp}
+              index={i}
+              total={components.length}
+              onChange={(patch) => updateComponent(comp.id, patch)}
+              onMove={(dir) => moveComponent(i, dir)}
+              onRemove={() => removeComponent(comp.id)}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Background settings */}
+      <div className="pt-3 border-t border-[var(--border)]">
+        <div className="text-[13px] font-semibold text-[var(--text)] mb-3">Imagem de fundo</div>
+        <div className="space-y-3">
+          <FieldC label="URL da imagem de fundo" hint="Deixe vazio para usar a cor padrão do tema.">
+            <input
+              value={bgImage}
+              onChange={(e) => onBg({ bgImage: e.target.value })}
+              className={inputCls}
+              placeholder="https://exemplo.com/fundo.jpg"
+            />
+          </FieldC>
+          {bgImage && (
+            <div className="grid grid-cols-1 gap-2">
+              <div className="flex items-center justify-between py-2 px-3 rounded-lg border border-[var(--border)]">
+                <div>
+                  <div className="text-[12.5px] font-medium text-[var(--text)]">Fixar ao descer a tela</div>
+                  <div className="text-[11px] text-[var(--text-muted)]">Efeito parallax — fundo fica fixo enquanto o conteúdo rola</div>
+                </div>
+                <Toggle checked={bgFixed} onChange={(v) => onBg({ bgFixed: v })} />
+              </div>
+              <div className="flex items-center justify-between py-2 px-3 rounded-lg border border-[var(--border)]">
+                <div>
+                  <div className="text-[12.5px] font-medium text-[var(--text)]">Repetir imagem de fundo</div>
+                  <div className="text-[11px] text-[var(--text-muted)]">Repete o padrão caso seja menor que a tela</div>
+                </div>
+                <Toggle checked={bgRepeat} onChange={(v) => onBg({ bgRepeat: v })} />
+              </div>
+              <div className="flex items-center justify-between py-2 px-3 rounded-lg border border-[var(--border)]">
+                <div>
+                  <div className="text-[12.5px] font-medium text-[var(--text)]">Expandir / cobrir fundo</div>
+                  <div className="text-[11px] text-[var(--text-muted)]">Estica a imagem para cobrir toda a tela (background-size: cover)</div>
+                </div>
+                <Toggle checked={bgCover} onChange={(v) => onBg({ bgCover: v })} />
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/* ============================================================
    Checkout Preview (live)
    ============================================================ */
 
@@ -433,10 +800,18 @@ function CheckoutPreview({ checkout, gatewayChoices }: { checkout: Checkout; gat
     email: 'voce@email.com', cpf: '000.000.000-00', phone: '(11) 9 0000-0000', name: 'Seu nome',
   }
 
+  const bgStyle = c.bgImage ? {
+    backgroundImage:      `url(${c.bgImage})`,
+    backgroundAttachment: c.bgFixed  ? 'fixed'   : 'scroll',
+    backgroundRepeat:     c.bgRepeat ? 'repeat'  : 'no-repeat',
+    backgroundSize:       c.bgCover  ? 'cover'   : 'auto',
+    backgroundPosition:   'center center',
+  } : {}
+
   return (
     <div
       className="rounded-xl border overflow-hidden text-[12px]"
-      style={{ background: palette.bg, color: palette.text, borderColor: palette.border, fontFamily: c.font + ', Inter, sans-serif' }}
+      style={{ background: c.bgImage ? undefined : palette.bg, ...bgStyle, color: palette.text, borderColor: palette.border, fontFamily: c.font + ', Inter, sans-serif' }}
     >
       {/* Browser bar */}
       <div className="flex items-center gap-1.5 px-3 py-2 border-b" style={{ borderColor: palette.border, background: palette.surface }}>
@@ -554,6 +929,80 @@ function CheckoutPreview({ checkout, gatewayChoices }: { checkout: Checkout; gat
         <span>Processado por {gatewayChoices.find((g) => g.id === c.gateway)?.label ?? c.gateway}</span>
         <span>powered by Umbra Bot</span>
       </div>
+
+      {/* Extra Components (preview) */}
+      {c.extraComponents.length > 0 && (
+        <div className="px-5 py-4 space-y-3" style={{ background: c.bgImage ? 'rgba(0,0,0,0.45)' : palette.bg }}>
+          {c.extraComponents.map((comp) => {
+            if (comp.type === 'header') return (
+              <div key={comp.id} className="text-[15px] font-bold tracking-tight">{comp.content}</div>
+            )
+            if (comp.type === 'text') return (
+              <div key={comp.id} className="text-[11.5px] leading-relaxed whitespace-pre-wrap" style={{ color: palette.muted }}>{comp.content}</div>
+            )
+            if (comp.type === 'badge') return (
+              <div key={comp.id} className="inline-block px-3 py-1 rounded-full text-[11px] font-semibold" style={{ background: c.primaryColor + '22', color: c.primaryColor }}>{comp.content}</div>
+            )
+            if (comp.type === 'notification') return (
+              <div key={comp.id} className="flex items-center gap-2 px-3 py-2 rounded-lg text-[11px] font-medium" style={{ background: c.primaryColor + '18', border: `1px solid ${c.primaryColor}30`, color: c.primaryColor }}>
+                <Bell size={11} />{comp.content}
+              </div>
+            )
+            if (comp.type === 'benefits' && comp.items) return (
+              <div key={comp.id} className="space-y-1">
+                {comp.items.map((item, i) => (
+                  <div key={i} className="flex items-center gap-2 text-[11px]" style={{ color: palette.text }}>
+                    <div className="w-3.5 h-3.5 rounded-full flex items-center justify-center shrink-0" style={{ background: c.primaryColor + '22' }}>
+                      <Check size={8} style={{ color: c.primaryColor }} />
+                    </div>
+                    {item}
+                  </div>
+                ))}
+              </div>
+            )
+            if (comp.type === 'list' && comp.items) return (
+              <ul key={comp.id} className="space-y-1 pl-4" style={{ color: palette.text }}>
+                {comp.items.map((item, i) => <li key={i} className="text-[11px] list-disc">{item}</li>)}
+              </ul>
+            )
+            if (comp.type === 'image' && comp.src) return (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img key={comp.id} src={comp.src} alt={comp.alt ?? ''} className="w-full rounded-lg object-cover max-h-40" />
+            )
+            if (comp.type === 'testimonial') return (
+              <div key={comp.id} className="p-3 rounded-lg border text-[11px]" style={{ background: palette.surface, borderColor: palette.border }}>
+                <div className="flex gap-0.5 mb-1.5">
+                  {[1,2,3,4,5].map((n) => <Star key={n} size={9} className={n <= (comp.rating ?? 5) ? 'text-yellow-400 fill-yellow-400' : 'text-[var(--border)]'} />)}
+                </div>
+                <div className="leading-relaxed mb-1" style={{ color: palette.text }}>{comp.content}</div>
+                <div className="text-[10px] font-medium" style={{ color: palette.muted }}>— {comp.author}</div>
+              </div>
+            )
+            if (comp.type === 'countdown' && comp.endsAt) return (
+              <div key={comp.id} className="flex items-center gap-2 px-3 py-2 rounded-lg text-[11px] font-semibold" style={{ background: '#fef2f2', border: '1px solid #fecaca', color: '#dc2626' }}>
+                <Clock size={11} /> Encerra em {new Date(comp.endsAt).toLocaleString('pt-BR')}
+              </div>
+            )
+            if (comp.type === 'video' && comp.src) return (
+              <div key={comp.id} className="aspect-video rounded-lg overflow-hidden bg-black flex items-center justify-center" style={{ border: `1px solid ${palette.border}` }}>
+                <Play size={20} className="text-white opacity-60" />
+                <span className="text-[10px] text-white/60 ml-2">Vídeo incorporado</span>
+              </div>
+            )
+            if (comp.type === 'chat' && comp.phone) return (
+              <div key={comp.id} className="flex items-center gap-2 px-3 py-2 rounded-lg text-[11px]" style={{ background: '#dcfce7', border: '1px solid #bbf7d0', color: '#15803d' }}>
+                <MessageCircle size={13} /> {comp.subtitle || 'Fale conosco no WhatsApp'}
+              </div>
+            )
+            if (comp.type === 'map' || comp.type === 'facebook') return (
+              <div key={comp.id} className="h-24 rounded-lg flex items-center justify-center text-[10.5px]" style={{ background: palette.surface, border: `1px dashed ${palette.border}`, color: palette.muted }}>
+                {comp.type === 'map' ? '🗺️ Mapa incorporado' : '📘 Facebook Plugin'}
+              </div>
+            )
+            return null
+          })}
+        </div>
+      )}
     </div>
   )
 }
@@ -1367,6 +1816,19 @@ function CheckoutEditor({ checkout, gatewayChoices, pixelChoices, appUrl, userId
                   </FieldC>
                 </div>
               </SectionCard>
+
+              {/* Componentes Extras */}
+              <SectionCard title="Componentes extras" subtitle="Adicione seções personalizadas abaixo do checkout: depoimentos, vantagens, vídeos, mapa, chat e mais.">
+                <ExtraComponentsSection
+                  components={draft.extraComponents}
+                  bgImage={draft.bgImage}
+                  bgFixed={draft.bgFixed}
+                  bgRepeat={draft.bgRepeat}
+                  bgCover={draft.bgCover}
+                  onChange={(comps) => set({ extraComponents: comps })}
+                  onBg={(patch) => set(patch as Partial<Checkout>)}
+                />
+              </SectionCard>
             </div>
 
             {/* Preview column (sticky) */}
@@ -1611,9 +2073,14 @@ export default function CheckoutClient({
         visits:         0,
         conversions:    0,
         conversion:     0,
-        success_url:    null,
-        guarantee_days: null,
-        countdown_end:  null,
+        success_url:      null,
+        guarantee_days:   null,
+        countdown_end:    null,
+        extra_components: [],
+        bg_image:         null,
+        bg_fixed:         false,
+        bg_repeat:        false,
+        bg_cover:         true,
       }
 
       const { data, error } = await sb
@@ -1658,10 +2125,15 @@ export default function CheckoutClient({
         methods:       updated.methods,
         layout:        updated.layout,
         status:        updated.status,
-        success_url:    updated.successUrl    || null,
-        guarantee_days: updated.guaranteeDays ?? null,
-        countdown_end:  updated.countdownEnd  || null,
-        updated_at:    new Date().toISOString(),
+        success_url:      updated.successUrl      || null,
+        guarantee_days:   updated.guaranteeDays   ?? null,
+        countdown_end:    updated.countdownEnd     || null,
+        extra_components: updated.extraComponents,
+        bg_image:         updated.bgImage          || null,
+        bg_fixed:         updated.bgFixed,
+        bg_repeat:        updated.bgRepeat,
+        bg_cover:         updated.bgCover,
+        updated_at:       new Date().toISOString(),
       })
       .eq('id', updated.id)
       .eq('user_id', userId)   // IDOR duplo: código + RLS
@@ -1761,9 +2233,14 @@ export default function CheckoutClient({
         visits:         0,
         conversions:    0,
         conversion:     0,
-        success_url:    original.successUrl    || null,
-        guarantee_days: original.guaranteeDays ?? null,
-        countdown_end:  original.countdownEnd  || null,
+        success_url:      original.successUrl      || null,
+        guarantee_days:   original.guaranteeDays   ?? null,
+        countdown_end:    original.countdownEnd     || null,
+        extra_components: original.extraComponents,
+        bg_image:         original.bgImage          || null,
+        bg_fixed:         original.bgFixed,
+        bg_repeat:        original.bgRepeat,
+        bg_cover:         original.bgCover,
       })
       .select('*')
       .single()

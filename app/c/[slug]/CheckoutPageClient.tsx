@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react'
 import {
   Lock, Zap, CreditCard, FileText, User, Mail, BadgeCheck,
   Phone, MapPin, Loader2, Check, AlertTriangle, X, QrCode, RefreshCw,
-  Shield, Clock,
+  Shield, Clock, Bell, Star, MessageCircle, Play,
 } from 'lucide-react'
 import type { PublicCheckout }   from './page'
 import PixelScripts              from './PixelScripts'
@@ -30,6 +30,21 @@ interface FieldDef {
 }
 
 type PayStep = 'form' | 'payment' | 'success' | 'error'
+
+interface ExtraComponent {
+  id:        string
+  type:      string
+  content?:  string
+  src?:      string
+  alt?:      string
+  items?:    string[]
+  author?:   string
+  rating?:   number
+  endsAt?:   string
+  phone?:    string
+  cta?:      string
+  subtitle?: string
+}
 
 /* ─── Constants ──────────────────────────────────────────── */
 
@@ -96,7 +111,9 @@ export default function CheckoutPageClient({
   const [copied,        setCopied]        = useState(false)
   const [pixSecondsLeft, setPixSecondsLeft] = useState<number | null>(null)
   const [urgencyLeft,    setUrgencyLeft]    = useState<number | null>(null)
-  const visitTracked = useRef(false)
+  const visitTracked   = useRef(false)
+  const [exitPopup, setExitPopup] = useState(false)
+  const extraComponents = (c.extra_components ?? []) as ExtraComponent[]
 
   // Palette
   const palette = isDark ? {
@@ -193,6 +210,18 @@ export default function CheckoutPageClient({
       controller.abort()
     }
   }, [step, transactionId, c.id])
+
+  // Exit popup — dispara quando o mouse sai pelo topo da janela
+  useEffect(() => {
+    const hasExitPopup = extraComponents.some((c) => c.type === 'exit_popup')
+    if (!hasExitPopup || step !== 'form') return
+    let fired = false
+    function handleMouseLeave(e: MouseEvent) {
+      if (e.clientY <= 5 && !fired) { fired = true; setExitPopup(true) }
+    }
+    document.addEventListener('mouseleave', handleMouseLeave)
+    return () => document.removeEventListener('mouseleave', handleMouseLeave)
+  }, [extraComponents, step]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Redireciona para success_url 3s após confirmação
   useEffect(() => {
@@ -299,10 +328,18 @@ export default function CheckoutPageClient({
 
   const installmentValue = c.price / Math.min(c.installments, 12)
 
+  const bgStyle = c.bg_image ? {
+    backgroundImage:      `url(${c.bg_image})`,
+    backgroundAttachment: c.bg_fixed  ? 'fixed'   : 'scroll',
+    backgroundRepeat:     c.bg_repeat ? 'repeat'  : 'no-repeat',
+    backgroundSize:       c.bg_cover  ? 'cover'   : 'auto',
+    backgroundPosition:   'center center',
+  } : {}
+
   return (
     <div
       className="min-h-screen"
-      style={{ background: palette.bg, color: palette.text, fontFamily: `${c.font}, Inter, sans-serif` }}
+      style={{ background: c.bg_image ? undefined : palette.bg, ...bgStyle, color: palette.text, fontFamily: `${c.font}, Inter, sans-serif` }}
     >
       {/* Header */}
       <header
@@ -619,13 +656,125 @@ export default function CheckoutPageClient({
         </div>
       </main>
 
+      {/* Extra Components */}
+      {extraComponents.filter((ec) => ec.type !== 'exit_popup' && ec.type !== 'chat').length > 0 && (
+        <section className="max-w-5xl mx-auto px-4 pb-8 space-y-4">
+          {extraComponents.map((ec) => {
+            if (ec.type === 'header') return (
+              <h2 key={ec.id} className="text-[20px] font-bold tracking-tight">{ec.content}</h2>
+            )
+            if (ec.type === 'text') return (
+              <p key={ec.id} className="text-[14px] leading-relaxed whitespace-pre-wrap" style={{ color: palette.muted }}>{ec.content}</p>
+            )
+            if (ec.type === 'badge') return (
+              <div key={ec.id}>
+                <span className="inline-block px-4 py-1.5 rounded-full text-[13px] font-semibold" style={{ background: c.primary_color + '22', color: c.primary_color }}>{ec.content}</span>
+              </div>
+            )
+            if (ec.type === 'notification') return (
+              <div key={ec.id} className="flex items-center gap-2.5 px-4 py-3 rounded-xl text-[13.5px] font-semibold" style={{ background: c.primary_color + '15', border: `1px solid ${c.primary_color}30`, color: c.primary_color }}>
+                <Bell size={16} />{ec.content}
+              </div>
+            )
+            if (ec.type === 'benefits' && ec.items) return (
+              <div key={ec.id} className="space-y-2">
+                {ec.items.map((item, i) => (
+                  <div key={i} className="flex items-center gap-3 text-[14px]">
+                    <div className="w-5 h-5 rounded-full flex items-center justify-center shrink-0" style={{ background: c.primary_color + '20' }}>
+                      <Check size={11} style={{ color: c.primary_color }} />
+                    </div>
+                    {item}
+                  </div>
+                ))}
+              </div>
+            )
+            if (ec.type === 'list' && ec.items) return (
+              <ul key={ec.id} className="space-y-1.5 pl-5" style={{ color: palette.text }}>
+                {ec.items.map((item, i) => <li key={i} className="text-[14px] list-disc">{item}</li>)}
+              </ul>
+            )
+            if (ec.type === 'image' && ec.src) return (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img key={ec.id} src={ec.src} alt={ec.alt ?? ''} className="w-full rounded-2xl object-cover max-h-80" />
+            )
+            if (ec.type === 'video' && ec.src) return (
+              <div key={ec.id} className="aspect-video rounded-2xl overflow-hidden" style={{ border: `1px solid ${palette.border}` }}>
+                <iframe src={ec.src} className="w-full h-full" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen />
+              </div>
+            )
+            if (ec.type === 'facebook' && ec.src) return (
+              <div key={ec.id} className="aspect-video rounded-2xl overflow-hidden" style={{ border: `1px solid ${palette.border}` }}>
+                <iframe src={ec.src} className="w-full h-full" scrolling="no" />
+              </div>
+            )
+            if (ec.type === 'map' && ec.src) return (
+              <div key={ec.id} className="h-64 rounded-2xl overflow-hidden" style={{ border: `1px solid ${palette.border}` }}>
+                <iframe src={ec.src} className="w-full h-full" loading="lazy" />
+              </div>
+            )
+            if (ec.type === 'countdown' && ec.endsAt) {
+              const endsMs = new Date(ec.endsAt).getTime()
+              const secLeft = Math.max(0, Math.floor((endsMs - Date.now()) / 1000))
+              return secLeft > 0 ? (
+                <div key={ec.id} className="flex items-center gap-3 px-4 py-3 rounded-xl text-[13.5px] font-semibold" style={{ background: '#fef2f2', border: '1px solid #fecaca', color: '#dc2626' }}>
+                  <Clock size={16} className="shrink-0" />
+                  Oferta encerra em {fmtCountdown(secLeft)}
+                </div>
+              ) : null
+            }
+            if (ec.type === 'testimonial') return (
+              <div key={ec.id} className="rounded-2xl border p-5 text-[14px]" style={{ background: palette.surface, borderColor: palette.border }}>
+                <div className="flex gap-1 mb-3">
+                  {[1,2,3,4,5].map((n) => <Star key={n} size={14} className={n <= (ec.rating ?? 5) ? 'text-yellow-400 fill-yellow-400' : 'text-[var(--border)]'} />)}
+                </div>
+                <p className="leading-relaxed mb-2">{ec.content}</p>
+                <p className="text-[12px] font-medium" style={{ color: palette.muted }}>— {ec.author}</p>
+              </div>
+            )
+            return null
+          })}
+        </section>
+      )}
+
       {/* Footer */}
       <footer
-        className="border-t mt-10 py-4 text-center text-[11px]"
-        style={{ borderColor: palette.border, color: palette.subtle }}
+        className="border-t mt-4 py-4 text-center text-[11px]"
+        style={{ borderColor: palette.border, color: palette.subtle, background: c.bg_image ? 'rgba(0,0,0,0.5)' : palette.surface }}
       >
         Powered by <strong>Umbra Bot</strong> · Pagamentos processados com segurança
       </footer>
+
+      {/* WhatsApp Chat button (fixed) */}
+      {extraComponents.filter((ec) => ec.type === 'chat' && ec.phone).map((ec) => (
+        <a
+          key={ec.id}
+          href={`https://wa.me/${ec.phone}${ec.subtitle ? `?text=${encodeURIComponent(ec.subtitle)}` : ''}`}
+          target="_blank" rel="noopener noreferrer"
+          className="fixed bottom-5 right-5 z-50 flex items-center gap-2 px-4 py-3 rounded-full shadow-lg text-[13px] font-semibold text-white transition-transform hover:scale-105"
+          style={{ background: '#25d366' }}
+        >
+          <MessageCircle size={18} />
+          {ec.subtitle || 'Ajuda'}
+        </a>
+      ))}
+
+      {/* Exit Popup */}
+      {exitPopup && extraComponents.filter((ec) => ec.type === 'exit_popup').map((ec) => (
+        <div key={ec.id} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
+          <div className="max-w-sm w-full rounded-2xl p-7 shadow-2xl text-center" style={{ background: palette.surface, border: `1px solid ${palette.border}` }}>
+            <button onClick={() => setExitPopup(false)} className="absolute top-4 right-4 text-[var(--text-muted)]"><X size={18} /></button>
+            <h3 className="text-[20px] font-bold mb-2">{ec.content}</h3>
+            <p className="text-[13.5px] mb-5 leading-relaxed" style={{ color: palette.muted }}>{ec.subtitle}</p>
+            <button
+              onClick={() => setExitPopup(false)}
+              className="w-full h-12 rounded-xl text-[14px] font-semibold text-white"
+              style={{ background: c.primary_color }}
+            >
+              {ec.cta || 'Aproveitar agora'}
+            </button>
+          </div>
+        </div>
+      ))}
 
       {/* Pixels browser-side: PageView, InitiateCheckout, Purchase */}
       <PixelScripts

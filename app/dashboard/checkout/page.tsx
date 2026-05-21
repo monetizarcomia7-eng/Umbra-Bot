@@ -32,6 +32,11 @@ export interface RawCheckout {
   success_url:    string | null
   guarantee_days: number | null
   countdown_end:  string | null
+  extra_components: unknown[]
+  bg_image:       string | null
+  bg_fixed:       boolean
+  bg_repeat:      boolean
+  bg_cover:       boolean
 }
 
 export interface RawGateway {
@@ -61,7 +66,7 @@ export default async function CheckoutPage() {
   ] = await Promise.all([
     supabase
       .from('checkouts')
-      .select('id, name, slug, product_name, product_desc, product_image, price, installments, gateway, pixel, primary_color, bg_variant, font, logo, badge, fields, methods, layout, status, visits, conversions, conversion, created_at, updated_at, success_url, guarantee_days, countdown_end')
+      .select('id, name, slug, product_name, product_desc, product_image, price, installments, gateway, pixel, primary_color, bg_variant, font, logo, badge, fields, methods, layout, status, visits, conversions, conversion, created_at, updated_at, success_url, guarantee_days, countdown_end, extra_components, bg_image, bg_fixed, bg_repeat, bg_cover')
       .eq('user_id', user.id)
       .order('updated_at', { ascending: false })
       .limit(50),
