@@ -2,7 +2,7 @@
 create table if not exists public.checkout_coupons (
   id           uuid        primary key default gen_random_uuid(),
   user_id      uuid        not null references auth.users(id) on delete cascade,
-  checkout_id  uuid        references public.checkouts(id) on delete cascade,
+  checkout_id  text        references public.checkouts(id) on delete cascade,
   code         text        not null,
   type         text        not null default 'percent'
                              check (type in ('percent', 'fixed')),
