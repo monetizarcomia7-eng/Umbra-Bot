@@ -12,12 +12,14 @@ import {
   ChevronUp, Award, Star, MessageSquare, Play, Bell,
   MessageCircle, List as ListIcon, Image as ImageIcon, LogOut,
   GripVertical, MoveUp, MoveDown,
+  Tag, Percent, DollarSign, ShoppingCart, Users, Globe,
+  Gift, TrendingUp, ChevronRight,
 } from 'lucide-react'
 import { DashboardLayout }  from '@/components/dashboard/Layout'
 import { PageHeader }       from '@/components/dashboard/PageHeader'
 import { createClient }     from '@/lib/supabase/client'
 import { useAnalytics }     from '@/hooks/use-analytics'
-import type { RawCheckout, RawGateway, RawPixel } from './page'
+import type { RawCheckout, RawGateway, RawPixel, RawCoupon } from './page'
 
 /* ============================================================
    Types
@@ -25,6 +27,34 @@ import type { RawCheckout, RawGateway, RawPixel } from './page'
 
 interface CheckoutFields  { name: boolean; email: boolean; cpf: boolean; phone: boolean; address: boolean; cep: boolean }
 interface CheckoutMethods { pix: boolean; card: boolean; boleto: boolean }
+
+interface OrderBump {
+  title:  string
+  desc:   string
+  price:  number
+  image?: string
+}
+
+interface Upsell {
+  title: string
+  desc:  string
+  price: number
+  cta:   string
+  link?: string
+}
+
+interface Coupon {
+  id:         string
+  checkoutId: string | null
+  code:       string
+  type:       'percent' | 'fixed'
+  value:      number
+  maxUses:    number | null
+  uses:       number
+  validUntil: string | null
+  active:     boolean
+  createdAt:  string
+}
 
 export type ExtraComponentType =
   | 'text' | 'image' | 'benefits' | 'badge' | 'header'
@@ -62,6 +92,12 @@ interface Checkout {
   bgFixed:         boolean
   bgRepeat:        boolean
   bgCover:         boolean
+  /* ── melhorias mig 085 ── */
+  orderBump:        OrderBump | null
+  logoImage:        string
+  twoStep:          boolean
+  upsell:           Upsell | null
+  visitorTracking:  boolean
 }
 
 interface GatewayChoice { id: string; label: string; color: string }
@@ -80,6 +116,7 @@ interface CheckoutClientProps {
   userId:            string
   connectedGateways: RawGateway[]
   configuredPixels:  RawPixel[]
+  initialCoupons:    RawCoupon[]
   appUrl:            string
 }
 
@@ -229,6 +266,26 @@ function mapRaw(row: RawCheckout): Checkout {
     bgFixed:         row.bg_fixed         ?? false,
     bgRepeat:        row.bg_repeat        ?? false,
     bgCover:         row.bg_cover         ?? true,
+    orderBump:       (row.order_bump as OrderBump | null) ?? null,
+    logoImage:       row.logo_image       ?? '',
+    twoStep:         row.two_step         ?? false,
+    upsell:          (row.upsell as Upsell | null) ?? null,
+    visitorTracking: row.visitor_tracking ?? false,
+  }
+}
+
+function mapRawCoupon(r: RawCoupon): Coupon {
+  return {
+    id:         r.id,
+    checkoutId: r.checkout_id,
+    code:       r.code,
+    type:       r.type,
+    value:      Number(r.value),
+    maxUses:    r.max_uses ?? null,
+    uses:       r.uses,
+    validUntil: r.valid_until ?? null,
+    active:     r.active,
+    createdAt:  r.created_at,
   }
 }
 
@@ -777,6 +834,238 @@ function ExtraComponentsSection({ components, bgImage, bgFixed, bgRepeat, bgCove
 }
 
 /* ============================================================
+   Order Bump Section
+   ============================================================ */
+
+function OrderBumpSection({ value, onChange }: {
+  value:    OrderBump | null
+  onChange: (v: OrderBump | null) => void
+}) {
+  const enabled = value !== null
+  const bump    = value ?? { title: 'Adicione também: Produto Bônus', desc: 'Aproveite esta oferta exclusiva antes de finalizar.', price: 27, image: '' }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between py-2 px-3 rounded-lg border border-[var(--border)]">
+        <div>
+          <div className="text-[12.5px] font-medium text-[var(--text)]">Ativar Order Bump</div>
+          <div className="text-[11px] text-[var(--text-muted)]">Exibe um produto adicional antes do botão de pagamento</div>
+        </div>
+        <Toggle checked={enabled} onChange={(v) => onChange(v ? bump : null)} />
+      </div>
+      {enabled && (
+        <div className="space-y-3 p-3 rounded-xl border border-[var(--border)] bg-[var(--surface-2)]/30">
+          <FieldC label="Título do order bump">
+            <input value={bump.title} onChange={(e) => onChange({ ...bump, title: e.target.value })} className={inputCls} placeholder="Adicione também: Guia Completo" />
+          </FieldC>
+          <FieldC label="Descrição curta">
+            <textarea value={bump.desc} onChange={(e) => onChange({ ...bump, desc: e.target.value })} rows={2} className={textareaCls} placeholder="Bônus exclusivo para quem adquire agora." />
+          </FieldC>
+          <FieldC label="Preço adicional (R$)" hint="Valor cobrado junto ao produto principal.">
+            <input type="number" min={0} step={0.01} value={bump.price} onChange={(e) => onChange({ ...bump, price: Number(e.target.value) })} className={inputCls} />
+          </FieldC>
+          <FieldC label="URL da imagem (opcional)">
+            <input value={bump.image ?? ''} onChange={(e) => onChange({ ...bump, image: e.target.value })} className={inputCls} placeholder="https://..." />
+          </FieldC>
+          <div className="rounded-lg bg-orange-500/8 border border-orange-500/20 px-3 py-2 text-[11px] text-orange-700 dark:text-orange-400 flex items-start gap-2">
+            <ShoppingCart size={13} className="mt-0.5 shrink-0" />
+            <span>Preview no checkout público: caixa com checkbox antes do botão "Pagar".</span>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/* ============================================================
+   Upsell Section
+   ============================================================ */
+
+function UpsellSection({ value, onChange }: {
+  value:    Upsell | null
+  onChange: (v: Upsell | null) => void
+}) {
+  const enabled = value !== null
+  const up      = value ?? { title: 'Oferta especial para você!', desc: 'Aproveite esta oportunidade única após sua compra.', price: 47, cta: 'Sim, quero adicionar!', link: '' }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between py-2 px-3 rounded-lg border border-[var(--border)]">
+        <div>
+          <div className="text-[12.5px] font-medium text-[var(--text)]">Ativar Upsell pós-compra</div>
+          <div className="text-[11px] text-[var(--text-muted)]">Oferta exibida após o pagamento ser confirmado</div>
+        </div>
+        <Toggle checked={enabled} onChange={(v) => onChange(v ? up : null)} />
+      </div>
+      {enabled && (
+        <div className="space-y-3 p-3 rounded-xl border border-[var(--border)] bg-[var(--surface-2)]/30">
+          <FieldC label="Título da oferta">
+            <input value={up.title} onChange={(e) => onChange({ ...up, title: e.target.value })} className={inputCls} placeholder="Oferta especial para você!" />
+          </FieldC>
+          <FieldC label="Descrição">
+            <textarea value={up.desc} onChange={(e) => onChange({ ...up, desc: e.target.value })} rows={2} className={textareaCls} placeholder="Aproveite esta oportunidade única." />
+          </FieldC>
+          <FieldC label="Preço (R$)">
+            <input type="number" min={0} step={0.01} value={up.price} onChange={(e) => onChange({ ...up, price: Number(e.target.value) })} className={inputCls} />
+          </FieldC>
+          <FieldC label="Texto do botão (CTA)">
+            <input value={up.cta} onChange={(e) => onChange({ ...up, cta: e.target.value })} className={inputCls} placeholder="Sim, quero adicionar!" />
+          </FieldC>
+          <FieldC label="Link do upsell" hint="URL para onde o comprador será redirecionado ao aceitar.">
+            <input value={up.link ?? ''} onChange={(e) => onChange({ ...up, link: e.target.value })} className={inputCls} placeholder="https://..." />
+          </FieldC>
+          <div className="rounded-lg bg-green-500/8 border border-green-500/20 px-3 py-2 text-[11px] text-green-700 dark:text-green-400 flex items-start gap-2">
+            <TrendingUp size={13} className="mt-0.5 shrink-0" />
+            <span>Exibido como modal de parabéns após confirmação do pagamento PIX.</span>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/* ============================================================
+   Coupon Section
+   ============================================================ */
+
+function CouponSection({ checkoutId, coupons, userId, onUpdate }: {
+  checkoutId: string
+  coupons:    Coupon[]
+  userId:     string
+  onUpdate:   (coupons: Coupon[]) => void
+}) {
+  const sb = createClient()
+  const [form,    setForm]    = useState({ code: '', type: 'percent' as 'percent' | 'fixed', value: 10, maxUses: '', validUntil: '', active: true })
+  const [saving,  setSaving]  = useState(false)
+  const [error,   setError]   = useState<string | null>(null)
+
+  const relevant = coupons.filter((c) => c.checkoutId === checkoutId || c.checkoutId === null)
+
+  async function handleCreate() {
+    if (!form.code.trim()) { setError('Código obrigatório.'); return }
+    if (form.value <= 0)   { setError('Valor inválido.'); return }
+    setSaving(true); setError(null)
+    const { data, error: e } = await sb
+      .from('checkout_coupons')
+      .insert({
+        user_id:     userId,
+        checkout_id: checkoutId,
+        code:        form.code.trim().toUpperCase(),
+        type:        form.type,
+        value:       form.value,
+        max_uses:    form.maxUses ? Number(form.maxUses) : null,
+        valid_until: form.validUntil ? new Date(form.validUntil).toISOString() : null,
+        active:      form.active,
+      })
+      .select('id, checkout_id, code, type, value, max_uses, uses, valid_until, active, created_at')
+      .single()
+    setSaving(false)
+    if (e) { setError(e.message); return }
+    onUpdate([...coupons, mapRawCoupon(data as RawCoupon)])
+    setForm({ code: '', type: 'percent', value: 10, maxUses: '', validUntil: '', active: true })
+  }
+
+  async function toggleActive(coupon: Coupon) {
+    const { error: e } = await sb
+      .from('checkout_coupons')
+      .update({ active: !coupon.active })
+      .eq('id', coupon.id)
+      .eq('user_id', userId)
+    if (!e) onUpdate(coupons.map((c) => c.id === coupon.id ? { ...c, active: !c.active } : c))
+  }
+
+  async function deleteCoupon(id: string) {
+    const { error: e } = await sb
+      .from('checkout_coupons')
+      .delete()
+      .eq('id', id)
+      .eq('user_id', userId)
+    if (!e) onUpdate(coupons.filter((c) => c.id !== id))
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Form */}
+      <div className="p-3 rounded-xl border border-[var(--border)] bg-[var(--surface-2)]/30 space-y-3">
+        <div className="text-[12px] font-semibold text-[var(--text)]">Criar cupom</div>
+        <div className="grid grid-cols-2 gap-2">
+          <FieldC label="Código">
+            <input value={form.code} onChange={(e) => setForm((f) => ({ ...f, code: e.target.value.toUpperCase() }))} className={inputCls} placeholder="DESCONTO10" />
+          </FieldC>
+          <FieldC label="Tipo">
+            <select value={form.type} onChange={(e) => setForm((f) => ({ ...f, type: e.target.value as 'percent' | 'fixed' }))} className={inputCls}>
+              <option value="percent">Percentual (%)</option>
+              <option value="fixed">Fixo (R$)</option>
+            </select>
+          </FieldC>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <FieldC label={form.type === 'percent' ? 'Desconto (%)' : 'Desconto (R$)'}>
+            <input type="number" min={0} step={form.type === 'percent' ? 1 : 0.01} value={form.value}
+              onChange={(e) => setForm((f) => ({ ...f, value: Number(e.target.value) }))} className={inputCls} />
+          </FieldC>
+          <FieldC label="Usos máximos" hint="Vazio = ilimitado">
+            <input type="number" min={1} value={form.maxUses} onChange={(e) => setForm((f) => ({ ...f, maxUses: e.target.value }))} className={inputCls} placeholder="∞" />
+          </FieldC>
+        </div>
+        <FieldC label="Válido até (opcional)">
+          <input type="datetime-local" value={form.validUntil} onChange={(e) => setForm((f) => ({ ...f, validUntil: e.target.value }))} className={inputCls} />
+        </FieldC>
+        {error && <div className="text-[11.5px] text-red-500">{error}</div>}
+        <button onClick={handleCreate} disabled={saving}
+          className="h-9 px-4 text-[12.5px] font-medium rounded-lg bg-[var(--primary)] text-white hover:opacity-90 disabled:opacity-60 flex items-center gap-2">
+          {saving ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
+          Criar cupom
+        </button>
+      </div>
+
+      {/* List */}
+      {relevant.length > 0 && (
+        <div className="space-y-2">
+          {relevant.map((c) => (
+            <div key={c.id} className="flex items-center gap-3 px-3 py-2 rounded-lg border border-[var(--border)]">
+              <div className="w-8 h-8 rounded-lg bg-[var(--primary)]/10 flex items-center justify-center shrink-0">
+                {c.type === 'percent' ? <Percent size={14} className="text-[var(--primary)]" /> : <DollarSign size={14} className="text-[var(--primary)]" />}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-[12.5px] font-semibold text-[var(--text)] font-mono">{c.code}</span>
+                  <span className={`text-[10.5px] px-1.5 py-0.5 rounded-md font-medium ${c.active ? 'bg-green-500/10 text-green-600' : 'bg-[var(--surface-2)] text-[var(--text-muted)]'}`}>
+                    {c.active ? 'Ativo' : 'Inativo'}
+                  </span>
+                  {c.checkoutId === null && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-blue-500/10 text-blue-600">Global</span>
+                  )}
+                </div>
+                <div className="text-[11px] text-[var(--text-muted)]">
+                  {c.type === 'percent' ? `${c.value}% de desconto` : `R$ ${c.value.toFixed(2)} de desconto`}
+                  {c.maxUses !== null && ` · ${c.uses}/${c.maxUses} usos`}
+                  {c.validUntil && ` · válido até ${new Date(c.validUntil).toLocaleDateString('pt-BR')}`}
+                </div>
+              </div>
+              <div className="flex items-center gap-1 shrink-0">
+                <button onClick={() => toggleActive(c)} className="h-7 w-7 flex items-center justify-center rounded-md text-[var(--text-muted)] hover:bg-[var(--surface-2)] transition-colors">
+                  {c.active ? <X size={12} /> : <Check size={12} />}
+                </button>
+                <button onClick={() => deleteCoupon(c.id)} className="h-7 w-7 flex items-center justify-center rounded-md text-[var(--text-muted)] hover:bg-red-500/10 hover:text-red-500 transition-colors">
+                  <Trash2 size={12} />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {relevant.length === 0 && (
+        <div className="flex flex-col items-center py-6 text-center text-[var(--text-muted)]">
+          <Tag size={24} className="mb-2 opacity-40" />
+          <p className="text-[12px]">Nenhum cupom criado para este checkout ainda.</p>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/* ============================================================
    Checkout Preview (live)
    ============================================================ */
 
@@ -826,9 +1115,14 @@ function CheckoutPreview({ checkout, gatewayChoices }: { checkout: Checkout; gat
       {/* Header */}
       <div className="px-5 py-3 flex items-center justify-between border-b" style={{ borderColor: palette.border, background: palette.surface }}>
         <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-md flex items-center justify-center text-white text-[11px] font-bold" style={{ background: c.primaryColor }}>
-            {c.logo}
-          </div>
+          {c.logoImage ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={c.logoImage} alt={c.name} className="h-7 w-auto object-contain" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+          ) : (
+            <div className="w-7 h-7 rounded-md flex items-center justify-center text-white text-[11px] font-bold" style={{ background: c.primaryColor }}>
+              {c.logo}
+            </div>
+          )}
           <div className="text-[13px] font-semibold tracking-tight">{c.name}</div>
         </div>
         <div className="flex items-center gap-1.5 text-[10px]" style={{ color: palette.muted }}>
@@ -910,6 +1204,26 @@ function CheckoutPreview({ checkout, gatewayChoices }: { checkout: Checkout; gat
               })}
             </div>
           </div>
+
+          {/* Order Bump preview */}
+          {c.orderBump && (
+            <div className="mt-4 p-3 rounded-lg border" style={{ borderColor: c.primaryColor + '40', background: c.primaryColor + '08' }}>
+              <div className="flex items-start gap-2">
+                <div className="w-3.5 h-3.5 mt-0.5 rounded border shrink-0" style={{ borderColor: c.primaryColor, background: c.primaryColor + '20' }} />
+                <div className="flex-1 min-w-0">
+                  <div className="text-[11px] font-semibold leading-tight" style={{ color: palette.text }}>
+                    Sim! Quero também: {c.orderBump.title}
+                  </div>
+                  {c.orderBump.desc && (
+                    <div className="text-[10px] mt-0.5 leading-relaxed" style={{ color: palette.muted }}>{c.orderBump.desc}</div>
+                  )}
+                  <div className="mt-1 text-[11px] font-bold" style={{ color: c.primaryColor }}>
+                    + {fmtBRLdec(c.orderBump.price)}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
           <button
             className="w-full mt-4 h-10 rounded-lg text-[12.5px] font-semibold text-white flex items-center justify-center gap-1.5"
@@ -1326,17 +1640,19 @@ function PreviewPanel({ draft, gatewayChoices }: { draft: Checkout; gatewayChoic
    Checkout Editor
    ============================================================ */
 
-function CheckoutEditor({ checkout, gatewayChoices, pixelChoices, appUrl, userId, onBack, onSave, onPublish, onDelete, showToast }: {
-  checkout:       Checkout
-  gatewayChoices: GatewayChoice[]
-  pixelChoices:   PixelChoice[]
-  appUrl:         string
-  userId:         string
-  onBack:         () => void
-  onSave:         (c: Checkout) => Promise<boolean>
-  onPublish:      (c: Checkout) => Promise<boolean>
-  onDelete:       (id: string) => void
-  showToast:      (msg: string, type: 'success' | 'error') => void
+function CheckoutEditor({ checkout, gatewayChoices, pixelChoices, appUrl, userId, coupons, onCouponsUpdate, onBack, onSave, onPublish, onDelete, showToast }: {
+  checkout:        Checkout
+  gatewayChoices:  GatewayChoice[]
+  pixelChoices:    PixelChoice[]
+  appUrl:          string
+  userId:          string
+  coupons:         Coupon[]
+  onCouponsUpdate: (coupons: Coupon[]) => void
+  onBack:          () => void
+  onSave:          (c: Checkout) => Promise<boolean>
+  onPublish:       (c: Checkout) => Promise<boolean>
+  onDelete:        (id: string) => void
+  showToast:       (msg: string, type: 'success' | 'error') => void
 }) {
   const [draft, setDraft]             = useState<Checkout>(checkout)
   const [saving, setSaving]           = useState(false)
@@ -1543,9 +1859,28 @@ function CheckoutEditor({ checkout, gatewayChoices, pixelChoices, appUrl, userId
               {/* Identidade */}
               <SectionCard title="Identidade visual" subtitle="Como sua marca aparece no topo do checkout">
                 <div className="mt-2 space-y-3.5">
-                  <FieldC label="Logo (texto curto)">
+                  <FieldC label="Imagem do logo (URL)" hint="Prevalece sobre o texto do logo. Deixe vazio para usar o texto.">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="url"
+                        value={draft.logoImage}
+                        onChange={(e) => set({ logoImage: e.target.value })}
+                        className={inputCls + ' flex-1'}
+                        placeholder="https://seu-site.com/logo.png"
+                      />
+                      {draft.logoImage && (
+                        <button type="button" onClick={() => set({ logoImage: '' })} className="h-10 w-10 shrink-0 flex items-center justify-center rounded-lg border border-[var(--border)] text-[var(--text-muted)] hover:border-red-400 hover:text-red-500 transition-colors">
+                          <X size={13} />
+                        </button>
+                      )}
+                    </div>
+                    {draft.logoImage && (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={draft.logoImage} alt="Logo" className="mt-2 h-10 object-contain rounded border border-[var(--border)] bg-[var(--surface-2)] px-2" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                    )}
+                  </FieldC>
+                  <FieldC label="Logo (texto curto)" hint="Usado quando não há imagem do logo. Até 4 caracteres.">
                     <input type="text" value={draft.logo} maxLength={4} onChange={(e) => set({ logo: e.target.value.slice(0, 4) })} className={inputCls} />
-                    <div className="text-[10.5px] text-[var(--text-muted)] mt-1">Até 4 caracteres — exibido no header do checkout.</div>
                   </FieldC>
 
                   <FieldC label="Cor primária">
@@ -1749,20 +2084,38 @@ function CheckoutEditor({ checkout, gatewayChoices, pixelChoices, appUrl, userId
 
               {/* Layout */}
               <SectionCard title="Layout" subtitle="Como produto e formulário se organizam">
-                <div className="mt-2 grid grid-cols-2 gap-2 max-w-[400px]">
-                  {[
-                    { id: 'two_col', label: 'Duas colunas', desc: 'Produto à esquerda, formulário à direita.' },
-                    { id: 'one_col', label: 'Uma coluna',   desc: 'Produto e formulário empilhados.' },
-                  ].map((l) => {
-                    const active = draft.layout === l.id
-                    return (
-                      <button key={l.id} onClick={() => set({ layout: l.id as Checkout['layout'] })}
-                        className={`text-left p-3 rounded-lg border-2 transition-colors focus:outline-none ${active ? 'border-[var(--primary)] bg-[var(--primary)]/10' : 'border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--surface-2)]'}`}>
-                        <div className="text-[12.5px] font-medium text-[var(--text)]">{l.label}</div>
-                        <div className="text-[10.5px] text-[var(--text-muted)] mt-0.5 leading-snug">{l.desc}</div>
-                      </button>
-                    )
-                  })}
+                <div className="mt-2 space-y-4">
+                  <div className="grid grid-cols-2 gap-2 max-w-[400px]">
+                    {[
+                      { id: 'two_col', label: 'Duas colunas', desc: 'Produto à esquerda, formulário à direita.' },
+                      { id: 'one_col', label: 'Uma coluna',   desc: 'Produto e formulário empilhados.' },
+                    ].map((l) => {
+                      const active = draft.layout === l.id
+                      return (
+                        <button key={l.id} onClick={() => set({ layout: l.id as Checkout['layout'] })}
+                          className={`text-left p-3 rounded-lg border-2 transition-colors focus:outline-none ${active ? 'border-[var(--primary)] bg-[var(--primary)]/10' : 'border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--surface-2)]'}`}>
+                          <div className="text-[12.5px] font-medium text-[var(--text)]">{l.label}</div>
+                          <div className="text-[10.5px] text-[var(--text-muted)] mt-0.5 leading-snug">{l.desc}</div>
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <div className="space-y-2 pt-2 border-t border-[var(--border)]">
+                    <div className="flex items-center justify-between py-2 px-3 rounded-lg border border-[var(--border)]">
+                      <div>
+                        <div className="text-[12.5px] font-medium text-[var(--text)]">Checkout em 2 etapas</div>
+                        <div className="text-[11px] text-[var(--text-muted)]">Etapa 1: dados pessoais · Etapa 2: forma de pagamento</div>
+                      </div>
+                      <Toggle checked={draft.twoStep} onChange={(v) => set({ twoStep: v })} />
+                    </div>
+                    <div className="flex items-center justify-between py-2 px-3 rounded-lg border border-[var(--border)]">
+                      <div>
+                        <div className="text-[12.5px] font-medium text-[var(--text)]">Contador de visitantes ao vivo</div>
+                        <div className="text-[11px] text-[var(--text-muted)]">Exibe "🔴 N pessoas vendo agora" no checkout público</div>
+                      </div>
+                      <Toggle checked={draft.visitorTracking} onChange={(v) => set({ visitorTracking: v })} />
+                    </div>
+                  </div>
                 </div>
               </SectionCard>
 
@@ -1815,6 +2168,26 @@ function CheckoutEditor({ checkout, gatewayChoices, pixelChoices, appUrl, userId
                     )}
                   </FieldC>
                 </div>
+              </SectionCard>
+
+              {/* Order Bump */}
+              <SectionCard title="Order Bump" subtitle="Produto adicional oferecido antes do botão de pagamento">
+                <OrderBumpSection value={draft.orderBump} onChange={(v) => set({ orderBump: v })} />
+              </SectionCard>
+
+              {/* Upsell */}
+              <SectionCard title="Upsell pós-compra" subtitle="Oferta exibida após o pagamento ser confirmado">
+                <UpsellSection value={draft.upsell} onChange={(v) => set({ upsell: v })} />
+              </SectionCard>
+
+              {/* Cupons */}
+              <SectionCard title="Cupons de desconto" subtitle="Crie cupons de % ou valor fixo para este checkout">
+                <CouponSection
+                  checkoutId={draft.id}
+                  coupons={coupons}
+                  userId={userId}
+                  onUpdate={onCouponsUpdate}
+                />
               </SectionCard>
 
               {/* Componentes Extras */}
@@ -1983,12 +2356,13 @@ function CheckoutsList({ checkouts, creating, gatewayChoices, appUrl, onOpen, on
    ============================================================ */
 
 export default function CheckoutClient({
-  initialCheckouts, userId, connectedGateways, configuredPixels, appUrl,
+  initialCheckouts, userId, connectedGateways, configuredPixels, initialCoupons, appUrl,
 }: CheckoutClientProps) {
   const sb     = createClient()
   const { track } = useAnalytics()
 
   const [checkouts,     setCheckouts]     = useState<Checkout[]>(initialCheckouts.map(mapRaw))
+  const [coupons,       setCoupons]       = useState<Coupon[]>(initialCoupons.map(mapRawCoupon))
   const [editingId,     setEditingId]     = useState<string | null>(null)
   const [deleteId,      setDeleteId]      = useState<string | null>(null)
   const [showTemplates, setShowTemplates] = useState(false)
@@ -2081,6 +2455,11 @@ export default function CheckoutClient({
         bg_fixed:         false,
         bg_repeat:        false,
         bg_cover:         true,
+        order_bump:       null,
+        logo_image:       null,
+        two_step:         false,
+        upsell:           null,
+        visitor_tracking: false,
       }
 
       const { data, error } = await sb
@@ -2133,6 +2512,11 @@ export default function CheckoutClient({
         bg_fixed:         updated.bgFixed,
         bg_repeat:        updated.bgRepeat,
         bg_cover:         updated.bgCover,
+        order_bump:       updated.orderBump        ?? null,
+        logo_image:       updated.logoImage        || null,
+        two_step:         updated.twoStep,
+        upsell:           updated.upsell           ?? null,
+        visitor_tracking: updated.visitorTracking,
         updated_at:       new Date().toISOString(),
       })
       .eq('id', updated.id)
@@ -2241,6 +2625,11 @@ export default function CheckoutClient({
         bg_fixed:         original.bgFixed,
         bg_repeat:        original.bgRepeat,
         bg_cover:         original.bgCover,
+        order_bump:       original.orderBump        ?? null,
+        logo_image:       original.logoImage        || null,
+        two_step:         original.twoStep,
+        upsell:           original.upsell           ?? null,
+        visitor_tracking: original.visitorTracking,
       })
       .select('*')
       .single()
@@ -2266,6 +2655,8 @@ export default function CheckoutClient({
           pixelChoices={pixelChoices}
           appUrl={appUrl}
           userId={userId}
+          coupons={coupons}
+          onCouponsUpdate={setCoupons}
           onBack={() => setEditingId(null)}
           onSave={saveCheckout}
           onPublish={publishCheckout}

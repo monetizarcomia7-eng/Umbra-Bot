@@ -1,11 +1,13 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import {
   Lock, Zap, CreditCard, FileText, User, Mail, BadgeCheck,
   Phone, MapPin, Loader2, Check, AlertTriangle, X, QrCode, RefreshCw,
-  Shield, Clock, Bell, Star, MessageCircle, Play,
+  Shield, Clock, Bell, Star, MessageCircle, Tag, ChevronRight,
+  ExternalLink,
 } from 'lucide-react'
+import { createClient }          from '@/lib/supabase/client'
 import type { PublicCheckout }   from './page'
 import PixelScripts              from './PixelScripts'
 import type { PublicPixelConfig } from './PixelScripts'
@@ -29,7 +31,17 @@ interface FieldDef {
   mask?: (v: string) => string
 }
 
-type PayStep = 'form' | 'payment' | 'success' | 'error'
+type PayStep = 'form' | 'payment' | 'success' | 'upsell' | 'error'
+
+interface CouponResult {
+  valid:      boolean
+  error?:     string
+  coupon_id?: string
+  type?:      'percent' | 'fixed'
+  value?:     number
+  discount?:  number
+  final?:     number
+}
 
 interface ExtraComponent {
   id:        string
@@ -100,18 +112,25 @@ export default function CheckoutPageClient({
   // CPF/CNPJ is always required; other fields follow checkout config
   const fields = allFieldDefs.filter((f) => f.id === 'cpf' || c.fields[f.id])
 
-  const [step,          setStep]          = useState<PayStep>('form')
-  const [method,        setMethod]        = useState<string>(methods[0] ?? 'pix')
-  const [form,          setForm]          = useState<Record<string, string>>({})
-  const [errors,        setErrors]        = useState<Record<string, string>>({})
-  const [submitting,    setSubmitting]    = useState(false)
-  const [pixData,       setPixData]       = useState<{ qr_code: string; copy_paste: string; expires_at: string } | null>(null)
-  const [transactionId, setTransactionId] = useState<string | null>(null)
-  const [errMsg,        setErrMsg]        = useState('')
-  const [copied,        setCopied]        = useState(false)
-  const [pixSecondsLeft, setPixSecondsLeft] = useState<number | null>(null)
-  const [urgencyLeft,    setUrgencyLeft]    = useState<number | null>(null)
+  const [step,             setStep]             = useState<PayStep>('form')
+  const [twoStepPhase,     setTwoStepPhase]     = useState<'personal' | 'payment'>('personal')
+  const [method,           setMethod]           = useState<string>(methods[0] ?? 'pix')
+  const [form,             setForm]             = useState<Record<string, string>>({})
+  const [errors,           setErrors]           = useState<Record<string, string>>({})
+  const [submitting,       setSubmitting]       = useState(false)
+  const [pixData,          setPixData]          = useState<{ qr_code: string; copy_paste: string; expires_at: string } | null>(null)
+  const [transactionId,    setTransactionId]    = useState<string | null>(null)
+  const [errMsg,           setErrMsg]           = useState('')
+  const [copied,           setCopied]           = useState(false)
+  const [pixSecondsLeft,   setPixSecondsLeft]   = useState<number | null>(null)
+  const [urgencyLeft,      setUrgencyLeft]      = useState<number | null>(null)
+  const [visitCount,       setVisitCount]       = useState<number>(1)
+  const [orderBumpSelected, setOrderBumpSelected] = useState(false)
+  const [couponCode,       setCouponCode]       = useState('')
+  const [couponResult,     setCouponResult]     = useState<CouponResult | null>(null)
+  const [couponChecking,   setCouponChecking]   = useState(false)
   const visitTracked   = useRef(false)
+  const presenceRef    = useRef<ReturnType<typeof createClient> | null>(null)
   const [exitPopup, setExitPopup] = useState(false)
   const extraComponents = (c.extra_components ?? []) as ExtraComponent[]
 
@@ -223,12 +242,51 @@ export default function CheckoutPageClient({
     return () => document.removeEventListener('mouseleave', handleMouseLeave)
   }, [extraComponents, step]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Redireciona para success_url 3s após confirmação
+  // Contador de visitantes ao vivo via Supabase Realtime Presence
   useEffect(() => {
-    if (step !== 'success' || !c.success_url) return
+    if (!c.visitor_tracking) return
+    const supabase = createClient()
+    presenceRef.current = supabase
+    const channel = supabase.channel(`checkout-presence-${c.id}`, {
+      config: { presence: { key: Math.random().toString(36).slice(2) } },
+    })
+    channel
+      .on('presence', { event: 'sync' }, () => {
+        const state = channel.presenceState()
+        setVisitCount(Math.max(1, Object.keys(state).length))
+      })
+      .subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') await channel.track({ t: Date.now() })
+      })
+    return () => { supabase.removeChannel(channel) }
+  }, [c.id, c.visitor_tracking])
+
+  // Redireciona para success_url 3s após confirmação — ou mostra upsell primeiro
+  useEffect(() => {
+    if (step !== 'success') return
+    if (c.upsell) { setStep('upsell'); return }
+    if (!c.success_url) return
     const t = setTimeout(() => { window.location.href = c.success_url! }, 3000)
     return () => clearTimeout(t)
-  }, [step, c.success_url])
+  }, [step, c.success_url, c.upsell])
+
+  const handleApplyCoupon = useCallback(async () => {
+    const code = couponCode.trim()
+    if (!code) return
+    setCouponChecking(true)
+    setCouponResult(null)
+    try {
+      const res = await fetch(
+        `/api/checkout/validate-coupon?checkout_id=${encodeURIComponent(c.id)}&code=${encodeURIComponent(code)}`,
+      )
+      const result = await res.json() as CouponResult
+      setCouponResult(result)
+    } catch {
+      setCouponResult({ valid: false, error: 'Erro ao validar cupom.' })
+    } finally {
+      setCouponChecking(false)
+    }
+  }, [couponCode, c.id])
 
   function handleField(id: string, raw: string) {
     const def = allFieldDefs.find((f) => f.id === id)
@@ -292,15 +350,17 @@ export default function CheckoutPageClient({
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          checkout_id:    c.id,
-          customer_name:  form.name  ?? '',
-          customer_email: form.email ?? '',
-          customer_cpf:   form.cpf   ?? '',
-          customer_phone: form.phone ?? undefined,
+          checkout_id:       c.id,
+          customer_name:     form.name  ?? '',
+          customer_email:    form.email ?? '',
+          customer_cpf:      form.cpf   ?? '',
+          customer_phone:    form.phone ?? undefined,
           method,
-          utm_source:     utmSource   ?? null,
-          utm_medium:     utmMedium   ?? null,
-          utm_campaign:   utmCampaign ?? null,
+          coupon_code:       couponResult?.valid ? couponCode.trim() : undefined,
+          order_bump:        orderBumpSelected && c.order_bump ? true : undefined,
+          utm_source:        utmSource   ?? null,
+          utm_medium:        utmMedium   ?? null,
+          utm_campaign:      utmCampaign ?? null,
         }),
       })
 
@@ -326,7 +386,10 @@ export default function CheckoutPageClient({
     })
   }
 
-  const installmentValue = c.price / Math.min(c.installments, 12)
+  const discountAmount  = couponResult?.valid ? (couponResult.discount ?? 0) : 0
+  const bumpAmount      = orderBumpSelected && c.order_bump ? c.order_bump.price : 0
+  const effectivePrice  = Math.max(0, c.price - discountAmount) + bumpAmount
+  const installmentValue = effectivePrice / Math.min(c.installments, 12)
 
   const bgStyle = c.bg_image ? {
     backgroundImage:      `url(${c.bg_image})`,
@@ -348,14 +411,26 @@ export default function CheckoutPageClient({
       >
         <div className="max-w-5xl mx-auto px-4 h-14 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <div
-              className="w-8 h-8 rounded-lg flex items-center justify-center text-white text-[13px] font-bold"
-              style={{ background: c.primary_color }}
-            >
-              {c.logo}
-            </div>
+            {c.logo_image ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={c.logo_image} alt={c.name} className="h-8 w-auto object-contain" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+            ) : (
+              <div
+                className="w-8 h-8 rounded-lg flex items-center justify-center text-white text-[13px] font-bold"
+                style={{ background: c.primary_color }}
+              >
+                {c.logo}
+              </div>
+            )}
             <span className="text-[15px] font-semibold tracking-tight">{c.name}</span>
           </div>
+          {/* Contador de visitantes ao vivo */}
+          {c.visitor_tracking && visitCount > 1 && (
+            <div className="hidden sm:flex items-center gap-1.5 text-[12px] font-medium" style={{ color: palette.muted }}>
+              <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+              {visitCount} pessoas vendo agora
+            </div>
+          )}
           <div className="flex items-center gap-1.5 text-[12px]" style={{ color: palette.muted }}>
             <Lock size={12} /> Pagamento seguro
           </div>
@@ -444,94 +519,237 @@ export default function CheckoutPageClient({
             {/* === FORMULÁRIO === */}
             {step === 'form' && (
               <>
-                <h2 className="text-[15px] font-semibold mb-4">Seus dados</h2>
-                <div className="space-y-4">
-                  {fields.map((f) => (
-                    <div key={f.id}>
-                      <label className="block text-[12.5px] font-medium mb-1.5" style={{ color: palette.muted }}>
-                        {f.label}
-                      </label>
-                      <div className="relative">
-                        <f.icon size={14} className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: palette.subtle }} />
-                        <input
-                          type={f.type}
-                          value={form[f.id] ?? ''}
-                          onChange={(e) => handleField(f.id, e.target.value)}
-                          className="w-full h-11 pl-9 pr-3 rounded-xl text-[13.5px] border focus:outline-none focus:ring-2 transition"
-                          style={{
-                            background:   palette.inputBg,
-                            color:        palette.text,
-                            borderColor:  errors[f.id] ? '#ef4444' : palette.border,
-                            // @ts-expect-error – CSS variable assignment
-                            '--tw-ring-color': errors[f.id] ? '#ef444440' : `${c.primary_color}40`,
-                          }}
-                          placeholder={
-                            f.id === 'email' ? 'voce@email.com' :
-                            f.id === 'cpf'   ? 'CPF ou CNPJ' : ''
+                {/* 2-step: progress indicator */}
+                {c.two_step && (
+                  <div className="flex items-center gap-2 mb-5">
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-bold text-white" style={{ background: c.primary_color }}>1</div>
+                      <span className="text-[12.5px] font-medium" style={{ color: twoStepPhase === 'personal' ? palette.text : palette.muted }}>Seus dados</span>
+                    </div>
+                    <ChevronRight size={14} style={{ color: palette.subtle }} />
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-bold" style={{ background: twoStepPhase === 'payment' ? c.primary_color : palette.border, color: twoStepPhase === 'payment' ? '#fff' : palette.muted }}>2</div>
+                      <span className="text-[12.5px] font-medium" style={{ color: twoStepPhase === 'payment' ? palette.text : palette.muted }}>Pagamento</span>
+                    </div>
+                  </div>
+                )}
+
+                {/* Fase 1 ou sem 2-step: dados pessoais */}
+                {(!c.two_step || twoStepPhase === 'personal') && (
+                  <>
+                    {!c.two_step && <h2 className="text-[15px] font-semibold mb-4">Seus dados</h2>}
+                    {c.two_step && <h2 className="text-[15px] font-semibold mb-4">Seus dados</h2>}
+                    <div className="space-y-4">
+                      {fields.map((f) => (
+                        <div key={f.id}>
+                          <label className="block text-[12.5px] font-medium mb-1.5" style={{ color: palette.muted }}>
+                            {f.label}
+                          </label>
+                          <div className="relative">
+                            <f.icon size={14} className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: palette.subtle }} />
+                            <input
+                              type={f.type}
+                              value={form[f.id] ?? ''}
+                              onChange={(e) => handleField(f.id, e.target.value)}
+                              className="w-full h-11 pl-9 pr-3 rounded-xl text-[13.5px] border focus:outline-none focus:ring-2 transition"
+                              style={{
+                                background:   palette.inputBg,
+                                color:        palette.text,
+                                borderColor:  errors[f.id] ? '#ef4444' : palette.border,
+                                // @ts-expect-error – CSS variable assignment
+                                '--tw-ring-color': errors[f.id] ? '#ef444440' : `${c.primary_color}40`,
+                              }}
+                              placeholder={
+                                f.id === 'email' ? 'voce@email.com' :
+                                f.id === 'cpf'   ? 'CPF ou CNPJ' : ''
+                              }
+                              inputMode={f.id === 'cpf' || f.id === 'phone' || f.id === 'cep' ? 'numeric' : undefined}
+                            />
+                          </div>
+                          {errors[f.id] && (
+                            <p className="text-[11.5px] text-red-500 mt-1 flex items-center gap-1">
+                              <AlertTriangle size={11} /> {errors[f.id]}
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                    {c.two_step && (
+                      <button
+                        onClick={() => {
+                          // validate only personal fields
+                          const errs: Record<string, string> = {}
+                          for (const f of fields) {
+                            const v = (form[f.id] ?? '').trim()
+                            if (!v) errs[f.id] = `${f.label} é obrigatório.`
                           }
-                          inputMode={f.id === 'cpf' || f.id === 'phone' || f.id === 'cep' ? 'numeric' : undefined}
-                        />
+                          if (Object.keys(errs).length) { setErrors(errs); return }
+                          setErrors({})
+                          setTwoStepPhase('payment')
+                        }}
+                        className="w-full mt-6 h-12 rounded-xl text-[15px] font-bold text-white flex items-center justify-center gap-2"
+                        style={{ background: c.primary_color }}
+                      >
+                        Continuar <ChevronRight size={16} />
+                      </button>
+                    )}
+                  </>
+                )}
+
+                {/* Fase 2 ou sem 2-step: pagamento */}
+                {(!c.two_step || twoStepPhase === 'payment') && (
+                  <>
+                    {/* Cupom de desconto */}
+                    <div className="mt-5 pt-5" style={{ borderTop: !c.two_step ? `1px solid ${palette.border}` : undefined }}>
+                      <div className="flex items-center gap-2">
+                        <div className="relative flex-1">
+                          <Tag size={14} className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: palette.subtle }} />
+                          <input
+                            type="text"
+                            value={couponCode}
+                            onChange={(e) => { setCouponCode(e.target.value.toUpperCase()); setCouponResult(null) }}
+                            onKeyDown={(e) => { if (e.key === 'Enter') handleApplyCoupon() }}
+                            placeholder="Código de cupom"
+                            className="w-full h-10 pl-9 pr-3 rounded-xl text-[13px] border focus:outline-none"
+                            style={{ background: palette.inputBg, color: palette.text, borderColor: couponResult?.valid === false ? '#ef4444' : palette.border }}
+                          />
+                        </div>
+                        <button
+                          onClick={handleApplyCoupon}
+                          disabled={couponChecking || !couponCode.trim()}
+                          className="h-10 px-4 rounded-xl text-[12.5px] font-semibold transition-opacity disabled:opacity-50"
+                          style={{ background: c.primary_color + '20', color: c.primary_color, border: `1px solid ${c.primary_color}40` }}
+                        >
+                          {couponChecking ? <Loader2 size={14} className="animate-spin" /> : 'Aplicar'}
+                        </button>
                       </div>
-                      {errors[f.id] && (
-                        <p className="text-[11.5px] text-red-500 mt-1 flex items-center gap-1">
-                          <AlertTriangle size={11} /> {errors[f.id]}
+                      {couponResult && (
+                        <div className={`mt-2 flex items-center gap-1.5 text-[12px] font-medium ${couponResult.valid ? 'text-green-600' : 'text-red-500'}`}>
+                          {couponResult.valid
+                            ? <><Check size={13} /> Cupom aplicado! Desconto de {couponResult.type === 'percent' ? `${couponResult.value}%` : fmtBRL(couponResult.discount ?? 0)} (−{fmtBRL(couponResult.discount ?? 0)})</>
+                            : <><AlertTriangle size={13} /> {couponResult.error}</>}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Métodos de pagamento */}
+                    <div className="mt-5">
+                      <h2 className="text-[15px] font-semibold mb-3">Forma de pagamento</h2>
+                      <div className="grid grid-cols-3 gap-2">
+                        {methods.map((m) => {
+                          const MIcon  = methodIcon[m]
+                          const active = method === m
+                          const isPix  = m === 'pix'
+                          return (
+                            <button
+                              key={m}
+                              onClick={() => setMethod(m)}
+                              className="flex flex-col items-center justify-center gap-1 py-3 rounded-xl border-2 text-[12px] font-medium transition-colors focus:outline-none relative"
+                              style={{
+                                background:   active ? c.primary_color + '15' : 'transparent',
+                                borderColor:  active ? c.primary_color : palette.border,
+                                color:        active ? c.primary_color : palette.muted,
+                                opacity:      isPix ? 1 : 0.5,
+                              }}
+                            >
+                              <MIcon size={18} />
+                              {methodLabel[m]}
+                              {!isPix && (
+                                <span className="text-[9px] font-semibold uppercase tracking-wide" style={{ color: palette.subtle }}>
+                                  Em breve
+                                </span>
+                              )}
+                            </button>
+                          )
+                        })}
+                      </div>
+                      {method !== 'pix' && (
+                        <p className="text-[11.5px] mt-2 text-center" style={{ color: palette.muted }}>
+                          Apenas Pix disponível no momento. Selecione Pix para continuar.
                         </p>
                       )}
                     </div>
-                  ))}
-                </div>
 
-                {/* Métodos de pagamento */}
-                <div className="mt-5">
-                  <h2 className="text-[15px] font-semibold mb-3">Forma de pagamento</h2>
-                  <div className="grid grid-cols-3 gap-2">
-                    {methods.map((m) => {
-                      const MIcon  = methodIcon[m]
-                      const active = method === m
-                      const isPix  = m === 'pix'
-                      return (
-                        <button
-                          key={m}
-                          onClick={() => setMethod(m)}
-                          className="flex flex-col items-center justify-center gap-1 py-3 rounded-xl border-2 text-[12px] font-medium transition-colors focus:outline-none relative"
-                          style={{
-                            background:   active ? c.primary_color + '15' : 'transparent',
-                            borderColor:  active ? c.primary_color : palette.border,
-                            color:        active ? c.primary_color : palette.muted,
-                            opacity:      isPix ? 1 : 0.5,
-                          }}
-                        >
-                          <MIcon size={18} />
-                          {methodLabel[m]}
-                          {!isPix && (
-                            <span className="text-[9px] font-semibold uppercase tracking-wide" style={{ color: palette.subtle }}>
-                              Em breve
-                            </span>
-                          )}
-                        </button>
-                      )
-                    })}
-                  </div>
-                  {method !== 'pix' && (
-                    <p className="text-[11.5px] mt-2 text-center" style={{ color: palette.muted }}>
-                      Apenas Pix disponível no momento. Selecione Pix para continuar.
+                    {/* Order Bump */}
+                    {c.order_bump && (
+                      <div
+                        className="mt-4 p-4 rounded-xl cursor-pointer select-none"
+                        style={{ background: c.primary_color + '08', border: `2px solid ${orderBumpSelected ? c.primary_color : c.primary_color + '30'}` }}
+                        onClick={() => setOrderBumpSelected((v) => !v)}
+                      >
+                        <div className="flex items-start gap-3">
+                          <div
+                            className="mt-0.5 w-5 h-5 rounded flex items-center justify-center shrink-0 transition-colors"
+                            style={{ background: orderBumpSelected ? c.primary_color : 'transparent', border: `2px solid ${c.primary_color}` }}
+                          >
+                            {orderBumpSelected && <Check size={12} className="text-white" />}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            {c.order_bump.image && (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img src={c.order_bump.image} alt={c.order_bump.title} className="w-full rounded-lg mb-2 max-h-24 object-cover" />
+                            )}
+                            <div className="text-[13px] font-semibold leading-tight">
+                              Sim! Quero também: {c.order_bump.title}
+                            </div>
+                            {c.order_bump.desc && (
+                              <div className="text-[12px] mt-1 leading-relaxed" style={{ color: palette.muted }}>{c.order_bump.desc}</div>
+                            )}
+                            <div className="mt-1.5 text-[13px] font-bold" style={{ color: c.primary_color }}>
+                              + {fmtBRL(c.order_bump.price)}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Resumo de valor */}
+                    {(couponResult?.valid || orderBumpSelected) && (
+                      <div className="mt-4 p-3 rounded-xl space-y-1.5" style={{ background: palette.bg, border: `1px solid ${palette.border}` }}>
+                        <div className="flex justify-between text-[12.5px]" style={{ color: palette.muted }}>
+                          <span>Subtotal</span><span>{fmtBRL(c.price)}</span>
+                        </div>
+                        {couponResult?.valid && (
+                          <div className="flex justify-between text-[12.5px] text-green-600">
+                            <span>Desconto</span><span>−{fmtBRL(couponResult.discount ?? 0)}</span>
+                          </div>
+                        )}
+                        {orderBumpSelected && c.order_bump && (
+                          <div className="flex justify-between text-[12.5px]" style={{ color: palette.muted }}>
+                            <span>{c.order_bump.title}</span><span>+{fmtBRL(c.order_bump.price)}</span>
+                          </div>
+                        )}
+                        <div className="flex justify-between text-[14px] font-bold pt-1" style={{ borderTop: `1px solid ${palette.border}` }}>
+                          <span>Total</span><span>{fmtBRL(effectivePrice)}</span>
+                        </div>
+                      </div>
+                    )}
+
+                    {c.two_step && (
+                      <button
+                        onClick={() => setTwoStepPhase('personal')}
+                        className="text-[12px] mt-3 flex items-center gap-1 underline"
+                        style={{ color: palette.muted }}
+                      >
+                        ← Editar dados pessoais
+                      </button>
+                    )}
+
+                    <button
+                      onClick={handleSubmit}
+                      disabled={submitting || method !== 'pix'}
+                      className="w-full mt-5 h-12 rounded-xl text-[15px] font-bold text-white flex items-center justify-center gap-2 transition-opacity disabled:opacity-60"
+                      style={{ background: c.primary_color }}
+                    >
+                      {submitting
+                        ? <><Loader2 size={18} className="animate-spin" /> Processando…</>
+                        : <><Lock size={15} /> Pagar {fmtBRL(effectivePrice)}</>}
+                    </button>
+                    <p className="text-[11px] text-center mt-2.5" style={{ color: palette.subtle }}>
+                      🔒 Compra 100% segura · SSL · dados criptografados
                     </p>
-                  )}
-                </div>
-
-                <button
-                  onClick={handleSubmit}
-                  disabled={submitting || method !== 'pix'}
-                  className="w-full mt-6 h-12 rounded-xl text-[15px] font-bold text-white flex items-center justify-center gap-2 transition-opacity disabled:opacity-60"
-                  style={{ background: c.primary_color }}
-                >
-                  {submitting
-                    ? <><Loader2 size={18} className="animate-spin" /> Processando…</>
-                    : <><Lock size={15} /> Pagar {fmtBRL(c.price)}</>}
-                </button>
-                <p className="text-[11px] text-center mt-2.5" style={{ color: palette.subtle }}>
-                  🔒 Compra 100% segura · SSL · dados criptografados
-                </p>
+                  </>
+                )}
               </>
             )}
 
@@ -630,6 +848,42 @@ export default function CheckoutPageClient({
                     Redirecionando em instantes…
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* === UPSELL === */}
+            {step === 'upsell' && c.upsell && (
+              <div className="flex flex-col items-center py-4">
+                <div className="w-14 h-14 rounded-full flex items-center justify-center mb-4" style={{ background: '#22c55e20' }}>
+                  <Check size={28} className="text-green-500" />
+                </div>
+                <div className="text-[12.5px] font-semibold text-green-600 mb-4">Pagamento confirmado!</div>
+                <div className="w-full rounded-2xl border overflow-hidden mb-4" style={{ borderColor: palette.border }}>
+                  <div className="p-4" style={{ background: c.primary_color + '10' }}>
+                    <div className="text-[16px] font-bold leading-tight mb-1">{c.upsell.title}</div>
+                    <div className="text-[13px] leading-relaxed mb-3" style={{ color: palette.muted }}>{c.upsell.desc}</div>
+                    {c.upsell.price > 0 && (
+                      <div className="text-[20px] font-extrabold mb-3" style={{ color: c.primary_color }}>{fmtBRL(c.upsell.price)}</div>
+                    )}
+                    <a
+                      href={c.upsell.link}
+                      className="flex items-center justify-center gap-2 w-full h-11 rounded-xl text-[14px] font-bold text-white"
+                      style={{ background: c.primary_color }}
+                    >
+                      {c.upsell.cta || 'Aproveitar oferta'} <ExternalLink size={14} />
+                    </a>
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    if (c.success_url) window.location.href = c.success_url
+                    else setStep('success')
+                  }}
+                  className="text-[12.5px] underline"
+                  style={{ color: palette.muted }}
+                >
+                  Não, obrigado
+                </button>
               </div>
             )}
 

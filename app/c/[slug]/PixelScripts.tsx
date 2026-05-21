@@ -10,7 +10,7 @@ export interface PublicPixelConfig {
 
 interface PixelScriptsProps {
   pixels:      PublicPixelConfig[]
-  step:        'form' | 'payment' | 'success' | 'error'
+  step:        'form' | 'payment' | 'success' | 'upsell' | 'error'
   price:       number
   productName: string
 }
@@ -135,7 +135,7 @@ export default function PixelScripts({ pixels, step, price, productName }: Pixel
       }
     }
 
-    if (step === 'success') {
+    if (step === 'success' || step === 'upsell') {
       // Pagamento confirmado
       for (const px of pixels) {
         try {

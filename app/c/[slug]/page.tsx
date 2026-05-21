@@ -6,32 +6,38 @@ import type { PublicPixelConfig } from './PixelScripts'
 /* ─── Tipos exportados para o CheckoutPageClient ─────────── */
 
 export interface PublicCheckout {
-  id:             string
-  slug:           string
-  name:           string
-  product_name:   string
-  product_desc:   string
-  product_image:  string | null
-  price:          number
-  installments:   number
-  gateway:        string
-  primary_color:  string
-  bg_variant:     'light' | 'dark'
-  font:           string
-  logo:           string
-  badge:          string | null
-  fields:         Record<string, boolean>
-  methods:        Record<string, boolean>
-  layout:         'two_col' | 'one_col'
-  user_id:        string
-  success_url:    string | null
-  guarantee_days: number | null
-  countdown_end:  string | null
+  id:               string
+  slug:             string
+  name:             string
+  product_name:     string
+  product_desc:     string
+  product_image:    string | null
+  price:            number
+  installments:     number
+  gateway:          string
+  primary_color:    string
+  bg_variant:       'light' | 'dark'
+  font:             string
+  logo:             string
+  badge:            string | null
+  fields:           Record<string, boolean>
+  methods:          Record<string, boolean>
+  layout:           'two_col' | 'one_col'
+  user_id:          string
+  success_url:      string | null
+  guarantee_days:   number | null
+  countdown_end:    string | null
   extra_components: unknown[]
-  bg_image:       string | null
-  bg_fixed:       boolean
-  bg_repeat:      boolean
-  bg_cover:       boolean
+  bg_image:         string | null
+  bg_fixed:         boolean
+  bg_repeat:        boolean
+  bg_cover:         boolean
+  /* ── migração 085 ── */
+  order_bump:       { title: string; desc: string; price: number; image: string | null } | null
+  logo_image:       string | null
+  two_step:         boolean
+  upsell:           { title: string; desc: string; price: number; cta: string; link: string } | null
+  visitor_tracking: boolean
 }
 
 /* ─── Metadata dinâmica — título = nome do produto ──────── */
@@ -78,7 +84,8 @@ export default async function PublicCheckoutPage({
       installments, gateway, primary_color, bg_variant, font,
       logo, badge, fields, methods, layout, user_id,
       success_url, guarantee_days, countdown_end,
-      extra_components, bg_image, bg_fixed, bg_repeat, bg_cover
+      extra_components, bg_image, bg_fixed, bg_repeat, bg_cover,
+      order_bump, logo_image, two_step, upsell, visitor_tracking
     `)
     .eq('slug', slug)
     .eq('status', 'published')

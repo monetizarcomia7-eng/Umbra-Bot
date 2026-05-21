@@ -55,6 +55,8 @@ const paySchema = z.object({
   utm_source:     z.string().max(100).nullish(),
   utm_medium:     z.string().max(100).nullish(),
   utm_campaign:   z.string().max(100).nullish(),
+  coupon_code:    z.string().max(50).nullish(),
+  order_bump:     z.boolean().nullish(),
 })
 
 /* ─── POST /api/checkout/pay ─────────────────────────────── */
@@ -86,6 +88,7 @@ export async function POST(request: NextRequest) {
   const {
     checkout_id, customer_name, customer_email, customer_cpf,
     customer_phone, method, utm_source, utm_medium, utm_campaign,
+    coupon_code, order_bump,
   } = parsed.data
 
   // Apenas PIX está implementado; cartão e boleto requerem integração adicional
@@ -104,7 +107,7 @@ export async function POST(request: NextRequest) {
   /* ── 1. Busca checkout + dono ──────────────────────────── */
   const { data: checkout } = await admin
     .from('checkouts')
-    .select('id, user_id, product_name, price, installments, gateway, methods')
+    .select('id, user_id, product_name, price, installments, gateway, methods, order_bump')
     .eq('id', checkout_id)
     .eq('status', 'published')
     .maybeSingle()
@@ -117,6 +120,34 @@ export async function POST(request: NextRequest) {
   if (!methods[method]) {
     return NextResponse.json({ error: `Método "${method}" não disponível neste checkout.` }, { status: 400 })
   }
+
+  /* ── 1b. Valida cupom e aplica desconto (incrementa uses) ── */
+  let discountAmount = 0
+
+  const couponCodeClean = coupon_code?.trim().toUpperCase() ?? null
+  if (couponCodeClean) {
+    const { data: couponResult, error: couponError } = await admin
+      .rpc('validate_and_apply_coupon', {
+        p_user_id: checkout.user_id,
+        p_code:    couponCodeClean,
+        p_price:   Number(checkout.price),
+      })
+
+    if (couponError) {
+      Sentry.captureException(couponError, { extra: { checkout_id, context: 'validate_and_apply_coupon' } })
+    } else if (couponResult?.valid) {
+      discountAmount = Number(couponResult.discount ?? 0)
+    }
+    // Cupom inválido/expirado: ignora silenciosamente (preview já exibiu o erro)
+  }
+
+  /* ── 1c. Calcula preço efetivo (cupom + order bump) ─────── */
+  const basePrice  = Math.max(0, Number(checkout.price) - discountAmount)
+  const bumpData   = order_bump
+    ? (checkout.order_bump as { price: number } | null)
+    : null
+  const bumpPrice  = bumpData ? Number(bumpData.price ?? 0) : 0
+  const totalPrice = basePrice + bumpPrice
 
   /* ── 2. Busca gateway do dono ──────────────────────────── */
   const { data: gateway } = await admin
@@ -154,7 +185,7 @@ export async function POST(request: NextRequest) {
       'X-Idempotency-Key': crypto.randomUUID(),
     },
     body: JSON.stringify({
-      transaction_amount: Number(checkout.price),
+      transaction_amount: totalPrice,
       description:        checkout.product_name,
       payment_method_id:  'pix',
       payer: {
@@ -182,8 +213,8 @@ export async function POST(request: NextRequest) {
   const pixInfo = mpData.point_of_interaction?.transaction_data
   const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString()
 
-  const fee = Number(checkout.price) * 0.0099
-  const net = Number(checkout.price) - fee
+  const fee = totalPrice * 0.0099
+  const net = totalPrice - fee
 
   /* ── 4. Persiste transação ─────────────────────────────── */
   const { data: transaction, error: txError } = await admin
@@ -193,7 +224,7 @@ export async function POST(request: NextRequest) {
       checkout_id:        checkout.id,
       gateway:            checkout.gateway,
       gateway_payment_id: String(mpData.id),
-      amount:             Number(checkout.price),
+      amount:             totalPrice,
       fee,
       net,
       type:               'sale',
@@ -239,6 +270,6 @@ export async function POST(request: NextRequest) {
     pix_qr_code:    pixInfo?.qr_code_base64,
     pix_copy_paste: pixInfo?.qr_code,
     expires_at:     expiresAt,
-    amount:         Number(checkout.price),
+    amount:         totalPrice,
   })
 }

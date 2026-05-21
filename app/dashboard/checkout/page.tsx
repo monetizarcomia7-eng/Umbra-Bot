@@ -37,6 +37,12 @@ export interface RawCheckout {
   bg_fixed:       boolean
   bg_repeat:      boolean
   bg_cover:       boolean
+  /* ── migração 085 ── */
+  order_bump:       unknown | null
+  logo_image:       string | null
+  two_step:         boolean
+  upsell:           unknown | null
+  visitor_tracking: boolean
 }
 
 export interface RawGateway {
@@ -52,6 +58,19 @@ export interface RawPixel {
   capi:     boolean
 }
 
+export interface RawCoupon {
+  id:          string
+  checkout_id: string | null
+  code:        string
+  type:        'percent' | 'fixed'
+  value:       number
+  max_uses:    number | null
+  uses:        number
+  valid_until: string | null
+  active:      boolean
+  created_at:  string
+}
+
 /* ─── Server Component ───────────────────────────────────── */
 
 export default async function CheckoutPage() {
@@ -63,10 +82,11 @@ export default async function CheckoutPage() {
     { data: checkouts },
     { data: gateways  },
     { data: pixels    },
+    { data: coupons   },
   ] = await Promise.all([
     supabase
       .from('checkouts')
-      .select('id, name, slug, product_name, product_desc, product_image, price, installments, gateway, pixel, primary_color, bg_variant, font, logo, badge, fields, methods, layout, status, visits, conversions, conversion, created_at, updated_at, success_url, guarantee_days, countdown_end, extra_components, bg_image, bg_fixed, bg_repeat, bg_cover')
+      .select('id, name, slug, product_name, product_desc, product_image, price, installments, gateway, pixel, primary_color, bg_variant, font, logo, badge, fields, methods, layout, status, visits, conversions, conversion, created_at, updated_at, success_url, guarantee_days, countdown_end, extra_components, bg_image, bg_fixed, bg_repeat, bg_cover, order_bump, logo_image, two_step, upsell, visitor_tracking')
       .eq('user_id', user.id)
       .order('updated_at', { ascending: false })
       .limit(50),
@@ -79,6 +99,12 @@ export default async function CheckoutPage() {
       .from('pixels')
       .select('id, provider, pixel_id, capi')
       .eq('user_id', user.id),
+    supabase
+      .from('checkout_coupons')
+      .select('id, checkout_id, code, type, value, max_uses, uses, valid_until, active, created_at')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false })
+      .limit(200),
   ])
 
   const appUrl = process.env.APP_URL ?? 'https://umbra.bot'
@@ -89,6 +115,7 @@ export default async function CheckoutPage() {
       userId={user.id}
       connectedGateways={(gateways ?? []) as RawGateway[]}
       configuredPixels={(pixels ?? []) as RawPixel[]}
+      initialCoupons={(coupons ?? []) as RawCoupon[]}
       appUrl={appUrl}
     />
   )
