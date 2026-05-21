@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react'
 import {
   Lock, Zap, CreditCard, FileText, User, Mail, BadgeCheck,
   Phone, MapPin, Loader2, Check, AlertTriangle, X, QrCode, RefreshCw,
+  Shield, Clock,
 } from 'lucide-react'
 import type { PublicCheckout }   from './page'
 import PixelScripts              from './PixelScripts'
@@ -32,10 +33,25 @@ type PayStep = 'form' | 'payment' | 'success' | 'error'
 
 /* ─── Constants ──────────────────────────────────────────── */
 
+function maskCpfCnpj(v: string): string {
+  const n = v.replace(/\D/g, '').slice(0, 14)
+  if (n.length <= 11) {
+    return n
+      .replace(/(\d{3})(\d)/, '$1.$2')
+      .replace(/(\d{3})(\d)/, '$1.$2')
+      .replace(/(\d{3})(\d{1,2})$/, '$1-$2')
+  }
+  return n
+    .replace(/(\d{2})(\d)/, '$1.$2')
+    .replace(/(\d{3})(\d)/, '$1.$2')
+    .replace(/(\d{3})(\d)/, '$1/$2')
+    .replace(/(\d{4})(\d{1,2})$/, '$1-$2')
+}
+
 const allFieldDefs: FieldDef[] = [
   { id: 'name',    label: 'Nome completo', icon: User,       type: 'text'  },
   { id: 'email',   label: 'E-mail',        icon: Mail,       type: 'email' },
-  { id: 'cpf',     label: 'CPF',           icon: BadgeCheck, type: 'text',  mask: (v) => v.replace(/\D/g,'').replace(/(\d{3})(\d)/,'$1.$2').replace(/(\d{3})(\d)/,'$1.$2').replace(/(\d{3})(\d{1,2})$/,'$1-$2').slice(0,14) },
+  { id: 'cpf',     label: 'CPF / CNPJ',   icon: BadgeCheck, type: 'text',  mask: maskCpfCnpj },
   { id: 'phone',   label: 'Telefone',      icon: Phone,      type: 'tel',   mask: (v) => v.replace(/\D/g,'').replace(/(\d{2})(\d)/,'($1) $2').replace(/(\d{5})(\d)/,'$1-$2').slice(0,15) },
   { id: 'address', label: 'Endereço',      icon: MapPin,     type: 'text'  },
   { id: 'cep',     label: 'CEP',           icon: MapPin,     type: 'text',  mask: (v) => v.replace(/\D/g,'').replace(/(\d{5})(\d)/,'$1-$2').slice(0,9) },
@@ -47,6 +63,14 @@ const methodLabel: Record<string, string>             = { pix: 'Pix', card: 'Car
 const fmtBRL = (n: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(n)
 
+function fmtCountdown(sec: number): string {
+  const h = Math.floor(sec / 3600)
+  const m = Math.floor((sec % 3600) / 60)
+  const s = sec % 60
+  if (h > 0) return `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`
+  return `${m}:${String(s).padStart(2,'0')}`
+}
+
 /* ─── Component ──────────────────────────────────────────── */
 
 export default function CheckoutPageClient({
@@ -55,7 +79,9 @@ export default function CheckoutPageClient({
   const c       = checkout
   const isDark  = c.bg_variant === 'dark'
   const methods = (['pix', 'card', 'boleto'] as const).filter((m) => c.methods[m])
-  const fields  = allFieldDefs.filter((f) => c.fields[f.id])
+
+  // CPF/CNPJ is always required; other fields follow checkout config
+  const fields = allFieldDefs.filter((f) => f.id === 'cpf' || c.fields[f.id])
 
   const [step,          setStep]          = useState<PayStep>('form')
   const [method,        setMethod]        = useState<string>(methods[0] ?? 'pix')
@@ -66,6 +92,8 @@ export default function CheckoutPageClient({
   const [transactionId, setTransactionId] = useState<string | null>(null)
   const [errMsg,        setErrMsg]        = useState('')
   const [copied,        setCopied]        = useState(false)
+  const [pixSecondsLeft, setPixSecondsLeft] = useState<number | null>(null)
+  const [urgencyLeft,    setUrgencyLeft]    = useState<number | null>(null)
   const visitTracked = useRef(false)
 
   // Palette
@@ -89,7 +117,6 @@ export default function CheckoutPageClient({
       p_utm_campaign: utmCampaign ?? null,
     })
 
-    // Chama RPC pública via fetch — grant to anon na migração 078
     fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/rest/v1/rpc/track_checkout_visit`, {
       method:  'POST',
       headers: {
@@ -101,20 +128,45 @@ export default function CheckoutPageClient({
     }).catch(() => { /* fire-and-forget */ })
   }, [c.slug, utmSource, utmMedium, utmCampaign])
 
+  // Contador de urgência (independente do pagamento)
+  useEffect(() => {
+    if (!c.countdown_end) return
+    function calcUrgency() {
+      const diff = Math.max(0, Math.floor((new Date(c.countdown_end!).getTime() - Date.now()) / 1000))
+      setUrgencyLeft(diff)
+    }
+    calcUrgency()
+    const t = setInterval(calcUrgency, 1000)
+    return () => clearInterval(t)
+  }, [c.countdown_end])
+
+  // Countdown do PIX (30 min a partir da criação)
+  useEffect(() => {
+    if (step !== 'payment' || !pixData?.expires_at) return
+    function calcPix() {
+      const diff = Math.max(0, Math.floor((new Date(pixData!.expires_at).getTime() - Date.now()) / 1000))
+      setPixSecondsLeft(diff)
+      if (diff <= 0) {
+        setErrMsg('O tempo para pagamento expirou. Gere um novo código PIX.')
+        setStep('error')
+      }
+    }
+    calcPix()
+    const t = setInterval(calcPix, 1000)
+    return () => clearInterval(t)
+  }, [step, pixData])
+
   // Polling de confirmação PIX — a cada 4s enquanto step='payment'
-  // Para automaticamente em: aprovado, cancelado ou após 120 tentativas (≈8 min)
   useEffect(() => {
     if (step !== 'payment' || !transactionId) return
 
     let attempts = 0
     const MAX_ATTEMPTS = 120
-
     const controller = new AbortController()
 
     async function poll() {
       if (attempts >= MAX_ATTEMPTS) return
       attempts++
-
       try {
         const res = await fetch(
           `/api/checkout/status?tx_id=${encodeURIComponent(transactionId ?? '')}&checkout_id=${encodeURIComponent(c.id)}`,
@@ -140,6 +192,13 @@ export default function CheckoutPageClient({
     }
   }, [step, transactionId, c.id])
 
+  // Redireciona para success_url 3s após confirmação
+  useEffect(() => {
+    if (step !== 'success' || !c.success_url) return
+    const t = setTimeout(() => { window.location.href = c.success_url! }, 3000)
+    return () => clearTimeout(t)
+  }, [step, c.success_url])
+
   function handleField(id: string, raw: string) {
     const def = allFieldDefs.find((f) => f.id === id)
     const val = def?.mask ? def.mask(raw) : raw
@@ -152,8 +211,15 @@ export default function CheckoutPageClient({
     for (const f of fields) {
       const v = (form[f.id] ?? '').trim()
       if (!v) { errs[f.id] = `${f.label} é obrigatório.`; continue }
-      if (f.id === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) errs[f.id] = 'E-mail inválido.'
-      if (f.id === 'cpf'   && v.replace(/\D/g,'').length !== 11)      errs[f.id] = 'CPF deve ter 11 dígitos.'
+      if (f.id === 'email') {
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) errs[f.id] = 'E-mail inválido.'
+      }
+      if (f.id === 'cpf') {
+        const digits = v.replace(/\D/g, '')
+        if (digits.length !== 11 && digits.length !== 14) {
+          errs[f.id] = 'CPF deve ter 11 dígitos ou CNPJ 14 dígitos.'
+        }
+      }
     }
     setErrors(errs)
     return Object.keys(errs).length === 0
@@ -161,6 +227,14 @@ export default function CheckoutPageClient({
 
   async function handleSubmit() {
     if (!validate()) return
+
+    // Cartão e boleto ainda não implementados
+    if (method !== 'pix') {
+      setErrMsg('Pagamento por cartão e boleto ainda não disponível. Use o Pix.')
+      setStep('error')
+      return
+    }
+
     setSubmitting(true)
     setErrMsg('')
 
@@ -184,13 +258,9 @@ export default function CheckoutPageClient({
       const data = await res.json()
       if (!res.ok) { setErrMsg(data.error ?? 'Erro ao processar pagamento.'); setStep('error'); return }
 
-      if (method === 'pix') {
-        setPixData({ qr_code: data.pix_qr_code, copy_paste: data.pix_copy_paste, expires_at: data.expires_at })
-        setTransactionId(data.transaction_id ?? null)
-        setStep('payment')
-      } else {
-        setStep('success')
-      }
+      setPixData({ qr_code: data.pix_qr_code, copy_paste: data.pix_copy_paste, expires_at: data.expires_at })
+      setTransactionId(data.transaction_id ?? null)
+      setStep('payment')
     } catch {
       setErrMsg('Erro de conexão. Verifique sua internet e tente novamente.')
       setStep('error')
@@ -249,6 +319,18 @@ export default function CheckoutPageClient({
             className="rounded-2xl border p-6"
             style={{ background: palette.surface, borderColor: palette.border }}
           >
+            {/* Urgency countdown */}
+            {c.countdown_end && urgencyLeft !== null && urgencyLeft > 0 && (
+              <div
+                className="flex items-center gap-2 rounded-xl px-3 py-2.5 mb-4 text-[12.5px] font-semibold"
+                style={{ background: '#fef2f2', border: '1px solid #fecaca', color: '#dc2626' }}
+              >
+                <Clock size={14} className="shrink-0" />
+                Oferta termina em{' '}
+                <span className="font-mono">{fmtCountdown(urgencyLeft)}</span>
+              </div>
+            )}
+
             {c.badge && (
               <span
                 className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold uppercase tracking-wider mb-3"
@@ -284,6 +366,17 @@ export default function CheckoutPageClient({
                 )}
               </div>
             </div>
+
+            {/* Guarantee badge */}
+            {c.guarantee_days && c.guarantee_days > 0 && (
+              <div
+                className="flex items-center gap-2 mt-4 rounded-xl px-3 py-2.5 text-[12.5px] font-medium"
+                style={{ background: isDark ? '#0d2a1a' : '#f0fdf4', border: `1px solid ${isDark ? '#166534' : '#bbf7d0'}`, color: isDark ? '#86efac' : '#166534' }}
+              >
+                <Shield size={14} className="shrink-0" />
+                Garantia de {c.guarantee_days} dias · sem burocracia
+              </div>
+            )}
           </div>
 
           {/* ── Formulário / Pagamento / Sucesso ── */}
@@ -315,7 +408,10 @@ export default function CheckoutPageClient({
                             // @ts-expect-error – CSS variable assignment
                             '--tw-ring-color': errors[f.id] ? '#ef444440' : `${c.primary_color}40`,
                           }}
-                          placeholder={f.id === 'email' ? 'voce@email.com' : f.id === 'cpf' ? '000.000.000-00' : ''}
+                          placeholder={
+                            f.id === 'email' ? 'voce@email.com' :
+                            f.id === 'cpf'   ? 'CPF ou CNPJ' : ''
+                          }
                           inputMode={f.id === 'cpf' || f.id === 'phone' || f.id === 'cep' ? 'numeric' : undefined}
                         />
                       </div>
@@ -335,28 +431,40 @@ export default function CheckoutPageClient({
                     {methods.map((m) => {
                       const MIcon  = methodIcon[m]
                       const active = method === m
+                      const isPix  = m === 'pix'
                       return (
                         <button
                           key={m}
                           onClick={() => setMethod(m)}
-                          className="flex flex-col items-center justify-center gap-1.5 py-3 rounded-xl border-2 text-[12px] font-medium transition-colors focus:outline-none"
+                          className="flex flex-col items-center justify-center gap-1 py-3 rounded-xl border-2 text-[12px] font-medium transition-colors focus:outline-none relative"
                           style={{
                             background:   active ? c.primary_color + '15' : 'transparent',
                             borderColor:  active ? c.primary_color : palette.border,
                             color:        active ? c.primary_color : palette.muted,
+                            opacity:      isPix ? 1 : 0.5,
                           }}
                         >
                           <MIcon size={18} />
                           {methodLabel[m]}
+                          {!isPix && (
+                            <span className="text-[9px] font-semibold uppercase tracking-wide" style={{ color: palette.subtle }}>
+                              Em breve
+                            </span>
+                          )}
                         </button>
                       )
                     })}
                   </div>
+                  {method !== 'pix' && (
+                    <p className="text-[11.5px] mt-2 text-center" style={{ color: palette.muted }}>
+                      Apenas Pix disponível no momento. Selecione Pix para continuar.
+                    </p>
+                  )}
                 </div>
 
                 <button
                   onClick={handleSubmit}
-                  disabled={submitting}
+                  disabled={submitting || method !== 'pix'}
                   className="w-full mt-6 h-12 rounded-xl text-[15px] font-bold text-white flex items-center justify-center gap-2 transition-opacity disabled:opacity-60"
                   style={{ background: c.primary_color }}
                 >
@@ -381,7 +489,7 @@ export default function CheckoutPageClient({
                 </div>
                 <h2 className="text-[17px] font-bold mb-1">Pague via Pix</h2>
                 <p className="text-[12.5px] mb-5 text-center" style={{ color: palette.muted }}>
-                  Escaneie o QR Code ou copie o código abaixo. Após o pagamento, a confirmação é automática.
+                  Escaneie o QR Code ou copie o código abaixo. Confirmação automática após o pagamento.
                 </p>
 
                 {pixData.qr_code && (
@@ -414,7 +522,22 @@ export default function CheckoutPageClient({
                   </button>
                 </div>
 
-                {/* Indicador de polling — aguardando confirmação do pagamento */}
+                {/* Countdown do PIX */}
+                {pixSecondsLeft !== null && pixSecondsLeft > 0 && (
+                  <div
+                    className="w-full rounded-xl px-3 py-2.5 mb-2 flex items-center justify-between"
+                    style={{ background: isDark ? '#1e1a0a' : '#fffbeb', border: `1px solid ${isDark ? '#854d0e' : '#fde68a'}` }}
+                  >
+                    <span className="text-[11.5px]" style={{ color: isDark ? '#fde68a' : '#92400e' }}>
+                      Código expira em
+                    </span>
+                    <span className="text-[13px] font-bold font-mono tabular-nums" style={{ color: isDark ? '#fbbf24' : '#b45309' }}>
+                      {fmtCountdown(pixSecondsLeft)}
+                    </span>
+                  </div>
+                )}
+
+                {/* Indicador de polling */}
                 <div
                   className="w-full rounded-xl px-3 py-2.5 mb-2 flex items-center gap-2"
                   style={{ background: isDark ? '#0d2a1a' : '#f0fdf4', border: `1px solid ${isDark ? '#166534' : '#bbf7d0'}` }}
@@ -424,10 +547,6 @@ export default function CheckoutPageClient({
                     Aguardando confirmação do pagamento…
                   </span>
                 </div>
-
-                <p className="text-[11px]" style={{ color: palette.subtle }}>
-                  Código válido por 30 minutos · confirmação automática após o pagamento.
-                </p>
               </div>
             )}
 
@@ -442,16 +561,16 @@ export default function CheckoutPageClient({
                 </div>
                 <h2 className="text-[20px] font-bold mb-2">Pagamento confirmado!</h2>
                 <p className="text-[13px] text-center leading-relaxed mb-4" style={{ color: palette.muted }}>
-                  {method === 'pix'
-                    ? 'Seu Pix foi recebido e o pedido foi confirmado com sucesso.'
-                    : 'Recebemos o seu pagamento e você receberá um e-mail de confirmação em breve.'}
+                  Seu Pix foi recebido e o pedido foi confirmado com sucesso.
                 </p>
-                {form.email && (
+
+                {c.success_url && (
                   <div
-                    className="rounded-xl px-4 py-3 text-[12px] text-center"
+                    className="rounded-xl px-4 py-3 text-[12px] text-center w-full"
                     style={{ background: isDark ? '#0d2a1a' : '#f0fdf4', border: `1px solid ${isDark ? '#166534' : '#bbf7d0'}`, color: isDark ? '#86efac' : '#166534' }}
                   >
-                    Uma confirmação foi enviada para <strong>{form.email}</strong>
+                    <Loader2 size={13} className="inline animate-spin mr-1.5" />
+                    Redirecionando em instantes…
                   </div>
                 )}
               </div>

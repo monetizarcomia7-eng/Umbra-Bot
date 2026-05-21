@@ -12,9 +12,15 @@ const paySchema = z.object({
   checkout_id:    z.string().uuid('checkout_id inválido.'),
   customer_name:  z.string().min(2,  'Nome deve ter ao menos 2 caracteres.').max(150),
   customer_email: z.string().email('E-mail inválido.'),
+  // Aceita CPF (11 dígitos) ou CNPJ (14 dígitos) — sempre obrigatório no checkout público
   customer_cpf:   z.string()
                    .transform((v) => v.replace(/\D/g, ''))
-                   .pipe(z.string().length(11, 'CPF deve ter 11 dígitos.')),
+                   .pipe(
+                     z.string().refine(
+                       (v) => v.length === 11 || v.length === 14,
+                       'CPF deve ter 11 dígitos ou CNPJ 14 dígitos.',
+                     ),
+                   ),
   customer_phone: z.string().max(20).nullish(),
   method:         z.enum(['pix', 'card', 'boleto']),
   utm_source:     z.string().max(100).nullish(),
@@ -53,7 +59,16 @@ export async function POST(request: NextRequest) {
     customer_phone, method, utm_source, utm_medium, utm_campaign,
   } = parsed.data
 
+  // Apenas PIX está implementado; cartão e boleto requerem integração adicional
+  if (method !== 'pix') {
+    return NextResponse.json(
+      { error: 'Pagamento por cartão e boleto ainda não disponível neste checkout. Use o Pix.' },
+      { status: 400 },
+    )
+  }
+
   const customerPhone = customer_phone ?? null
+  const docType       = customer_cpf.length === 14 ? 'CNPJ' : 'CPF'
 
   const admin = createAdminClient()
 
@@ -117,7 +132,7 @@ export async function POST(request: NextRequest) {
         email:      customer_email,
         first_name: customer_name.split(' ')[0],
         last_name:  customer_name.split(' ').slice(1).join(' ') || '',
-        identification: { type: 'CPF', number: customer_cpf },
+        identification: { type: docType, number: customer_cpf },
       },
     }),
   })
@@ -174,7 +189,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Erro ao registrar transação.' }, { status: 500 })
   }
 
-  /* ── 5. Registra evento 'paid' no funil (fire-and-forget) ─ */
+  /* ── 5. Registra evento 'cart_added' no funil (fire-and-forget) ─ */
   admin.from('checkout_events').insert({
     user_id:     checkout.user_id,
     checkout_id: checkout.id,
@@ -189,7 +204,6 @@ export async function POST(request: NextRequest) {
 
   /* ── 6. CAPI fire-and-forget (se aprovado via webhook) ─── */
   // O CAPI real é disparado no webhook do MP ao confirmar status='approved'.
-  // Aqui não disparamos pois o pagamento ainda está pendente.
 
   return NextResponse.json({
     transaction_id: transaction?.id,

@@ -5,30 +5,33 @@ import CheckoutClient   from './CheckoutClient'
 /* ─── Tipos exportados para o CheckoutClient ─────────────── */
 
 export interface RawCheckout {
-  id:            string
-  name:          string
-  slug:          string
-  product_name:  string
-  product_desc:  string
-  product_image: string | null
-  price:         number
-  installments:  number
-  gateway:       string
-  pixel:         string
-  primary_color: string
-  bg_variant:    'light' | 'dark'
-  font:          string
-  logo:          string
-  badge:         string | null
-  fields:        Record<string, boolean>
-  methods:       Record<string, boolean>
-  layout:        'two_col' | 'one_col'
-  status:        'published' | 'draft' | 'archived'
-  visits:        number
-  conversions:   number
-  conversion:    number
-  created_at:    string
-  updated_at:    string
+  id:             string
+  name:           string
+  slug:           string
+  product_name:   string
+  product_desc:   string
+  product_image:  string | null
+  price:          number
+  installments:   number
+  gateway:        string
+  pixel:          string
+  primary_color:  string
+  bg_variant:     'light' | 'dark'
+  font:           string
+  logo:           string
+  badge:          string | null
+  fields:         Record<string, boolean>
+  methods:        Record<string, boolean>
+  layout:         'two_col' | 'one_col'
+  status:         'published' | 'draft' | 'archived'
+  visits:         number
+  conversions:    number
+  conversion:     number
+  created_at:     string
+  updated_at:     string
+  success_url:    string | null
+  guarantee_days: number | null
+  countdown_end:  string | null
 }
 
 export interface RawGateway {
@@ -58,7 +61,7 @@ export default async function CheckoutPage() {
   ] = await Promise.all([
     supabase
       .from('checkouts')
-      .select('id, name, slug, product_name, product_desc, product_image, price, installments, gateway, pixel, primary_color, bg_variant, font, logo, badge, fields, methods, layout, status, visits, conversions, conversion, created_at, updated_at')
+      .select('id, name, slug, product_name, product_desc, product_image, price, installments, gateway, pixel, primary_color, bg_variant, font, logo, badge, fields, methods, layout, status, visits, conversions, conversion, created_at, updated_at, success_url, guarantee_days, countdown_end')
       .eq('user_id', user.id)
       .order('updated_at', { ascending: false })
       .limit(50),

@@ -8,6 +8,7 @@ import {
   Lock, Zap, CreditCard, FileText, Check, X, User, Mail,
   BadgeCheck, Phone, MapPin, Type, Copy, Trash2, MoreHorizontal,
   Layers, Clock, AlertTriangle, Loader2, Archive, Upload,
+  Monitor, Smartphone, Shield, BarChart2, ChevronDown,
 } from 'lucide-react'
 import { DashboardLayout }  from '@/components/dashboard/Layout'
 import { PageHeader }       from '@/components/dashboard/PageHeader'
@@ -30,6 +31,9 @@ interface Checkout {
   fields: CheckoutFields; methods: CheckoutMethods
   layout: 'two_col' | 'one_col'; status: 'published' | 'draft' | 'archived'
   visits: number; conversions: number; conversion: number; updatedAt: number
+  successUrl:    string
+  guaranteeDays: number | null
+  countdownEnd:  string | null
 }
 
 interface GatewayChoice { id: string; label: string; color: string }
@@ -86,7 +90,7 @@ const fontPresets  = ['Inter','Manrope','DM Sans','Plus Jakarta Sans']
 const allFields: FieldDef[] = [
   { id: 'name',    label: 'Nome completo', icon: User,       required: true,  always: true  },
   { id: 'email',   label: 'E-mail',        icon: Mail,       required: true,  always: true  },
-  { id: 'cpf',     label: 'CPF',           icon: BadgeCheck, required: false, always: false },
+  { id: 'cpf',     label: 'CPF / CNPJ',    icon: BadgeCheck, required: true,  always: true  },
   { id: 'phone',   label: 'Telefone',      icon: Phone,      required: false, always: false },
   { id: 'address', label: 'Endereço',      icon: MapPin,     required: false, always: false },
   { id: 'cep',     label: 'CEP',           icon: MapPin,     required: false, always: false },
@@ -169,6 +173,9 @@ function mapRaw(row: RawCheckout): Checkout {
     conversions:  row.conversions,
     conversion:   Number(row.conversion),
     updatedAt:    new Date(row.updated_at).getTime(),
+    successUrl:    row.success_url    ?? '',
+    guaranteeDays: row.guarantee_days ?? null,
+    countdownEnd:  row.countdown_end  ?? null,
   }
 }
 
@@ -638,6 +645,8 @@ function MiniStatC({ label, value, tone }: { label: string; value: string; tone?
   )
 }
 
+interface CheckoutFunnel { visited: number; cart: number; paid: number }
+
 function CheckoutCard({ checkout, gatewayChoices, onOpen, onDuplicate, onDelete, onArchive }: {
   checkout:       Checkout
   gatewayChoices: GatewayChoice[]
@@ -646,9 +655,40 @@ function CheckoutCard({ checkout, gatewayChoices, onOpen, onDuplicate, onDelete,
   onDelete:       () => void
   onArchive:      () => void
 }) {
-  const [menuOpen, setMenuOpen] = useState(false)
+  const [menuOpen,       setMenuOpen]       = useState(false)
+  const [analyticsOpen,  setAnalyticsOpen]  = useState(false)
+  const [funnel,         setFunnel]         = useState<CheckoutFunnel | null>(null)
+  const [loadingFunnel,  setLoadingFunnel]  = useState(false)
   const st = coStatusMap[checkout.status]
   const gw = gatewayChoices.find((g) => g.id === checkout.gateway)
+  const sbCard = createClient()
+
+  async function loadFunnel() {
+    if (funnel) { setAnalyticsOpen((o) => !o); return }
+    setAnalyticsOpen(true)
+    setLoadingFunnel(true)
+    try {
+      const [visitedRes, cartRes, paidRes] = await Promise.all([
+        sbCard.from('checkout_events').select('*', { count: 'exact', head: true })
+          .eq('checkout_id', checkout.id).eq('event_type', 'visited'),
+        sbCard.from('checkout_events').select('*', { count: 'exact', head: true })
+          .eq('checkout_id', checkout.id).eq('event_type', 'cart_added'),
+        sbCard.from('transactions').select('*', { count: 'exact', head: true })
+          .eq('checkout_id', checkout.id).eq('status', 'approved'),
+      ])
+      setFunnel({
+        visited: visitedRes.count ?? 0,
+        cart:    cartRes.count   ?? 0,
+        paid:    paidRes.count   ?? 0,
+      })
+    } finally {
+      setLoadingFunnel(false)
+    }
+  }
+
+  function pct(a: number, b: number) {
+    return b > 0 ? ((a / b) * 100).toFixed(1) + '%' : '—'
+  }
 
   return (
     <div className="group bg-[var(--surface)] border border-[var(--border)] rounded-xl overflow-hidden hover:border-[var(--text-muted)]/40 transition-colors relative">
@@ -719,7 +759,97 @@ function CheckoutCard({ checkout, gatewayChoices, onOpen, onDuplicate, onDelete,
             <MiniStatC label="Conv."      value={fmtPct(checkout.conversion, 1)} tone={checkout.conversion >= 10 ? 'success' : 'default'} />
           </div>
         )}
+
+        {/* Analytics drill-down */}
+        <div className="mt-3 pt-3 border-t border-[var(--border)]">
+          <button
+            onClick={(e) => { e.stopPropagation(); loadFunnel() }}
+            className="w-full flex items-center justify-between text-[11.5px] text-[var(--text-muted)] hover:text-[var(--text)] transition-colors"
+          >
+            <span className="flex items-center gap-1.5"><BarChart2 size={12} /> Funil de conversão</span>
+            <ChevronDown size={12} className={`transition-transform ${analyticsOpen ? 'rotate-180' : ''}`} />
+          </button>
+          {analyticsOpen && (
+            <div className="mt-2">
+              {loadingFunnel ? (
+                <div className="flex items-center justify-center py-3">
+                  <Loader2 size={14} className="animate-spin text-[var(--text-muted)]" />
+                </div>
+              ) : funnel ? (
+                <div className="space-y-1.5">
+                  {[
+                    { label: 'Visitou',         value: funnel.visited, ref: funnel.visited },
+                    { label: 'Adicionou ao carrinho', value: funnel.cart, ref: funnel.visited },
+                    { label: 'Comprou',         value: funnel.paid,  ref: funnel.visited },
+                  ].map((row) => (
+                    <div key={row.label}>
+                      <div className="flex items-center justify-between mb-0.5">
+                        <span className="text-[10.5px] text-[var(--text-muted)]">{row.label}</span>
+                        <span className="text-[10.5px] font-medium text-[var(--text)]">
+                          {fmtNum(row.value)} <span className="text-[var(--text-muted)] font-normal">({pct(row.value, row.ref)})</span>
+                        </span>
+                      </div>
+                      <div className="h-1 rounded-full bg-[var(--surface-2)]">
+                        <div
+                          className="h-1 rounded-full bg-[var(--primary)] transition-all"
+                          style={{ width: row.ref > 0 ? `${Math.min(100, (row.value / row.ref) * 100)}%` : '0%' }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          )}
+        </div>
       </div>
+    </div>
+  )
+}
+
+/* ============================================================
+   Preview Panel (desktop / mobile toggle)
+   ============================================================ */
+
+function PreviewPanel({ draft, gatewayChoices }: { draft: Checkout; gatewayChoices: GatewayChoice[] }) {
+  const [mode, setMode] = useState<'desktop' | 'mobile'>('desktop')
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-3">
+        <Eye size={13} className="text-[var(--text-muted)]" />
+        <span className="text-[11px] uppercase tracking-wider font-semibold text-[var(--text-muted)]">Prévia ao vivo</span>
+        <div className="flex-1 h-px bg-[var(--border)]" />
+        <div className="flex items-center gap-0.5 bg-[var(--surface-2)] border border-[var(--border)] rounded-lg p-0.5">
+          <button
+            onClick={() => setMode('desktop')}
+            title="Desktop"
+            className={`flex items-center gap-1.5 h-7 px-2.5 rounded-md text-[11.5px] font-medium transition-colors ${mode === 'desktop' ? 'bg-[var(--surface)] shadow-sm text-[var(--text)]' : 'text-[var(--text-muted)] hover:text-[var(--text)]'}`}
+          >
+            <Monitor size={13} /> Desktop
+          </button>
+          <button
+            onClick={() => setMode('mobile')}
+            title="Mobile"
+            className={`flex items-center gap-1.5 h-7 px-2.5 rounded-md text-[11.5px] font-medium transition-colors ${mode === 'mobile' ? 'bg-[var(--surface)] shadow-sm text-[var(--text)]' : 'text-[var(--text-muted)] hover:text-[var(--text)]'}`}
+          >
+            <Smartphone size={13} /> Mobile
+          </button>
+        </div>
+      </div>
+      {mode === 'mobile' ? (
+        <div className="flex justify-center">
+          <div className="w-[375px] border-4 border-[var(--border)] rounded-[32px] overflow-hidden shadow-xl bg-[var(--surface)]">
+            <div className="h-5 bg-[var(--surface-2)] flex items-center justify-center">
+              <div className="w-16 h-1 rounded-full bg-[var(--border)]" />
+            </div>
+            <div className="overflow-y-auto" style={{ maxHeight: '640px' }}>
+              <CheckoutPreview checkout={draft} gatewayChoices={gatewayChoices} />
+            </div>
+          </div>
+        </div>
+      ) : (
+        <CheckoutPreview checkout={draft} gatewayChoices={gatewayChoices} />
+      )}
     </div>
   )
 }
@@ -1132,17 +1262,62 @@ function CheckoutEditor({ checkout, gatewayChoices, pixelChoices, appUrl, userId
                   })}
                 </div>
               </SectionCard>
+
+              {/* Configurações avançadas */}
+              <SectionCard title="Configurações avançadas" subtitle="Redirecionamento, garantia e urgência">
+                <div className="mt-2 space-y-3.5">
+                  <FieldC label="URL de redirecionamento (após pagamento)" hint="Onde o comprador será enviado ao confirmar o Pix. Deixe vazio para usar a tela de sucesso padrão.">
+                    <input
+                      type="url"
+                      value={draft.successUrl}
+                      onChange={(e) => set({ successUrl: e.target.value })}
+                      placeholder="https://seu-site.com/obrigado"
+                      className={inputCls}
+                    />
+                  </FieldC>
+                  <FieldC label="Dias de garantia" hint="Exibe um badge de garantia no checkout. Deixe 0 ou vazio para não exibir.">
+                    <div className="flex items-center gap-2 max-w-[180px]">
+                      <input
+                        type="number"
+                        min="0"
+                        max="365"
+                        step="1"
+                        value={draft.guaranteeDays ?? ''}
+                        onChange={(e) => {
+                          const v = parseInt(e.target.value, 10)
+                          set({ guaranteeDays: isNaN(v) || v <= 0 ? null : v })
+                        }}
+                        placeholder="0"
+                        className={inputCls}
+                      />
+                      <span className="text-[12.5px] text-[var(--text-muted)] whitespace-nowrap">dias</span>
+                    </div>
+                    {draft.guaranteeDays && draft.guaranteeDays > 0 && (
+                      <div className="mt-1.5 inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-green-500/10 border border-green-500/20 text-[11.5px] text-green-600 dark:text-green-400">
+                        <Shield size={12} /> Garantia de {draft.guaranteeDays} dias · sem burocracia
+                      </div>
+                    )}
+                  </FieldC>
+                  <FieldC label="Fim do contador de urgência" hint="Exibe um countdown regressivo no checkout. Deixe vazio para não exibir.">
+                    <input
+                      type="datetime-local"
+                      value={draft.countdownEnd ? draft.countdownEnd.slice(0, 16) : ''}
+                      onChange={(e) => set({ countdownEnd: e.target.value ? new Date(e.target.value).toISOString() : null })}
+                      className={inputCls}
+                    />
+                    {draft.countdownEnd && new Date(draft.countdownEnd) > new Date() && (
+                      <div className="mt-1.5 inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-orange-500/10 border border-orange-500/20 text-[11.5px] text-orange-600 dark:text-orange-400">
+                        <Clock size={12} /> Countdown ativo até {new Date(draft.countdownEnd).toLocaleString('pt-BR')}
+                      </div>
+                    )}
+                  </FieldC>
+                </div>
+              </SectionCard>
             </div>
 
             {/* Preview column (sticky) */}
             <div className="xl:sticky xl:top-[80px]">
-              <div className="flex items-center gap-2 mb-3">
-                <Eye size={13} className="text-[var(--text-muted)]" />
-                <span className="text-[11px] uppercase tracking-wider font-semibold text-[var(--text-muted)]">Prévia ao vivo</span>
-                <div className="flex-1 h-px bg-[var(--border)]" />
-              </div>
-              <CheckoutPreview checkout={draft} gatewayChoices={gatewayChoices} />
-            </div>
+              <PreviewPanel draft={draft} gatewayChoices={gatewayChoices} /></div>
           </div>
         </div>
       </div>
@@ -1373,11 +1548,14 @@ export default function CheckoutClient({
         fields:        template?.fields        ?? { name: true, email: true, cpf: false, phone: false, address: false, cep: false },
         methods:       template?.methods       ?? { pix: true, card: true, boleto: false },
         layout:        template?.layout        ?? 'two_col',
-        product_image: null,
-        status:        'draft',
-        visits:        0,
-        conversions:   0,
-        conversion:    0,
+        product_image:  null,
+        status:         'draft',
+        visits:         0,
+        conversions:    0,
+        conversion:     0,
+        success_url:    null,
+        guarantee_days: null,
+        countdown_end:  null,
       }
 
       const { data, error } = await sb
@@ -1422,6 +1600,9 @@ export default function CheckoutClient({
         methods:       updated.methods,
         layout:        updated.layout,
         status:        updated.status,
+        success_url:    updated.successUrl    || null,
+        guarantee_days: updated.guaranteeDays ?? null,
+        countdown_end:  updated.countdownEnd  || null,
         updated_at:    new Date().toISOString(),
       })
       .eq('id', updated.id)
@@ -1500,11 +1681,14 @@ export default function CheckoutClient({
         fields:        original.fields,
         methods:       original.methods,
         layout:        original.layout,
-        product_image: original.productImage || null,
-        status:        'draft',
-        visits:        0,
-        conversions:   0,
-        conversion:    0,
+        product_image:  original.productImage || null,
+        status:         'draft',
+        visits:         0,
+        conversions:    0,
+        conversion:     0,
+        success_url:    original.successUrl    || null,
+        guarantee_days: original.guaranteeDays ?? null,
+        countdown_end:  original.countdownEnd  || null,
       })
       .select('*')
       .single()
