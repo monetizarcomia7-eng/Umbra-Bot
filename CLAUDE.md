@@ -52,6 +52,8 @@ umbra-bot/
 │   │   │   ├── mercadopago-webhook/route.ts # Confirma pagamento (valida secret em prod)
 │   │   │   │                               # Aprovado: credita comissão via RPC credit_affiliate_sale (mig 058)
 │   │   │   │                               # Aprovado: insere alert type='sale', source='webhook', context chips
+│   │   │   │                               # Aprovado: chama fireCapiPurchase (lib/capi.ts) fire-and-forget
+│   │   │   │                               #   → envia evento Purchase para Meta CAPI / TikTok Events API / Google MP
 │   │   │   ├── mercadopago-oauth/route.ts  # GET: inicia fluxo OAuth MP → valida usuário + banco (IDOR-safe)
 │   │   │   │                               # gera state (20 bytes hex) → cookies httpOnly (mp_oauth_state, mp_oauth_bank)
 │   │   │   │                               # redireciona para https://auth.mercadopago.com/authorization
@@ -221,6 +223,9 @@ umbra-bot/
 │       │                          # auto-open VerifyPixelModal após salvar pixel novo (pendingVerifyRef),
 │       │                          # histórico last_test_at no card, Export JSON, Realtime dual-channel,
 │       │                          # auto-refresh 5 min (fetchPixelStats), match rate tip, 4 eventos PostHog
+│       │                          # dbStatus em PixelItem — computeStatus usa dbStatus quando sem eventos
+│       │                          #   (pixel verificado mostra 'healthy' em vez de 'waiting')
+│       │                          # SnippetCard — snippets HTML de instalação browser-side por provider
 │       ├── checkout/             # Checkout (mock)
 │       ├── biolink/              # Bio Link (mock)
 │       ├── webhooks/             # Webhooks (mock)
@@ -277,6 +282,10 @@ umbra-bot/
 │   ├── rate-limit.ts             # Redis (Upstash) + fallback memória
 │   ├── analytics-server.ts       # PostHog server-side capture
 │   ├── csv.ts                    # exportCSV()
+│   ├── capi.ts                   # fireCapiPurchase(data: CapiPurchaseData) → dispara Purchase CAPI
+│   │                             # Lê pixels com capi=true via admin client; sha256 em email/nome;
+│   │                             # event_id=txId (deduplicação Meta); Promise.allSettled por provider;
+│   │                             # Meta CAPI / TikTok Events API / Google Measurement Protocol
 │   └── supabase/
 │       ├── server.ts             # createClient() para Server Components / API Routes (anon key + cookies)
 │       ├── client.ts             # createClient() para Client Components (browser)
@@ -691,6 +700,11 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Trackeamento — migração 076: schema correto (UUID PK, provider col, UNIQUE user_id+provider, RLS, RPC) | ✅ Criada |
 | Trackeamento — migração 077: adiciona pixel_code (TikTok Pixel Code) e last_test_at à tabela pixels | ✅ Criada |
 | Trackeamento — 4 eventos PostHog: pixel_configured, pixel_verified, pixel_test_sent, utm_link_copied | ✅ Implementado |
+| Trackeamento — CAPI automático na venda: fireCapiPurchase() chamado pelo MP webhook após aprovação | ✅ Implementado |
+| Trackeamento — testPixelAction persiste status='healthy'/'warning' no banco após verificação | ✅ Implementado |
+| Trackeamento — dbStatus em PixelItem: computeStatus retorna 'healthy' para pixel verificado sem eventos | ✅ Implementado |
+| Trackeamento — SnippetCard: snippets HTML de instalação browser-side por provider (Meta/TikTok/Google) | ✅ Implementado |
+| Trackeamento — lib/capi.ts: fireCapiPurchase com sha256, event_id=txId, Promise.allSettled, Sentry por provider | ✅ Implementado |
 | Redirecionadores — Server Component SSR + RedirectsClient (dados reais, sem mock) | ✅ Funcional |
 | Redirecionadores — CRUD real (criar/editar/pausar/retomar/apagar) com .eq('user_id') IDOR-safe | ✅ Implementado |
 | Redirecionadores — analytics lazy por link via RPC redirect_analytics (by_day, by_source, by_device) | ✅ Implementado |
@@ -3461,13 +3475,23 @@ MERCADOPAGO_CLIENT_SECRET  # Client Secret (aba Credenciais do app MP)
 app/dashboard/tracking/
   ├── page.tsx          # Server Component — SSR pixels + RPC pixels_stats em paralelo
   │                     # exporta RawPixelRow e PixelStats (usadas pelo TrackingClient)
-  └── TrackingClient.tsx # Client Component — catálogo de providers, cards, modais, UTM
+  └── TrackingClient.tsx # Client Component — catálogo de providers, cards, modais, UTM, snippets
 
 app/actions/pixels.ts   # 4 Server Actions (todas autenticadas + rate-limit)
   ├── savePixelAction(provider, patch)    → upsert pixels (onConflict user_id,provider) + retorna { id }
   ├── testPixelAction(pixelDbId)         → verifica conexão via API do provider
+  │                                        + persiste status='healthy'/'warning' no banco (fire-and-forget)
   ├── sendTestPixelEvent(pixelDbId)      → envia evento de teste real + atualiza last_test_at
   └── fetchPixelStats()                  → re-busca pixels_stats RPC (auto-refresh)
+
+lib/capi.ts             # Disparo automático de eventos de conversão server-side
+  └── fireCapiPurchase(data: CapiPurchaseData) → void
+        Lê pixels com capi=true do banco (admin client); Promise.allSettled por provider
+        Meta CAPI:             POST /v19.0/{pixelId}/events — event_id=txId (deduplicação)
+        TikTok Events API:     POST /open_api/v1.3/pixel/track/ — pixel_code ?? pixel_id
+        Google Measurement:    POST /mp/collect — client_id=txId, evento purchase
+        sha256hex() em email/nome antes de enviar para Meta e TikTok (PII hashing)
+        Sentry.captureException() por provider — 1 falha não bloqueia as demais
 ```
 
 ### Fluxo de dados
@@ -3505,13 +3529,15 @@ TrackingClient (Client Component)
   │     google:  idLabel='ID de Medição (G-XXXXXXXX)', tokenLabel='API Secret do Measurement Protocol',
   │              capiLabel='Envio server-side (Measurement Protocol)'
   │
-  ├── mapRaw(row, cat, stats, now): constrói PixelItem
+  ├── mergePixels(rows, stats, now): constrói PixelItem[]
   │     hasToken: !!row.access_token  (token criptografado, nunca exposto ao client)
   │     pixelCode: row.pixel_code     (TikTok Pixel Code, null para outros providers)
   │     lastTestAt: row.last_test_at → Date.getTime() | null
-  │     status computado por computeStatus(pixelId, lastEventMs, now):
+  │     dbStatus: row.status          (status persistido no banco — 'healthy' após testPixelAction)
+  │     status computado por computeStatus(pixelId, dbStatus, lastEventMs, now):
   │       'inactive' se !pixelId
-  │       'waiting'  se pixelId mas sem lastEventMs (aguardando primeiro evento)
+  │       'healthy'  se !lastEventMs && dbStatus === 'healthy'  ← pixel verificado, ainda sem eventos
+  │       'waiting'  se pixelId mas sem lastEventMs (e dbStatus ≠ 'healthy')
   │       'healthy'  se lastEventMs < 30 min atrás
   │       'warning'  se lastEventMs entre 30–60 min
   │       'error'    se lastEventMs > 60 min
@@ -3571,6 +3597,15 @@ TrackingClient (Client Component)
   │     resultado exibido em textarea readonly
   │     handleCopy(): navigator.clipboard.writeText + track('utm_link_copied', { has_utm })
   │
+  ├── SnippetCard (visível apenas quando hasAnyPixelConfigured):
+  │     buildBrowserSnippet(provider, pixelId, pixelCode?): gera snippet HTML pronto para o <head>
+  │       Meta:   fbevents.js (snippet oficial) com fbq('init', pixelId)
+  │       TikTok: ttq.load(pixelCode ?? pixelId) — usa Pixel Code se disponível
+  │       Google: gtag.js com gtag('config', measurementId)
+  │     Exibe 1 bloco por provider configurado (pixelId != null)
+  │     Cada bloco: logo+nome+pixelId chip + botão "Copiar" (isCopied toggle) + <pre> com snippet
+  │     Seção "Instalação browser-side" com separador h2
+  │
   ├── Banner global (sempre visível, mesmo sem pixels configurados):
   │     Exibe stats (events_sent_today, matched, last_event) ou texto de orientação
   │     Explica que stats são compartilhados (checkout_events não tem coluna por provider)
@@ -3623,7 +3658,8 @@ interface PixelItem {
   pixelId:        string | null
   pixelCode:      string | null        // TikTok Pixel Code — migração 077
   hasToken:       boolean
-  status:         'healthy' | 'waiting' | 'warning' | 'error' | 'inactive'  // 'waiting' = novo estado
+  dbStatus:       string               // status do banco — 'healthy' após testPixelAction ok
+  status:         'healthy' | 'waiting' | 'warning' | 'error' | 'inactive'
   events:         Record<string, boolean>
   capi:           boolean
   lastTestAt:     number | null        // ms timestamp — migração 077
@@ -3648,6 +3684,8 @@ interface PixelItem {
 // TikTok: GET business-api.tiktok.com/open_api/v1.3/pixel/list/?advertiser_id={pixelId} → code===0
 //         param: advertiserId (Advertiser ID em pixel_id); não usa pixel_code
 // Google: valida formato /^G-[A-Z0-9]{4,12}$/i (sem chamada de API — formato basta)
+// Após obter resultado: UPDATE pixels SET status='healthy'|'warning' (fire-and-forget)
+//   → Realtime propaga o novo status para o client → card exibe 'healthy' mesmo sem eventos
 
 // sendTestPixelEvent(pixelDbId): envia evento real de teste ao provider
 // rate limit 5/min; requer pixel_id + access_token; busca pixel_code também (migração 077)
@@ -3721,12 +3759,12 @@ returns json language sql stable security invoker
 | status | Label | Condição |
 |---|---|---|
 | `inactive` | Inativo | pixel_id não configurado |
-| `waiting` | Aguardando evento | pixel_id configurado mas sem eventos ainda |
-| `healthy` | Ativo | último evento < 30 min atrás |
+| `waiting` | Aguardando evento | pixel_id configurado, sem eventos e dbStatus ≠ 'healthy' |
+| `healthy` | Ativo | último evento < 30 min **OU** dbStatus='healthy' sem eventos (verificado manualmente) |
 | `warning` | Volume baixo | último evento entre 30–60 min |
 | `error` | Sem eventos | último evento > 60 min |
 
-O estado `waiting` é distinto de `warning` — indica que o pixel está configurado corretamente mas ainda não recebeu seu primeiro evento de checkout (situação normal para pixels recém-adicionados).
+O estado `waiting` é distinto de `warning` — indica que o pixel está configurado mas ainda não recebeu seu primeiro evento de checkout. Após o `testPixelAction` retornar ok, o banco é atualizado para `status='healthy'` e o card passa a mostrar 'healthy' mesmo sem eventos reais de checkout, refletindo que a conexão foi verificada com sucesso.
 
 ### Stats globais — nota arquitetural
 
