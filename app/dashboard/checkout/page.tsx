@@ -57,7 +57,7 @@ export default async function CheckoutPage() {
   ] = await Promise.all([
     supabase
       .from('checkouts')
-      .select('*')
+      .select('id, name, slug, product_name, product_desc, price, installments, gateway, pixel, primary_color, bg_variant, font, logo, badge, fields, methods, layout, status, visits, conversions, conversion, created_at, updated_at')
       .eq('user_id', user.id)
       .order('updated_at', { ascending: false })
       .limit(50),

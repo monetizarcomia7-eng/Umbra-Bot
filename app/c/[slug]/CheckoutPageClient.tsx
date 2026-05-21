@@ -5,16 +5,19 @@ import {
   Lock, Zap, CreditCard, FileText, User, Mail, BadgeCheck,
   Phone, MapPin, Loader2, Check, AlertTriangle, X, QrCode, RefreshCw,
 } from 'lucide-react'
-import type { PublicCheckout } from './page'
+import type { PublicCheckout }   from './page'
+import PixelScripts              from './PixelScripts'
+import type { PublicPixelConfig } from './PixelScripts'
 
 /* ─── Types ──────────────────────────────────────────────── */
 
 interface CheckoutPageClientProps {
-  checkout:    PublicCheckout
-  utmSource?:  string
-  utmMedium?:  string
+  checkout:     PublicCheckout
+  pixels?:      PublicPixelConfig[]
+  utmSource?:   string
+  utmMedium?:   string
   utmCampaign?: string
-  appUrl:      string
+  appUrl:       string
 }
 
 interface FieldDef {
@@ -47,7 +50,7 @@ const fmtBRL = (n: number) =>
 /* ─── Component ──────────────────────────────────────────── */
 
 export default function CheckoutPageClient({
-  checkout, utmSource, utmMedium, utmCampaign, appUrl,
+  checkout, pixels = [], utmSource, utmMedium, utmCampaign, appUrl,
 }: CheckoutPageClientProps) {
   const c       = checkout
   const isDark  = c.bg_variant === 'dark'
@@ -477,6 +480,14 @@ export default function CheckoutPageClient({
       >
         Powered by <strong>Umbra Bot</strong> · Pagamentos processados com segurança
       </footer>
+
+      {/* Pixels browser-side: PageView, InitiateCheckout, Purchase */}
+      <PixelScripts
+        pixels={pixels}
+        step={step}
+        price={c.price}
+        productName={c.product_name}
+      />
     </div>
   )
 }

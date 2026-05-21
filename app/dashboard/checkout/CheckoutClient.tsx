@@ -550,9 +550,16 @@ function CheckoutPreview({ checkout, gatewayChoices }: { checkout: Checkout; gat
    Slug Card
    ============================================================ */
 
-function SlugCard({ slug, setSlug, appUrl }: { slug: string; setSlug: (v: string) => void; appUrl: string }) {
-  const [copied, setCopied] = useState(false)
-  const publicUrl = `${appUrl}/c/${slug}`
+function SlugCard({
+  slug, setSlug, appUrl, checkoutId,
+}: {
+  slug: string; setSlug: (v: string) => void; appUrl: string; checkoutId: string
+}) {
+  const [copied,      setCopied]    = useState(false)
+  const [slugStatus,  setSlugStatus] = useState<'idle' | 'checking' | 'ok' | 'taken'>('idle')
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const publicUrl   = `${appUrl}/c/${slug}`
+  const sb          = createClient()
 
   function copyLink() {
     navigator.clipboard.writeText(publicUrl).then(() => {
@@ -561,15 +568,41 @@ function SlugCard({ slug, setSlug, appUrl }: { slug: string; setSlug: (v: string
     })
   }
 
+  function handleSlugChange(raw: string) {
+    const safe = raw.toLowerCase().replace(/[^a-z0-9-]+/g, '-').slice(0, 60)
+    setSlug(safe)
+    setSlugStatus('checking')
+
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(async () => {
+      if (!safe) { setSlugStatus('idle'); return }
+      const { data } = await sb
+        .from('checkouts')
+        .select('id')
+        .eq('slug', safe)
+        .neq('id', checkoutId)
+        .maybeSingle()
+      setSlugStatus(data ? 'taken' : 'ok')
+    }, 500)
+  }
+
+  const borderColor =
+    slugStatus === 'taken' ? 'border-red-500/70' :
+    slugStatus === 'ok'    ? 'border-green-500/70' :
+    'border-[var(--border)]'
+
   return (
     <SectionCard title="URL pública do checkout" subtitle="Slug é o caminho público — usuários acessam por este link.">
-      <div className="flex items-center bg-[var(--surface-2)]/40 border border-[var(--border)] rounded-lg overflow-hidden">
+      <div className={`flex items-center bg-[var(--surface-2)]/40 border rounded-lg overflow-hidden ${borderColor}`}>
         <span className="px-3 text-[12.5px] text-[var(--text-muted)] font-mono whitespace-nowrap">umbra.bot/c/</span>
         <input
           type="text" value={slug}
-          onChange={(e) => setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]+/g, '-').slice(0, 60))}
+          onChange={(e) => handleSlugChange(e.target.value)}
           className="flex-1 h-10 pr-3 bg-transparent text-[13px] font-mono text-[var(--text)] focus:outline-none"
         />
+        {slugStatus === 'checking' && <Loader2 size={13} className="mr-2 animate-spin text-[var(--text-muted)]" />}
+        {slugStatus === 'ok'       && <Check   size={13} className="mr-2 text-green-500" />}
+        {slugStatus === 'taken'    && <AlertTriangle size={13} className="mr-2 text-red-500" />}
         <button
           onClick={copyLink}
           className="h-10 px-3 border-l border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface-2)] transition-colors flex items-center gap-1.5 text-[12px] shrink-0"
@@ -578,6 +611,11 @@ function SlugCard({ slug, setSlug, appUrl }: { slug: string; setSlug: (v: string
           {copied ? <Check size={13} className="text-green-500" /> : <Copy size={13} />}
         </button>
       </div>
+      {slugStatus === 'taken' && (
+        <p className="text-[11.5px] text-red-500 mt-1.5 flex items-center gap-1">
+          <AlertTriangle size={11} /> Este slug já está em uso por outro checkout.
+        </p>
+      )}
     </SectionCard>
   )
 }
@@ -852,7 +890,7 @@ function CheckoutEditor({ checkout, gatewayChoices, pixelChoices, appUrl, onBack
           <div className="grid grid-cols-1 xl:grid-cols-[1fr_580px] gap-5 items-start">
             {/* Editor column */}
             <div className="space-y-4 min-w-0">
-              <SlugCard slug={draft.slug} setSlug={(v) => set({ slug: v })} appUrl={appUrl} />
+              <SlugCard slug={draft.slug} setSlug={(v) => set({ slug: v })} appUrl={appUrl} checkoutId={draft.id} />
 
               {/* Identidade */}
               <SectionCard title="Identidade visual" subtitle="Como sua marca aparece no topo do checkout">
