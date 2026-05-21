@@ -463,24 +463,36 @@ CONSTRAINT: `notification_prefs_user_id_key UNIQUE (user_id)`
 ## public.pixels
 
 ```
-id:                 text        NOT NULL
-name:               text        NOT NULL
-full_name:          text        NOT NULL  default ''
-description:        text        NOT NULL  default ''
-initial:            text        NOT NULL  default ''
-color:              text        NOT NULL  default ''
-pixel_id:           text
-access_token:       text
-status:             text        NOT NULL  default 'inactive'
-events_sent_today:  integer     NOT NULL  default 0
-events_matched:     integer     NOT NULL  default 0
-last_event:         bigint
-events:             jsonb       NOT NULL  default '{}'
-capi:               boolean     NOT NULL  default false
-created_at:         timestamptz NOT NULL  default now()
-updated_at:         timestamptz NOT NULL  default now()
-user_id:            uuid        FK → auth.users(id)
+id:           uuid        NOT NULL  default gen_random_uuid()
+user_id:      uuid        NOT NULL  FK → auth.users(id)  ON DELETE CASCADE
+provider:     text        NOT NULL  check in ('meta', 'tiktok', 'google')
+pixel_id:     text                  (ID do pixel/advertiser/measurement)
+access_token: text                  (criptografado AES-256-GCM — enc:<iv>:<tag>:<cipher>)
+status:       text        NOT NULL  default 'inactive'  check in ('healthy','warning','error','inactive')
+events:       jsonb       NOT NULL  default '{}'        (mapa evento→boolean)
+capi:         boolean     NOT NULL  default false
+created_at:   timestamptz NOT NULL  default now()
+updated_at:   timestamptz NOT NULL  default now()
 ```
+
+CONSTRAINT: `pixels_user_provider_key UNIQUE (user_id, provider)` — 1 row por provider por usuário
+RLS: `pixels_owner` → `auth.uid() = user_id` (migração 076 — substituiu schema com IDOR crítico)
+Trigger: `pixels_updated_at` (chama `set_updated_at()`)
+
+**Migração 076** corrigiu problemas críticos do schema anterior:
+- PK era `text` ('meta'|'tiktok'|'google') → colisão entre usuários
+- RLS `pixels_open` (`using true`) → IDOR crítico
+- `access_token` em plain text → agora criptografado pela app
+- Sem `UNIQUE(user_id, provider)` → agora garantido em nível de banco
+
+RPC `pixels_stats(p_user_id uuid)` → `json`:
+```json
+{ "events_sent_today": 5, "events_matched": 3, "last_event": "2026-05-21T12:34:56Z" }
+```
+- `events_sent_today`: count de `checkout_events` nas últimas 24h
+- `events_matched`: subset com contato que tem email ou phone
+- `last_event`: MAX(created_at) de checkout_events para o user
+- Stats são globais por usuário (todos os providers compartilham o mesmo pool de eventos)
 
 ---
 

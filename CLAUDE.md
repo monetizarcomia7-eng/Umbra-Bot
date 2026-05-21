@@ -213,7 +213,12 @@ umbra-bot/
 │       │                          # Toast de resultado OAuth ao retornar (mpConnected / mpError), limpa URL
 │       │                          # 3 eventos PostHog: gateway_disconnected, gateway_configured, gateway_connection_tested
 │       │                          # Rate limit server-side (validate: 15/h, connect: 10/h)
-│       ├── tracking/             # Trackeamento (mock)
+│       ├── tracking/             # Trackeamento — dados reais do Supabase (SSR + Client)
+│       │   ├── page.tsx          # Server Component: SSR pixels + RPC pixels_stats em paralelo; exporta RawPixelRow e PixelStats
+│       │   └── TrackingClient.tsx # Client Component: PIXEL_CATALOG (Meta/TikTok/Google), PixelCard com stats,
+│       │                          # VerifyPixelModal (testPixelAction + sendTestPixelEvent), UTM link generator,
+│       │                          # Realtime dual-channel (pixels + checkout_events), auto-refresh 5 min (fetchPixelStats),
+│       │                          # ExpiryBadge de status, match rate tip, validação URL, 4 eventos PostHog
 │       ├── checkout/             # Checkout (mock)
 │       ├── biolink/              # Bio Link (mock)
 │       ├── webhooks/             # Webhooks (mock)
@@ -659,6 +664,23 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Gateways — KPI cards: conectados / volume 30d / transações 30d / taxa média | ✅ Implementado |
 | Gateways — migração 074: RLS owner, UNIQUE(user_id,provider), account_id FK, RPC gateways_stats | ✅ Implementado |
 | Gateways — GATEWAY_CATALOG com apenas mercadopago (outros re-adicionados quando integração for construída) | ✅ Implementado |
+| Trackeamento — Server Component SSR + TrackingClient (dados reais, migração 076) | ✅ Funcional |
+| Trackeamento — tabela pixels: UUID PK, UNIQUE(user_id,provider), RLS owner, token AES-256-GCM | ✅ Implementado |
+| Trackeamento — RPC pixels_stats: events_sent_today + events_matched + last_event (de checkout_events) | ✅ Implementado |
+| Trackeamento — PIXEL_CATALOG: Meta, TikTok, Google com idLabel/tokenLabel/capiLabel por provider | ✅ Implementado |
+| Trackeamento — savePixelAction: encryptToken + upsert onConflict(user_id,provider), status='warning' se pixel_id | ✅ Implementado |
+| Trackeamento — testPixelAction: Meta Graph API / TikTok Business API / GA4 format validation | ✅ Implementado |
+| Trackeamento — sendTestPixelEvent: Meta TEST00001 (CAPI) / TikTok TEST_EVENT / GA4 /debug/mp/collect | ✅ Implementado |
+| Trackeamento — fetchPixelStats: Server Action para auto-refresh (setInterval 5 min no client) | ✅ Implementado |
+| Trackeamento — Realtime dual-channel: 'pixels-tracking' (UPDATE) + 'checkout-events-tracking' (INSERT) | ✅ Implementado |
+| Trackeamento — VerifyPixelModal: botão "Enviar evento de teste" com rate limit 5/min | ✅ Implementado |
+| Trackeamento — Match rate tip: aviso quando < 70% sem CAPI configurado | ✅ Implementado |
+| Trackeamento — UTM link generator: validação URL via new URL() + copy com feedback | ✅ Implementado |
+| Trackeamento — Status tooltip via HTML title attribute (badge com cursor-help) | ✅ Implementado |
+| Trackeamento — Labels corrigidos: TikTok Advertiser ID, Google Measurement Protocol, GA4 API Secret | ✅ Corrigido |
+| Trackeamento — Banner de stats globais explicando que checkout_events é compartilhado entre providers | ✅ Implementado |
+| Trackeamento — migração 076: schema correto (UUID PK, provider col, UNIQUE user_id+provider, RLS, RPC) | ✅ Criada |
+| Trackeamento — 4 eventos PostHog: pixel_configured, pixel_verified, pixel_test_sent, utm_link_copied | ✅ Implementado |
 | Redirecionadores — Server Component SSR + RedirectsClient (dados reais, sem mock) | ✅ Funcional |
 | Redirecionadores — CRUD real (criar/editar/pausar/retomar/apagar) com .eq('user_id') IDOR-safe | ✅ Implementado |
 | Redirecionadores — analytics lazy por link via RPC redirect_analytics (by_day, by_source, by_device) | ✅ Implementado |
@@ -764,6 +786,10 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | `campaign_paused` | `RemarketingClient.tsx` — ao pausar campanha (inclui trigger) |
 | `campaign_deleted` | `RemarketingClient.tsx` — ao apagar campanha (confirmação modal) |
 | `csv_exported` | `RemarketingClient.tsx` (CampaignList) — ao exportar CSV de campanhas (inclui section: 'remarketing', rows) |
+| `pixel_configured` | `TrackingClient.tsx` — ao salvar configuração de pixel (inclui provider + has_capi + events_enabled_count) |
+| `pixel_verified` | `TrackingClient.tsx` — ao verificar conexão do pixel (inclui provider + status: 'ok'\|'error') |
+| `pixel_test_sent` | `TrackingClient.tsx` — ao enviar evento de teste via CAPI (inclui provider) |
+| `utm_link_copied` | `TrackingClient.tsx` — ao copiar link UTM gerado (inclui has_utm: boolean) |
 
 ---
 
@@ -3414,3 +3440,220 @@ MERCADOPAGO_CLIENT_SECRET  # Client Secret (aba Credenciais do app MP)
 | `gateway_disconnected` | ao desconectar gateway | `{ gateway: provider }` |
 | `gateway_configured` | ao salvar conta bancária de recebimento | `{ gateway: provider }` |
 | `gateway_connection_tested` | ao verificar conexão | `{ gateway: provider, success: boolean }` |
+
+---
+
+## 25. MÓDULO DE TRACKEAMENTO
+
+### Arquivos
+
+```
+app/dashboard/tracking/
+  ├── page.tsx          # Server Component — SSR pixels + RPC pixels_stats em paralelo
+  │                     # exporta RawPixelRow e PixelStats (usadas pelo TrackingClient)
+  └── TrackingClient.tsx # Client Component — catálogo de providers, cards, modais, UTM
+
+app/actions/pixels.ts   # 4 Server Actions (todas autenticadas + rate-limit)
+  ├── savePixelAction(provider, patch)    → upsert pixels (onConflict user_id,provider)
+  ├── testPixelAction(pixelDbId)         → verifica conexão via API do provider
+  ├── sendTestPixelEvent(pixelDbId)      → envia evento de teste real ao provider
+  └── fetchPixelStats()                  → re-busca pixels_stats RPC (auto-refresh)
+```
+
+### Fluxo de dados
+
+```
+TrackingPage (Server Component)
+  ├── Auth guard: if (!user) redirect('/login')
+  ├── Promise.all em paralelo:
+  │     ├── pixels: id, provider, pixel_id, access_token, status, events, capi, created_at, updated_at
+  │     │           filtrado por user_id, order: created_at asc
+  │     └── RPC pixels_stats(p_user_id): { events_sent_today, events_matched, last_event }
+  └── passa como props:
+        initialPixels: RawPixelRow[]
+        initialStats: PixelStats
+        userId: string
+
+TrackingClient (Client Component)
+  ├── pixels state: initialPixels.map(mapRaw) — nunca usa mock
+  ├── stats state: initialStats — { events_sent_today, events_matched, last_event }
+  │
+  ├── Auto-refresh a cada 5 min:
+  │     setInterval → fetchPixelStats() → setStats(fresh)
+  │     atualiza status dos pixels com base em last_event
+  │
+  ├── Realtime dual-channel:
+  │     Canal 1 — 'pixels-tracking': event UPDATE, table pixels, filter user_id=eq.${userId}
+  │       → atualiza pixel inline no state (status, pixelId, hasToken, events, capi)
+  │     Canal 2 — 'checkout-events-tracking': event INSERT, table checkout_events, filter user_id=eq.${userId}
+  │       → incrementa events_sent_today em 1 (contador ao vivo sem re-fetch)
+  │
+  ├── PIXEL_CATALOG (estático, 3 providers):
+  │     meta:    idLabel='Meta Pixel ID', tokenLabel='Access Token da Conversions API', capiLabel='CAPI'
+  │     tiktok:  idLabel='TikTok Advertiser ID', tokenLabel='Access Token da Events API', capiLabel='Events API'
+  │     google:  idLabel='ID de Medição (G-XXXXXXXX)', tokenLabel='API Secret do Measurement Protocol',
+  │              capiLabel='Envio server-side (Measurement Protocol)'
+  │
+  ├── mapRaw(row):
+  │     hasToken: !!row.access_token  (token criptografado, nunca exposto ao client)
+  │     lastEventMs: row.last_event * 1000 (unix ms do último evento de checkout)
+  │     status computado: 'healthy' se lastEventMs > agora-24h; 'warning' se pixelId+!hasToken; 'inactive' senão
+  │     eventsSentToday: stats.events_sent_today (global — ver nota abaixo)
+  │     matchRate: stats.events_sent_today > 0 ? (stats.events_matched/stats.events_sent_today)*100 : 0
+  │
+  ├── PixelCard (por provider do PIXEL_CATALOG):
+  │     grid 2-col: stats (events_sent_today + match_rate) | configuração
+  │     StatT com prop note="global": indica que stats são compartilhados entre todos os providers
+  │     Match rate tip: quando matchRate < 70 e !pixel.hasToken → aviso inline
+  │       "Configure o access token para ativar o envio server-side e melhorar a atribuição."
+  │     Status badge: Bdg com title="" (tooltip via HTML title nativo) + cursor-help
+  │     Botão "Verificar" → abre VerifyPixelModal
+  │     Botão inline "Salvar" → savePixelAction → track('pixel_configured', {...})
+  │
+  ├── VerifyPixelModal:
+  │     running state + log state (linhas de feedback)
+  │     runTest(): testPixelAction(pixel.id) → append ao log → verdict ok/error
+  │       track('pixel_verified', { provider, status: result.ok ? 'ok' : 'error' })
+  │     runTestEvent() (botão "Enviar evento de teste"):
+  │       sendTestPixelEvent(pixel.id) → append ao log → verdict
+  │       track('pixel_test_sent', { provider })
+  │       canSendTest: pixel.pixelId && pixel.id && pixel.hasToken && !running && !sendingTest
+  │     Log: lista scrollável com ícones ✓/✗ + latência
+  │
+  ├── UTMBuilderCard:
+  │     Inputs: URL base, source, medium, campaign, content, term
+  │     isValidUrl(s): new URL(s) + check http/https protocol → false mostra borda vermelha
+  │     resultado exibido em textarea readonly
+  │     handleCopy(): navigator.clipboard.writeText + track('utm_link_copied', { has_utm })
+  │
+  ├── Banner global (quando hasAnyPixelConfigured):
+  │     Explica que stats são compartilhados (checkout_events não tem coluna por provider)
+  │     Atualiza em tempo real via Realtime + a cada 5 min automaticamente
+  │
+  └── Link "Documentação": /dashboard/docs/07-analytics/visao-geral-analytics
+```
+
+### Interfaces TypeScript
+
+```typescript
+export interface RawPixelRow {
+  id:           string
+  provider:     string
+  pixel_id:     string | null
+  access_token: string | null  // criptografado — indica hasToken; nunca descriptografado no client
+  status:       string
+  events:       Record<string, boolean>
+  capi:         boolean
+  created_at:   string
+  updated_at:   string
+}
+
+export interface PixelStats {
+  events_sent_today: number
+  events_matched:    number
+  last_event:        string | null  // ISO timestamp
+}
+
+export interface PixelPatch {
+  pixelId:    string | null
+  newToken:   string | null  // null = usuário não digitou nada
+  clearToken: boolean        // true = usuário limpou o campo explicitamente
+  events:     Record<string, boolean>
+  capi:       boolean
+}
+
+export interface TestResult {
+  ok:      boolean
+  message: string
+  latency: number | null
+}
+```
+
+### Server Actions (app/actions/pixels.ts)
+
+```typescript
+// savePixelAction(provider, patch): upsert na tabela pixels
+// userId sempre do servidor (IDOR-safe), rate limit 20/min
+// access_token: encryptToken(newToken) se digitou; null se clearToken; mantém se não tocou
+// status: 'warning' se pixelId preenchido (aguardando teste); 'inactive' se vazio
+
+// testPixelAction(pixelDbId): verifica conexão com API do provider
+// rate limit 10/min; decryptToken(access_token); userId validado (.eq 'user_id', user.id)
+// Meta:   GET graph.facebook.com/v19.0/{pixelId}?fields=id,name → verifica data.id
+// TikTok: GET business-api.tiktok.com/open_api/v1.3/pixel/list/?advertiser_id={pixelId} → code===0
+// Google: valida formato /^G-[A-Z0-9]{6,12}$/i (sem chamada de API — formato basta)
+
+// sendTestPixelEvent(pixelDbId): envia evento real de teste ao provider
+// rate limit 5/min; requer pixel_id + access_token
+// Meta:   POST /v19.0/{pixelId}/events com test_event_code='TEST00001'
+//           evento Purchase, currency=BRL, value=1.00 — visível no Gerenciador de Eventos
+// TikTok: POST /open_api/v1.3/pixel/track/ com test_event_code='TEST_EVENT'
+//           evento CompletePayment, currency=BRL, value='1.00'
+// Google: POST /debug/mp/collect (NÃO polui dados de produção — endpoint de validação)
+//           evento purchase; retorna validationMessages — ok se vazio
+
+// fetchPixelStats(): re-busca RPC pixels_stats para auto-refresh no client
+// rate limit implícito pelo Supabase; retorna { events_sent_today, events_matched, last_event }
+```
+
+### Tabela pixels — schema correto (migração 076)
+
+```sql
+create table public.pixels (
+  id           uuid        primary key default gen_random_uuid(),
+  user_id      uuid        not null references auth.users(id) on delete cascade,
+  provider     text        not null check (provider in ('meta', 'tiktok', 'google')),
+  pixel_id     text,
+  access_token text,   -- criptografado AES-256-GCM (enc:<iv>:<tag>:<cipher>)
+  status       text    not null default 'inactive'
+                         check (status in ('healthy', 'warning', 'error', 'inactive')),
+  events       jsonb   not null default '{}',
+  capi         boolean not null default false,
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now(),
+  constraint   pixels_user_provider_key unique (user_id, provider)
+);
+-- Índices: pixels_user_id_idx, pixels_status_idx
+-- Trigger: pixels_updated_at (chama set_updated_at())
+-- RLS: pixels_owner → auth.uid() = user_id (for all)
+```
+
+**Problemas corrigidos pela migração 076:**
+- PK era `text` (`'meta'|'tiktok'|'google'`) → colisão entre usuários (IDOR crítico)
+- RLS `pixels_open` (`using true`) → qualquer autenticado via SDK direto podia ler pixels alheios
+- `access_token` em plain text → agora criptografado AES-256-GCM pela app antes de salvar
+- Sem `UNIQUE(user_id, provider)` → múltiplos rows impossíveis por design mas não garantido
+
+### RPC pixels_stats (migração 076)
+
+```sql
+create or replace function public.pixels_stats(p_user_id uuid)
+returns json language sql stable security invoker
+-- Retorna: { events_sent_today, events_matched, last_event }
+-- events_sent_today: count de checkout_events nas últimas 24h para o user
+-- events_matched: subset com contato que tem email ou phone (atribuíveis)
+-- last_event: MAX(created_at) de checkout_events para o user
+-- Nota: stats são globais por usuário (todos os providers recebem os mesmos eventos de checkout)
+-- grant execute to authenticated
+```
+
+### Stats globais — nota arquitetural
+
+A tabela `checkout_events` não tem coluna `provider`, portanto os stats exibidos em cada `PixelCard` são idênticos (o mesmo pool de eventos de checkout). O banner explicativo e o `note="global"` no `StatT` deixam isso claro para o usuário. Para stats por provider seria necessário adicionar uma coluna `provider` à tabela `checkout_events` e filtrar na RPC.
+
+### Segurança
+
+- `access_token` nunca incluído na leitura do `page.tsx` sem ser descriptografado (só `!!row.access_token` chega ao client como `hasToken`)
+- `savePixelAction` e `testPixelAction` leem `userId` do servidor via `supabase.auth.getUser()` — IDOR-safe
+- `testPixelAction` valida `.eq('user_id', user.id)` antes de descriptografar — cross-user prevented
+- Rate limits separados: save 20/min, test 10/min, test_event 5/min
+- Tokens criptografados AES-256-GCM com `BOT_TOKEN_ENCRYPTION_KEY` (mesma chave dos bots)
+
+### Eventos PostHog do módulo
+
+| Evento | Quando | Props |
+|---|---|---|
+| `pixel_configured` | ao salvar configuração de um pixel | `{ provider, has_capi, events_enabled_count }` |
+| `pixel_verified` | ao verificar conexão via API | `{ provider, status: 'ok' \| 'error' }` |
+| `pixel_test_sent` | ao enviar evento de teste (CAPI/Events API) | `{ provider }` |
+| `utm_link_copied` | ao copiar link UTM gerado | `{ has_utm: boolean }` |
