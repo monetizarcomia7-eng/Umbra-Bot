@@ -385,6 +385,26 @@ user_id:          uuid        FK → auth.users(id)
 provider:         text
 status:           text        NOT NULL  default 'pending'
 credentials:      jsonb       NOT NULL  default '{}'
+account_id:       uuid        FK → bank_accounts(id)  ON DELETE SET NULL
+token_expires_at: timestamptz           (NULL = token manual sem expiração definida)
+```
+
+CONSTRAINT: `gateways_user_provider_key UNIQUE (user_id, provider)` — permite upsert onConflict
+RLS: `gateways_owner` → `auth.uid() = user_id` (migração 074 — substituiu policy open)
+
+Coluna `credentials` armazena:
+- Conexão manual: `{ token: "enc:<iv>:<tag>:<cipher>" }`
+- Conexão OAuth:  `{ token: "enc:...", account_info: "email@user.com", oauth: true }`
+
+Coluna `token_expires_at`:
+- Preenchida pelo callback OAuth = `now() + 180 dias` (limite do MP OAuth)
+- Zerada para NULL ao desconectar (`disconnectGatewayAction`)
+- NULL = conexão manual (sem expiração definida)
+- Migração 075: `alter table public.gateways add column if not exists token_expires_at timestamptz`
+
+RPC `gateways_stats(p_user_id uuid)` → `json`:
+```json
+{ "mercadopago": { "volume_30d": 1500.00, "tx_30d": 12, "avg_fee_pct": 0.99 } }
 ```
 
 ---

@@ -14,6 +14,7 @@ export interface RawGateway {
   updated_at: string
   processed_volume: number
   processed_tx: number
+  token_expires_at: string | null
 }
 
 export interface RawBankAccount {
@@ -42,7 +43,7 @@ export default async function GatewaysPage({
   const [gatewaysRes, bankAccountsRes, statsRes] = await Promise.all([
     supabase
       .from('gateways')
-      .select('id, name, connected, account, account_id, provider, status, updated_at, processed_volume, processed_tx')
+      .select('id, name, connected, account, account_id, provider, status, updated_at, processed_volume, processed_tx, token_expires_at')
       .eq('user_id', user.id)
       .order('updated_at', { ascending: false }),
 

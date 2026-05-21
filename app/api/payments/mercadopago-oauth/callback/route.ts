@@ -96,20 +96,25 @@ export async function GET(request: Request) {
   }
 
   // Salva o token criptografado no banco
-  const encryptedToken = encryptToken(accessToken)
+  // token_expires_at = 180 dias a partir de agora (limite do MP OAuth)
+  const encryptedToken  = encryptToken(accessToken)
+  const tokenIssuedAt   = new Date()
+  const tokenExpiresAt  = new Date(tokenIssuedAt.getTime() + 180 * 24 * 60 * 60 * 1000)
+
   const { error: dbErr } = await supabase
     .from('gateways')
     .upsert(
       {
-        user_id:     user.id,
-        provider:    'mercadopago',
-        name:        'Mercado Pago',
-        connected:   true,
-        status:      'active',
-        account:     accountLabel || accountInfo,
-        account_id:  bankAccountId || null,
-        credentials: { token: encryptedToken, account_info: accountInfo, oauth: true },
-        updated_at:  new Date().toISOString(),
+        user_id:          user.id,
+        provider:         'mercadopago',
+        name:             'Mercado Pago',
+        connected:        true,
+        status:           'active',
+        account:          accountLabel || accountInfo,
+        account_id:       bankAccountId || null,
+        credentials:      { token: encryptedToken, account_info: accountInfo, oauth: true },
+        token_expires_at: tokenExpiresAt.toISOString(),
+        updated_at:       tokenIssuedAt.toISOString(),
       },
       { onConflict: 'user_id,provider' },
     )

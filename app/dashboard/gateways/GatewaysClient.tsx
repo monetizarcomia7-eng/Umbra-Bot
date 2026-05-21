@@ -6,10 +6,11 @@ import {
   Plug, TrendingUp, ArrowLeftRight, Percent, Landmark, RefreshCw,
   Zap, CreditCard, FileText, Settings, Unplug, Check, X, Eye, EyeOff,
   Info, AlertCircle, ChevronRight, Loader2, Scissors, CheckCircle2, XCircle,
-  ExternalLink, Globe,
+  ExternalLink, Globe, RotateCcw, Clock,
 } from 'lucide-react'
 import { PageHeader } from '@/components/dashboard/PageHeader'
 import { useAnalytics } from '@/hooks/use-analytics'
+import { createClient } from '@/lib/supabase/client'
 import {
   connectGatewayAction,
   disconnectGatewayAction,
@@ -24,30 +25,40 @@ import type { RawGateway, RawBankAccount, GatewayStats } from './page'
 interface GatewayFee { pix?: number; card?: number; boleto?: number }
 
 interface GatewayItem {
-  id:          string | null
-  provider:    string
-  name:        string
-  description: string
-  initial:     string
-  color:       string
-  methods:     string[]
-  fee:         GatewayFee
-  feeText:     string
-  connected:   boolean
-  account?:    string
-  accountId?:  string
-  lastSync?:   number
-  volume30d:   number
-  tx30d:       number
+  id:             string | null
+  provider:       string
+  name:           string
+  description:    string
+  initial:        string
+  color:          string
+  methods:        string[]
+  fee:            GatewayFee
+  feeText:        string
+  externalUrl:    string
+  externalLabel:  string
+  connected:      boolean
+  account?:       string
+  accountId?:     string
+  lastSync?:      number
+  volume30d:      number
+  tx30d:          number
+  avgFeePct:      number   // avg_fee_pct real das transações (RPC)
+  tokenExpiresAt?: number  // ms timestamp — só OAuth
 }
 
 // ─── Static catalog ───────────────────────────────────────────────────────────
 
-const GATEWAY_CATALOG: Record<string, Omit<GatewayItem, 'id' | 'provider' | 'connected' | 'account' | 'accountId' | 'lastSync' | 'volume30d' | 'tx30d'>> = {
+const GATEWAY_CATALOG: Record<string, Omit<GatewayItem, 'id' | 'provider' | 'connected' | 'account' | 'accountId' | 'lastSync' | 'volume30d' | 'tx30d' | 'avgFeePct' | 'tokenExpiresAt'>> = {
   mercadopago: {
-    name: 'Mercado Pago', initial: 'M', color: 'oklch(0.62 0.16 240)',
-    description: 'Gateway tradicional com Pix, cartão (até 12x) e boleto. Antifraude integrado.',
-    methods: ['Pix', 'Cartão', 'Boleto'], fee: { pix: 0.99, card: 4.99, boleto: 3.49 }, feeText: 'A partir de 0,99%',
+    name:          'Mercado Pago',
+    initial:       'M',
+    color:         'oklch(0.62 0.16 240)',
+    description:   'Gateway tradicional com Pix, cartão (até 12x) e boleto. Antifraude integrado.',
+    methods:       ['Pix', 'Cartão', 'Boleto'],
+    fee:           { pix: 0.99, card: 4.99, boleto: 3.49 },
+    feeText:       'A partir de 0,99%',
+    externalUrl:   'https://www.mercadopago.com.br/developers/panel',
+    externalLabel: 'Painel MP',
   },
 }
 
@@ -55,8 +66,8 @@ const CREDENTIAL_SCHEMA: Record<string, { label: string; placeholder: string; hi
   mercadopago: { label: 'Access Token', placeholder: 'APP_USR-0000000000000000-MMDDHHMMSS-XXXXXX', hint: 'Em Mercado Pago → Credenciais → Access Token de Produção.' },
 }
 
-const UMBRA_FEE_PCT   = 3
-const ALL_PROVIDERS   = Object.keys(GATEWAY_CATALOG)
+const UMBRA_FEE_PCT = 3
+const ALL_PROVIDERS = Object.keys(GATEWAY_CATALOG)
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -66,15 +77,36 @@ function mergeGateways(db: RawGateway[], stats: GatewayStats): GatewayItem[] {
     const row = db.find(g => g.provider === provider)
     const s   = stats[provider] ?? {}
     return {
-      id:         row?.id ?? null,
+      id:             row?.id ?? null,
       provider,
       ...cat,
-      connected:  row?.connected ?? false,
-      account:    row?.account   ?? undefined,
-      accountId:  row?.account_id ?? undefined,
-      lastSync:   row ? new Date(row.updated_at).getTime() : undefined,
-      volume30d:  Number(s.volume_30d ?? 0),
-      tx30d:      Number(s.tx_30d     ?? 0),
+      connected:      row?.connected ?? false,
+      account:        row?.account   ?? undefined,
+      accountId:      row?.account_id ?? undefined,
+      lastSync:       row ? new Date(row.updated_at).getTime() : undefined,
+      volume30d:      Number(s.volume_30d ?? 0),
+      tx30d:          Number(s.tx_30d     ?? 0),
+      avgFeePct:      Number(s.avg_fee_pct ?? 0),
+      tokenExpiresAt: row?.token_expires_at
+        ? new Date(row.token_expires_at).getTime()
+        : undefined,
+    }
+  })
+}
+
+// Aplica atualização de linha do Realtime preservando stats (vêm da RPC, não do canal)
+function applyRealtimeRow(prev: GatewayItem[], row: RawGateway): GatewayItem[] {
+  return prev.map(g => {
+    if (g.provider !== row.provider) return g
+    return {
+      ...g,
+      connected:      row.connected,
+      account:        row.account ?? undefined,
+      accountId:      row.account_id ?? undefined,
+      lastSync:       new Date(row.updated_at).getTime(),
+      tokenExpiresAt: row.token_expires_at
+        ? new Date(row.token_expires_at).getTime()
+        : undefined,
     }
   })
 }
@@ -89,6 +121,10 @@ function relTime(dt: number, now: number): string {
   return `há ${Math.floor(h / 24)} d`
 }
 
+function daysUntilExpiry(ts: number, now: number): number {
+  return Math.ceil((ts - now) / (24 * 60 * 60 * 1000))
+}
+
 const fmtBRL = (n: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(n)
 const fmtNum = (n: number) => new Intl.NumberFormat('pt-BR').format(n)
@@ -101,12 +137,18 @@ function Card({ children, className = '' }: { children: React.ReactNode; classNa
 }
 
 function Btn({ children, variant = 'secondary', size = 'md', onClick, disabled, className = '' }: {
-  children: React.ReactNode; variant?: 'primary' | 'secondary' | 'ghost' | 'danger'
+  children: React.ReactNode; variant?: 'primary' | 'secondary' | 'ghost' | 'danger' | 'warning'
   size?: 'sm' | 'md'; onClick?: () => void; disabled?: boolean; className?: string
 }) {
   const base = 'inline-flex items-center gap-1.5 font-medium rounded-lg transition-colors disabled:opacity-50 disabled:pointer-events-none'
   const sz   = size === 'sm' ? 'h-8 px-3 text-[12px]' : 'h-9 px-3.5 text-[12.5px]'
-  const v    = { primary: 'bg-primary text-primary-fg hover:bg-primary/90', secondary: 'bg-surface border border-border text-text hover:bg-surface-2', ghost: 'text-text-muted hover:text-text hover:bg-surface-2', danger: 'bg-[color:var(--danger)] text-white hover:bg-[color:var(--danger)]/90' }[variant]
+  const v    = {
+    primary: 'bg-primary text-primary-fg hover:bg-primary/90',
+    secondary: 'bg-surface border border-border text-text hover:bg-surface-2',
+    ghost: 'text-text-muted hover:text-text hover:bg-surface-2',
+    danger: 'bg-[color:var(--danger)] text-white hover:bg-[color:var(--danger)]/90',
+    warning: 'bg-[color:var(--warning)]/10 text-[color:var(--warning)] border border-[color:var(--warning)]/30 hover:bg-[color:var(--warning)]/20',
+  }[variant]
   return <button className={`${base} ${sz} ${v} ${className}`} onClick={onClick} disabled={disabled}>{children}</button>
 }
 
@@ -191,6 +233,40 @@ function GatewayLogo({ g, size = 44 }: { g: Pick<GatewayItem, 'initial' | 'color
   )
 }
 
+// ─── ExpiryBadge ──────────────────────────────────────────────────────────────
+// Exibe indicador de expiração do token OAuth com alerta visual quando <30 dias
+
+function ExpiryBadge({ expiresAt, now }: { expiresAt: number; now: number }) {
+  const days = daysUntilExpiry(expiresAt, now)
+
+  if (days <= 0) {
+    return (
+      <Badge tone="danger">
+        <AlertCircle size={10} />Token expirado
+      </Badge>
+    )
+  }
+  if (days <= 7) {
+    return (
+      <Badge tone="danger">
+        <Clock size={10} />Expira em {days}d
+      </Badge>
+    )
+  }
+  if (days <= 30) {
+    return (
+      <Badge tone="warning">
+        <Clock size={10} />Expira em {days}d
+      </Badge>
+    )
+  }
+  return (
+    <Badge tone="muted">
+      <Clock size={10} />OAuth · {days}d
+    </Badge>
+  )
+}
+
 // ─── SplitExplanation ─────────────────────────────────────────────────────────
 
 function SplitExplanation({ g, account, sample = 100 }: { g: GatewayItem; account?: string; sample?: number }) {
@@ -222,8 +298,8 @@ function SplitExplanation({ g, account, sample = 100 }: { g: GatewayItem; accoun
         </div>
         <div className="mt-4 space-y-2 text-[12px]">
           {([
-            [g.color,           `Taxa ${g.name}`,          gFee, `${fmtPct(gwFee, 2)} sobre o valor`,    false],
-            ['var(--primary)',   'Comissão Umbra Bot',      pFee, `${fmtPct(UMBRA_FEE_PCT, 0)} sobre o valor`, false],
+            [g.color,           `Taxa ${g.name}`,     gFee, `${fmtPct(gwFee, 2)} sobre o valor`,    false],
+            ['var(--primary)',   'Comissão Umbra Bot', pFee, `${fmtPct(UMBRA_FEE_PCT, 0)} sobre o valor`, false],
             ['var(--success)',   account ? `Sua conta · ${account}` : 'Sua conta', net, 'líquido recebido', true],
           ] as const).map(([color, label, val, sub, em]) => (
             <div key={label} className="flex items-center gap-2.5">
@@ -285,14 +361,14 @@ function AccountPicker({ value, onChange, bankAccounts }: {
 // ─── ConnectModal ─────────────────────────────────────────────────────────────
 
 const MP_OAUTH_ERRORS: Record<string, string> = {
-  authorization_denied: 'Autorização negada pelo Mercado Pago.',
-  invalid_state:        'Sessão inválida. Tente novamente.',
-  token_exchange_failed:'Falha ao obter token. Tente novamente.',
-  token_timeout:        'Tempo de resposta esgotado. Tente novamente.',
-  db_save_failed:       'Erro ao salvar configuração. Tente novamente.',
-  missing_bank_account: 'Selecione uma conta bancária.',
-  invalid_bank_account: 'Conta bancária inválida.',
-  oauth_not_configured: 'OAuth não configurado pelo administrador.',
+  authorization_denied:  'Autorização negada pelo Mercado Pago.',
+  invalid_state:         'Sessão inválida. Tente novamente.',
+  token_exchange_failed: 'Falha ao obter token. Tente novamente.',
+  token_timeout:         'Tempo de resposta esgotado. Tente novamente.',
+  db_save_failed:        'Erro ao salvar configuração. Tente novamente.',
+  missing_bank_account:  'Selecione uma conta bancária.',
+  invalid_bank_account:  'Conta bancária inválida.',
+  oauth_not_configured:  'OAuth não configurado pelo administrador.',
 }
 
 function ConnectModal({ open, onClose, g, bankAccounts, hasMpOAuth, onConnected }: {
@@ -301,15 +377,15 @@ function ConnectModal({ open, onClose, g, bankAccounts, hasMpOAuth, onConnected 
   onConnected: (provider: string, bankAccountId: string, apiKey: string) => Promise<boolean>
 }) {
   const showOAuth = hasMpOAuth && g.provider === 'mercadopago'
-  const [step,       setStep]       = useState<'credentials' | 'split' | 'done'>('credentials')
-  const [mode,       setMode]       = useState<'oauth' | 'manual'>(showOAuth ? 'oauth' : 'manual')
-  const [apiKey,     setApiKey]     = useState('')
-  const [showKey,    setShowKey]    = useState(false)
-  const [accountId,  setAccountId]  = useState(bankAccounts[0]?.id ?? '')
-  const [validating, setValidating] = useState(false)
-  const [connecting, setConnecting] = useState(false)
-  const [redirecting,setRedirecting]= useState(false)
-  const [error,      setError]      = useState('')
+  const [step,        setStep]        = useState<'credentials' | 'split' | 'done'>('credentials')
+  const [mode,        setMode]        = useState<'oauth' | 'manual'>(showOAuth ? 'oauth' : 'manual')
+  const [apiKey,      setApiKey]      = useState('')
+  const [showKey,     setShowKey]     = useState(false)
+  const [accountId,   setAccountId]   = useState(bankAccounts[0]?.id ?? '')
+  const [validating,  setValidating]  = useState(false)
+  const [connecting,  setConnecting]  = useState(false)
+  const [redirecting, setRedirecting] = useState(false)
+  const [error,       setError]       = useState('')
 
   useEffect(() => {
     if (open) {
@@ -320,7 +396,7 @@ function ConnectModal({ open, onClose, g, bankAccounts, hasMpOAuth, onConnected 
     }
   }, [open, bankAccounts, showOAuth])
 
-  const schema = CREDENTIAL_SCHEMA[g.provider] ?? { label: 'API Key', placeholder: '', hint: '' }
+  const schema          = CREDENTIAL_SCHEMA[g.provider] ?? { label: 'API Key', placeholder: '', hint: '' }
   const selectedAccount = bankAccounts.find(a => a.id === accountId)
 
   function handleOAuthRedirect() {
@@ -372,7 +448,9 @@ function ConnectModal({ open, onClose, g, bankAccounts, hasMpOAuth, onConnected 
   return (
     <Modal open={open} onClose={onClose}
       title={step === 'done' ? undefined : `Conectar ${g.name}`}
-      subtitle={step === 'credentials' ? (mode === 'oauth' ? 'Autorize o Umbra Bot a acessar sua conta.' : 'Cole as credenciais da API do gateway.') : step === 'split' ? 'Confirme como o valor será dividido.' : undefined}
+      subtitle={step === 'credentials'
+        ? (mode === 'oauth' ? 'Autorize o Umbra Bot a acessar sua conta.' : 'Cole as credenciais da API do gateway.')
+        : step === 'split' ? 'Confirme como o valor será dividido.' : undefined}
       size="md" footer={footer}>
       {step === 'credentials' && (
         <div className="space-y-3.5">
@@ -383,13 +461,13 @@ function ConnectModal({ open, onClose, g, bankAccounts, hasMpOAuth, onConnected 
               <div className="text-[13px] font-semibold text-text">{g.name}</div>
               <div className="text-[11px] text-text-muted">{g.feeText}</div>
             </div>
-            <a href="https://mercadopago.com.br" target="_blank" rel="noopener noreferrer"
+            <a href={g.externalUrl} target="_blank" rel="noopener noreferrer"
               className="text-[11.5px] text-primary inline-flex items-center gap-1 shrink-0 hover:underline">
-              <ExternalLink size={11} />Painel {g.name}
+              <ExternalLink size={11} />{g.externalLabel}
             </a>
           </div>
 
-          {/* Account picker (always visible) */}
+          {/* Account picker (sempre visível) */}
           <Field label="Conta de recebimento" hint="Para onde o gateway depositará o valor líquido das vendas.">
             <AccountPicker value={accountId} onChange={v => { setAccountId(v); setError('') }} bankAccounts={bankAccounts} />
           </Field>
@@ -417,8 +495,6 @@ function ConnectModal({ open, onClose, g, bankAccounts, hasMpOAuth, onConnected 
                   <span>O token tem validade de 180 dias e pode ser renovado a qualquer momento reconectando.</span>
                 </div>
               </div>
-
-              {/* Switch to manual */}
               <button onClick={() => { setMode('manual'); setError('') }}
                 className="w-full text-center text-[11.5px] text-text-muted hover:text-text transition-colors py-1">
                 Prefiro inserir o Access Token manualmente
@@ -445,7 +521,6 @@ function ConnectModal({ open, onClose, g, bankAccounts, hasMpOAuth, onConnected 
                   </button>
                 </div>
               </Field>
-
               {showOAuth && (
                 <button onClick={() => { setMode('oauth'); setError('') }}
                   className="w-full text-center text-[11.5px] text-text-muted hover:text-text transition-colors py-1">
@@ -479,6 +554,72 @@ function ConnectModal({ open, onClose, g, bankAccounts, hasMpOAuth, onConnected 
           </p>
         </div>
       )}
+    </Modal>
+  )
+}
+
+// ─── RenewModal ───────────────────────────────────────────────────────────────
+// Modal simplificado para renovar token OAuth sem desconectar o gateway
+
+function RenewModal({ open, onClose, g, bankAccounts }: {
+  open: boolean; onClose: () => void; g: GatewayItem; bankAccounts: RawBankAccount[]
+}) {
+  const [accountId,   setAccountId]   = useState(g.accountId ?? bankAccounts[0]?.id ?? '')
+  const [redirecting, setRedirecting] = useState(false)
+
+  useEffect(() => {
+    if (open) {
+      setAccountId(g.accountId ?? bankAccounts[0]?.id ?? '')
+      setRedirecting(false)
+    }
+  }, [open, g.accountId, bankAccounts])
+
+  function handleRenew() {
+    if (!accountId) return
+    setRedirecting(true)
+    window.location.href = `/api/payments/mercadopago-oauth?bank_account_id=${accountId}`
+  }
+
+  return (
+    <Modal open={open} onClose={onClose}
+      title={`Renovar token — ${g.name}`}
+      subtitle="Renova o access token OAuth sem desconectar o gateway."
+      size="sm"
+      footer={
+        <>
+          <Btn variant="secondary" onClick={onClose}>Cancelar</Btn>
+          <Btn variant="primary" disabled={redirecting || !accountId} onClick={handleRenew}>
+            {redirecting
+              ? <><Loader2 size={13} className="animate-spin" />Redirecionando…</>
+              : <><RotateCcw size={13} />Renovar via OAuth</>}
+          </Btn>
+        </>
+      }>
+      <div className="space-y-3">
+        {g.tokenExpiresAt && (
+          <div className={`flex items-start gap-2 rounded-lg p-3 text-[12px] ${
+            daysUntilExpiry(g.tokenExpiresAt, Date.now()) <= 0
+              ? 'bg-[color:var(--danger)]/5 border border-[color:var(--danger)]/20 text-[color:var(--danger)]'
+              : daysUntilExpiry(g.tokenExpiresAt, Date.now()) <= 30
+              ? 'bg-[color:var(--warning)]/5 border border-[color:var(--warning)]/20 text-[color:var(--warning)]'
+              : 'bg-surface-2/40 border border-border text-text-muted'
+          }`}>
+            <Clock size={13} className="mt-0.5 shrink-0" />
+            <span>
+              {daysUntilExpiry(g.tokenExpiresAt, Date.now()) <= 0
+                ? 'Token expirado. Renove agora para retomar o processamento de pagamentos.'
+                : `Token expira em ${daysUntilExpiry(g.tokenExpiresAt, Date.now())} dias (${new Date(g.tokenExpiresAt).toLocaleDateString('pt-BR')}).`}
+            </span>
+          </div>
+        )}
+        <Field label="Conta de recebimento" hint="Confirme ou altere a conta de destino antes de renovar.">
+          <AccountPicker value={accountId} onChange={setAccountId} bankAccounts={bankAccounts} />
+        </Field>
+        <div className="flex items-start gap-1.5 text-[11px] text-text-muted bg-surface-2/40 border border-border rounded-lg p-3">
+          <Info size={11} className="mt-0.5 shrink-0" />
+          <span>Você será redirecionado ao Mercado Pago. O gateway permanece conectado durante a renovação.</span>
+        </div>
+      </div>
     </Modal>
   )
 }
@@ -518,7 +659,6 @@ function TestModal({ open, onClose, g }: { open: boolean; onClose: () => void; g
           <Badge tone="success"><span className="w-1.5 h-1.5 rounded-full bg-[color:var(--success)]" />Conectado</Badge>
         </div>
 
-        {/* Status */}
         {status === 'loading' && (
           <div className="flex items-center gap-3 bg-primary/5 border border-primary/20 rounded-lg p-4">
             <Loader2 size={18} className="animate-spin text-primary shrink-0" />
@@ -547,7 +687,6 @@ function TestModal({ open, onClose, g }: { open: boolean; onClose: () => void; g
           </div>
         )}
 
-        {/* Split example (shown when connected) */}
         {status === 'ok' && (
           <div className="bg-surface border border-border rounded-xl p-4">
             <div className="text-[11px] uppercase tracking-wider font-semibold text-text-muted mb-3">Split em uma venda de R$ 100,00</div>
@@ -646,12 +785,13 @@ function ConfigureModal({ open, onClose, g, bankAccounts, onUpdate }: {
 
 // ─── GatewayCard ──────────────────────────────────────────────────────────────
 
-function GatewayCard({ g, now, onConnect, onConfigure, onTest, onDisconnect }: {
-  g: GatewayItem; now: number
+function GatewayCard({ g, now, hasMpOAuth, onConnect, onConfigure, onTest, onDisconnect, onRenew }: {
+  g: GatewayItem; now: number; hasMpOAuth: boolean
   onConnect?:    () => void
   onConfigure?:  () => void
   onTest?:       () => void
   onDisconnect?: () => void
+  onRenew?:      () => void
 }) {
   function MethodIcon({ m }: { m: string }) {
     if (m === 'Pix')    return <Zap size={10} />
@@ -659,8 +799,12 @@ function GatewayCard({ g, now, onConnect, onConfigure, onTest, onDisconnect }: {
     return <FileText size={10} />
   }
 
+  const isOAuth       = !!g.tokenExpiresAt
+  const daysLeft      = g.tokenExpiresAt ? daysUntilExpiry(g.tokenExpiresAt, now) : null
+  const expiryWarning = daysLeft !== null && daysLeft <= 30
+
   return (
-    <div className="bg-surface border border-border rounded-xl p-5 flex flex-col">
+    <div className={`bg-surface border rounded-xl p-5 flex flex-col ${expiryWarning ? 'border-[color:var(--warning)]/40' : 'border-border'}`}>
       {/* Header */}
       <div className="flex items-start gap-3.5">
         <GatewayLogo g={g} />
@@ -670,10 +814,35 @@ function GatewayCard({ g, now, onConnect, onConfigure, onTest, onDisconnect }: {
             {g.connected
               ? <Badge tone="success"><span className="w-1.5 h-1.5 rounded-full bg-[color:var(--success)]" />Conectado</Badge>
               : <Badge tone="muted">Não conectado</Badge>}
+            {/* Token expiry badge — apenas gateways OAuth conectados */}
+            {g.connected && isOAuth && g.tokenExpiresAt && (
+              <ExpiryBadge expiresAt={g.tokenExpiresAt} now={now} />
+            )}
           </div>
           <p className="text-[12px] text-text-muted mt-1 leading-relaxed">{g.description}</p>
         </div>
       </div>
+
+      {/* Alerta de expiração próxima */}
+      {g.connected && expiryWarning && daysLeft !== null && (
+        <div className={`mt-3 flex items-start gap-2 rounded-lg p-2.5 text-[11.5px] ${
+          daysLeft <= 0
+            ? 'bg-[color:var(--danger)]/5 border border-[color:var(--danger)]/20 text-[color:var(--danger)]'
+            : 'bg-[color:var(--warning)]/5 border border-[color:var(--warning)]/20 text-[color:var(--warning)]'
+        }`}>
+          <AlertCircle size={12} className="mt-0.5 shrink-0" />
+          <span>
+            {daysLeft <= 0
+              ? 'Token expirado — pagamentos não são processados. Renove o token.'
+              : `Token OAuth expira em ${daysLeft} dias. Renove antes para evitar interrupções.`}
+          </span>
+          {hasMpOAuth && onRenew && (
+            <button onClick={onRenew} className="ml-auto shrink-0 text-[10.5px] font-semibold underline underline-offset-2 hover:opacity-80">
+              Renovar
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Methods + fee */}
       <div className="mt-3.5 flex items-center gap-1.5 flex-wrap">
@@ -700,8 +869,9 @@ function GatewayCard({ g, now, onConnect, onConfigure, onTest, onDisconnect }: {
               <span className="text-text">{relTime(g.lastSync, now)}</span>
             </div>
           )}
+          {/* Stats reais da RPC */}
           {(g.volume30d > 0 || g.tx30d > 0) && (
-            <div className="grid grid-cols-2 gap-2 pt-2 border-t border-border">
+            <div className="grid grid-cols-3 gap-2 pt-2 border-t border-border">
               <div>
                 <div className="text-[10px] uppercase tracking-wider font-semibold text-text-muted">Volume (30d)</div>
                 <div className="text-[13px] font-semibold text-[color:var(--success)] mt-0.5">{fmtBRL(g.volume30d)}</div>
@@ -710,17 +880,29 @@ function GatewayCard({ g, now, onConnect, onConfigure, onTest, onDisconnect }: {
                 <div className="text-[10px] uppercase tracking-wider font-semibold text-text-muted">Transações</div>
                 <div className="text-[13px] font-semibold text-text mt-0.5">{fmtNum(g.tx30d)}</div>
               </div>
+              <div>
+                <div className="text-[10px] uppercase tracking-wider font-semibold text-text-muted">Taxa real</div>
+                <div className="text-[13px] font-semibold text-text mt-0.5">
+                  {g.avgFeePct > 0 ? fmtPct(g.avgFeePct, 2) : '—'}
+                </div>
+              </div>
             </div>
           )}
         </div>
       )}
 
       {/* Actions */}
-      <div className="mt-4 pt-3 border-t border-border flex items-center gap-2">
+      <div className="mt-4 pt-3 border-t border-border flex items-center gap-2 flex-wrap">
         {g.connected ? (
           <>
             <Btn variant="primary" size="sm" onClick={onTest}><Zap size={13} />Verificar</Btn>
             <Btn variant="secondary" size="sm" onClick={onConfigure}><Settings size={13} />Configurar</Btn>
+            {/* Botão Renovar: só para gateways OAuth e quando hasMpOAuth=true */}
+            {isOAuth && hasMpOAuth && onRenew && (
+              <Btn variant={expiryWarning ? 'warning' : 'ghost'} size="sm" onClick={onRenew}>
+                <RotateCcw size={13} />Renovar token
+              </Btn>
+            )}
             <button onClick={onDisconnect} title="Desconectar"
               className="ml-auto w-8 h-8 flex items-center justify-center rounded-md text-text-muted hover:bg-[color:var(--danger)]/10 hover:text-[color:var(--danger)]">
               <Unplug size={14} />
@@ -746,7 +928,10 @@ interface GatewaysClientProps {
   mpError:         string | null
 }
 
-export function GatewaysClient({ initialGateways, bankAccounts, gatewayStats, hasMpOAuth, mpConnected, mpError }: GatewaysClientProps) {
+export function GatewaysClient({
+  initialGateways, bankAccounts, gatewayStats, userId,
+  hasMpOAuth, mpConnected, mpError,
+}: GatewaysClientProps) {
   const { track } = useAnalytics()
   const router    = useRouter()
 
@@ -756,15 +941,36 @@ export function GatewaysClient({ initialGateways, bankAccounts, gatewayStats, ha
   const [testing,       setTesting]       = useState<GatewayItem | null>(null)
   const [disconnecting, setDisconnecting] = useState<GatewayItem | null>(null)
   const [configuring,   setConfiguring]   = useState<GatewayItem | null>(null)
+  const [renewing,      setRenewing]      = useState<GatewayItem | null>(null)
   const [toast,         setToast]         = useState<{ msg: string; type: 'success' | 'error' } | null>(null)
   const oauthHandledRef = useRef(false)
 
-  // Mostra toast de resultado OAuth e limpa URL
+  // ── Realtime: atualiza gateways quando há mudança em outro tab/device ────────
+  useEffect(() => {
+    const supabase = createClient()
+    const channel  = supabase
+      .channel('gateways-realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'gateways', filter: `user_id=eq.${userId}` },
+        (payload) => {
+          if (payload.eventType === 'UPDATE' || payload.eventType === 'INSERT') {
+            setGateways(prev => applyRealtimeRow(prev, payload.new as RawGateway))
+          }
+        },
+      )
+      .subscribe()
+
+    return () => { supabase.removeChannel(channel) }
+  }, [userId])
+
+  // ── Toast de resultado OAuth + PostHog gateway_connected ────────────────────
   useEffect(() => {
     if (oauthHandledRef.current) return
     if (mpConnected) {
       oauthHandledRef.current = true
       setToast({ msg: 'Mercado Pago conectado com sucesso via OAuth.', type: 'success' })
+      track('gateway_connected', { gateway: 'mercadopago' })
       router.replace('/dashboard/gateways')
     } else if (mpError) {
       oauthHandledRef.current = true
@@ -772,9 +978,9 @@ export function GatewaysClient({ initialGateways, bankAccounts, gatewayStats, ha
       setToast({ msg, type: 'error' })
       router.replace('/dashboard/gateways')
     }
-  }, [mpConnected, mpError, router])
+  }, [mpConnected, mpError, router, track])
 
-  // Tick para relTime (a cada 60s)
+  // Tick a cada 60s para relTime e ExpiryBadge
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 60_000)
     return () => clearInterval(t)
@@ -793,7 +999,7 @@ export function GatewaysClient({ initialGateways, bankAccounts, gatewayStats, ha
     setGateways(prev => prev.map(g => g.provider === provider ? { ...g, ...patch } : g))
   }
 
-  // ── Handlers ────────────────────────────────────────────────────────────────
+  // ── Handlers ─────────────────────────────────────────────────────────────────
 
   async function handleConnected(provider: string, bankAccountId: string, apiKey: string): Promise<boolean> {
     const account = bankAccounts.find(a => a.id === bankAccountId)
@@ -815,7 +1021,13 @@ export function GatewaysClient({ initialGateways, bankAccounts, gatewayStats, ha
     if (!g.id) return
     const result = await disconnectGatewayAction(g.id)
     if (!result.ok) { showToast(result.error ?? 'Erro ao desconectar.', 'error'); return }
-    patchGateway(g.provider, { connected: false, account: undefined, accountId: undefined, lastSync: Date.now() })
+    patchGateway(g.provider, {
+      connected:      false,
+      account:        undefined,
+      accountId:      undefined,
+      lastSync:       Date.now(),
+      tokenExpiresAt: undefined,
+    })
     showToast(`${g.name} desconectado.`)
     track('gateway_disconnected', { gateway: g.provider })
   }
@@ -836,9 +1048,18 @@ export function GatewaysClient({ initialGateways, bankAccounts, gatewayStats, ha
   const available   = gateways.filter(g => !g.connected)
   const totalVolume = connected.reduce((s, g) => s + g.volume30d, 0)
   const totalTx     = connected.reduce((s, g) => s + g.tx30d,     0)
-  const avgFee      = useMemo(() => {
-    const list = connected.map(g => g.fee.pix ?? g.fee.card ?? 2.99)
-    return list.length ? list.reduce((s, v) => s + v, 0) / list.length : 0
+
+  // Taxa média ponderada real: usa avg_fee_pct da RPC, ponderado pelo volume
+  const avgFee = useMemo(() => {
+    const total = connected.reduce((s, g) => s + g.volume30d, 0)
+    if (total > 0) {
+      // Ponderado pelo volume de cada gateway
+      return connected.reduce((s, g) => s + (g.avgFeePct * g.volume30d), 0) / total
+    }
+    // Sem dados reais: usa a menor taxa do catálogo dos gateways conectados
+    if (connected.length === 0) return 0
+    const fees = connected.map(g => g.fee.pix ?? g.fee.card ?? 2.99)
+    return fees.reduce((s, v) => s + v, 0) / fees.length
   }, [connected])
 
   // ── Render ───────────────────────────────────────────────────────────────────
@@ -857,6 +1078,7 @@ export function GatewaysClient({ initialGateways, bankAccounts, gatewayStats, ha
             ? <AlertCircle size={15} className="text-[color:var(--danger)]" />
             : <Check size={15} className="text-[color:var(--success)]" />}
           <div className={`text-[12.5px] flex-1 ${toast.type === 'error' ? 'text-[color:var(--danger)]' : 'text-[color:var(--success)]'}`}>{toast.msg}</div>
+          <button onClick={() => setToast(null)} className="text-text-muted hover:text-text"><X size={13} /></button>
         </div>
       )}
 
@@ -904,9 +1126,11 @@ export function GatewaysClient({ initialGateways, bankAccounts, gatewayStats, ha
                 key={g.provider}
                 g={g}
                 now={now}
+                hasMpOAuth={hasMpOAuth}
                 onConfigure={() => setConfiguring(g)}
                 onTest={() => setTesting(g)}
                 onDisconnect={() => setDisconnecting(g)}
+                onRenew={() => setRenewing(g)}
               />
             ))}
           </div>
@@ -927,6 +1151,7 @@ export function GatewaysClient({ initialGateways, bankAccounts, gatewayStats, ha
                 key={g.provider}
                 g={g}
                 now={now}
+                hasMpOAuth={hasMpOAuth}
                 onConnect={() => {
                   if (bankAccounts.length === 0) {
                     showToast('Adicione uma conta bancária antes de conectar um gateway.', 'error')
@@ -973,6 +1198,14 @@ export function GatewaysClient({ initialGateways, bankAccounts, gatewayStats, ha
           g={configuring}
           bankAccounts={bankAccounts}
           onUpdate={handleUpdate}
+        />
+      )}
+      {renewing && (
+        <RenewModal
+          open
+          onClose={() => setRenewing(null)}
+          g={renewing}
+          bankAccounts={bankAccounts}
         />
       )}
     </div>

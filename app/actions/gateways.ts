@@ -143,12 +143,13 @@ export async function disconnectGatewayAction(
   const { error } = await supabase
     .from('gateways')
     .update({
-      connected:   false,
-      status:      'disabled',
-      credentials: {},
-      account:     null,
-      account_id:  null,
-      updated_at:  new Date().toISOString(),
+      connected:        false,
+      status:           'disabled',
+      credentials:      {},
+      account:          null,
+      account_id:       null,
+      token_expires_at: null,
+      updated_at:       new Date().toISOString(),
     })
     .eq('id', gatewayId)
     .eq('user_id', user.id)

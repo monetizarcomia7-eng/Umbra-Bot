@@ -22,11 +22,15 @@ umbra-bot/
 │   ├── page.tsx                  # Redirect para /dashboard
 │   ├── globals.css               # Design tokens (light/dark), Tailwind v4
 │   ├── actions/
-│   │   └── bots.ts               # 9 Server Actions: validateBotTokenAction (getMe real), saveBotAction (AES-256-GCM),
-│   │                             # registerWebhookAction (decryptToken + status='online'), getBotTokenAction,
-│   │                             # updateBotAction, deleteBotAction — userId sempre do servidor (sem IDOR)
-│   │                             # getBotTelegramProfileAction (perfil + foto base64), saveBotTelegramProfileAction,
-│   │                             # setBotPhotoAction (multipart → setMyPhoto Bot API 7.3)
+│   │   ├── bots.ts               # 9 Server Actions: validateBotTokenAction (getMe real), saveBotAction (AES-256-GCM),
+│   │   │                         # registerWebhookAction (decryptToken + status='online'), getBotTokenAction,
+│   │   │                         # updateBotAction, deleteBotAction — userId sempre do servidor (sem IDOR)
+│   │   │                         # getBotTelegramProfileAction (perfil + foto base64), saveBotTelegramProfileAction,
+│   │   │                         # setBotPhotoAction (multipart → setMyPhoto Bot API 7.3)
+│   │   └── gateways.ts           # 5 Server Actions: validateGatewayCredentialsAction (chama API do gateway),
+│   │                             # connectGatewayAction (valida + encryptToken + upsert), disconnectGatewayAction,
+│   │                             # updateGatewayAction (só conta bancária), testGatewayConnectionAction (decryptToken + API)
+│   │                             # Rate limit por action; userId sempre do servidor (sem IDOR)
 │   ├── (auth)/
 │   │   ├── login/page.tsx        # Login com email + Google OAuth
 │   │   ├── register/page.tsx     # Registro com email + Google OAuth
@@ -45,9 +49,17 @@ umbra-bot/
 │   │   ├── payments/
 │   │   │   ├── pix/route.ts      # Cria pagamento PIX (Mercado Pago) + Sentry + analytics
 │   │   │   │                     # Lê cookie 'umbra_aff' → valida afiliado (.eq user_id, IDOR-safe) → salva affiliate_id
-│   │   │   └── mercadopago-webhook/route.ts # Confirma pagamento (valida secret em prod)
-│   │   │                                    # Aprovado: credita comissão via RPC credit_affiliate_sale (mig 058)
-│   │   │                                    # Aprovado: insere alert type='sale', source='webhook', context chips
+│   │   │   ├── mercadopago-webhook/route.ts # Confirma pagamento (valida secret em prod)
+│   │   │   │                               # Aprovado: credita comissão via RPC credit_affiliate_sale (mig 058)
+│   │   │   │                               # Aprovado: insere alert type='sale', source='webhook', context chips
+│   │   │   ├── mercadopago-oauth/route.ts  # GET: inicia fluxo OAuth MP → valida usuário + banco (IDOR-safe)
+│   │   │   │                               # gera state (20 bytes hex) → cookies httpOnly (mp_oauth_state, mp_oauth_bank)
+│   │   │   │                               # redireciona para https://auth.mercadopago.com/authorization
+│   │   │   └── mercadopago-oauth/callback/route.ts  # GET: callback OAuth — verifica state cookie (CSRF)
+│   │   │                                             # troca code por access_token (POST /oauth/token)
+│   │   │                                             # busca email/nickname via GET /v1/users/me
+│   │   │                                             # encryptToken → upsert gateways (onConflict user_id,provider)
+│   │   │                                             # activity_event fire-and-forget → redirect ?mp_connected=1
 │   │   ├── withdrawals/
 │   │   │   └── route.ts          # POST: solicita saque (auth + zod + rate limit 3/dia + IP + Sentry)
 │   │   ├── bank-accounts/
@@ -189,7 +201,18 @@ umbra-bot/
 │       │                            # KPI cards: Disparos no mês / Mensagens enviadas / Taxa de entrega / Em andamento
 │       │                            # Filtros de listagem: busca título/mensagem + status + bot dropdown
 │       ├── tools/                # Ferramentas (mock)
-│       ├── gateways/             # Gateways (mock)
+│       ├── gateways/             # Gateways — dados reais do Supabase (SSR + Client)
+│       │   ├── page.tsx          # Server Component: SSR gateways + bank_accounts + RPC gateways_stats em paralelo
+│       │   │                     # aceita searchParams (mp_connected, mp_error) para resultado do callback OAuth
+│       │   │                     # passa hasMpOAuth (!!MERCADOPAGO_CLIENT_ID) ao Client
+│       │   └── GatewaysClient.tsx # Client Component: GATEWAY_CATALOG (só mercadopago), ConnectModal (OAuth + manual),
+│       │                          # TestModal (decryptToken + API), DisconnectModal, ConfigureModal (banco de recebimento)
+│       │                          # KPI cards 4 colunas (conectados, volume 30d, transações 30d, taxa média)
+│       │                          # SplitExplanation: visualização do split em cada venda (gateway + Umbra + você)
+│       │                          # OAuth: botão azul Globe → /api/payments/mercadopago-oauth?bank_account_id=
+│       │                          # Toast de resultado OAuth ao retornar (mpConnected / mpError), limpa URL
+│       │                          # 3 eventos PostHog: gateway_disconnected, gateway_configured, gateway_connection_tested
+│       │                          # Rate limit server-side (validate: 15/h, connect: 10/h)
 │       ├── tracking/             # Trackeamento (mock)
 │       ├── checkout/             # Checkout (mock)
 │       ├── biolink/              # Bio Link (mock)
@@ -627,7 +650,15 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Bots — getBotTelegramProfileAction: getMe + getMyDescription + getMyShortDescription + getMyCommands + foto base64 | ✅ Implementado |
 | Bots — saveBotTelegramProfileAction: setMyName/setMyDescription/setMyShortDescription/setMyCommands em paralelo | ✅ Implementado |
 | Bots — setBotPhotoAction: upload multipart → setMyPhoto (Bot API 7.3); foto como base64 sem expor token | ✅ Implementado |
-| Gateways — configuração real de credenciais | ❌ Ainda mock |
+| Gateways — SSR + GatewaysClient (dados reais, migração 074) | ✅ Funcional |
+| Gateways — CRUD real: connect/disconnect/update/test (5 Server Actions) | ✅ Implementado |
+| Gateways — ConnectModal: OAuth azul (Globe) + fallback token manual | ✅ Implementado |
+| Gateways — OAuth Mercado Pago: /mercadopago-oauth + /callback (CSRF via cookie) | ✅ Implementado |
+| Gateways — token OAuth criptografado AES-256-GCM (encryptToken) antes de salvar | ✅ Implementado |
+| Gateways — SplitExplanation: visualização do split gateway + Umbra Bot + você | ✅ Implementado |
+| Gateways — KPI cards: conectados / volume 30d / transações 30d / taxa média | ✅ Implementado |
+| Gateways — migração 074: RLS owner, UNIQUE(user_id,provider), account_id FK, RPC gateways_stats | ✅ Implementado |
+| Gateways — GATEWAY_CATALOG com apenas mercadopago (outros re-adicionados quando integração for construída) | ✅ Implementado |
 | Redirecionadores — Server Component SSR + RedirectsClient (dados reais, sem mock) | ✅ Funcional |
 | Redirecionadores — CRUD real (criar/editar/pausar/retomar/apagar) com .eq('user_id') IDOR-safe | ✅ Implementado |
 | Redirecionadores — analytics lazy por link via RPC redirect_analytics (by_day, by_source, by_device) | ✅ Implementado |
@@ -687,6 +718,9 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | `user_registered` | `app/auth/callback/route.ts` (primeiro login) |
 | `bot_connected` | disponível no EventMap |
 | `gateway_connected` | `OnboardingWizard` — GatewayStep |
+| `gateway_disconnected` | `GatewaysClient.tsx` — ao desconectar gateway (inclui gateway: provider) |
+| `gateway_configured` | `GatewaysClient.tsx` — ao salvar conta bancária de recebimento (inclui gateway: provider) |
+| `gateway_connection_tested` | `GatewaysClient.tsx` — ao verificar conexão (inclui gateway: provider + success: boolean) |
 | `onboarding_step_completed` | `OnboardingWizard` — cada transição de passo |
 | `onboarding_completed` | `OnboardingWizard` — ao finalizar |
 | `pix_payment_created` | `app/api/payments/pix/route.ts` |
@@ -3051,3 +3085,332 @@ broadcasts_audience_counts(p_user_id uuid, p_bot_id uuid default null) → json
 - `mapToDb()` sempre inclui `user_id` no payload de INSERT/UPDATE
 - `sendBroadcastNow` valida `botId` e `message` antes de chamar a API
 - Rate limit 5 disparos/hora por usuário em `/api/broadcasts/send`
+
+---
+
+## 24. MÓDULO DE GATEWAYS
+
+### Arquivos
+
+```
+app/dashboard/gateways/
+  ├── page.tsx          # Server Component — SSR gateways + bank_accounts + RPC gateways_stats em paralelo
+  │                     # aceita searchParams { mp_connected?, mp_error? } do callback OAuth
+  │                     # passa hasMpOAuth=!!MERCADOPAGO_CLIENT_ID ao Client
+  └── GatewaysClient.tsx # Client Component — catálogo, KPIs, modais de conexão/teste/config/desconexão
+  │                       # Realtime canal 'gateways-realtime' (INSERT/UPDATE por user_id)
+  │                       # ExpiryBadge: indicador de dias até expiração do token OAuth
+  │                       # RenewModal: renovação de token OAuth sem desconectar
+
+app/actions/gateways.ts  # 5 Server Actions (todas autenticadas + rate-limit)
+  ├── validateGatewayCredentialsAction(provider, apiKey) → chama API do gateway; MP: GET /v1/users/me
+  ├── connectGatewayAction(provider, apiKey, bankAccountId) → valida (defesa em profundidade) + encryptToken + upsert
+  ├── disconnectGatewayAction(gatewayId) → UPDATE connected=false, credentials={}, account=null, token_expires_at=null
+  ├── updateGatewayAction(gatewayId, bankAccountId) → UPDATE account + account_id (sem alterar token)
+  └── testGatewayConnectionAction(gatewayId) → decryptToken + callGatewayApi (sem expor token)
+
+app/api/payments/mercadopago-oauth/route.ts          # GET — inicia OAuth
+app/api/payments/mercadopago-oauth/callback/route.ts # GET — callback OAuth
+                                                      # Salva token_expires_at = now() + 180 dias
+```
+
+### Fluxo de dados
+
+```
+GatewaysPage (Server Component)
+  ├── Auth guard + await searchParams
+  ├── Promise.all em paralelo:
+  │     ├── gateways: id, name, connected, account, account_id, provider, status,
+  │     │              updated_at, processed_volume, processed_tx, token_expires_at
+  │     ├── bank_accounts: id, label, kind
+  │     └── RPC gateways_stats(p_user_id): { [provider]: { volume_30d, tx_30d, avg_fee_pct } }
+  └── passa como props:
+        initialGateways / bankAccounts / gatewayStats / userId
+        hasMpOAuth: boolean (!!MERCADOPAGO_CLIENT_ID)
+        mpConnected: boolean (params.mp_connected === '1')
+        mpError: string | null
+
+GatewaysClient (Client Component)
+  ├── gateways state: mergeGateways(initialGateways, gatewayStats)
+  │     mergeGateways: junta catálogo estático + dados do banco + stats RPC por provider
+  │     avgFeePct: Number(stats.avg_fee_pct ?? 0)  ← usa RPC, não estimativa estática
+  │     tokenExpiresAt: row.token_expires_at → getTime() ms | undefined (se manual)
+  ├── now state: Date.now() — tick a cada 60s (base para cálculo de dias até expiração)
+  ├── oauthHandledRef: evita double-fire do useEffect de OAuth
+  ├── useEffect(mpConnected, mpError):
+  │     mpConnected → toast sucesso + track('gateway_connected', { gateway: 'mercadopago' })
+  │     mpError     → toast erro com mensagem do MP_OAUTH_ERRORS
+  │     router.replace('/dashboard/gateways') — limpa URL
+  ├── Realtime (useEffect[userId]):
+  │     canal 'gateways-realtime', event INSERT + UPDATE, tabela gateways
+  │     filtro: user_id=eq.${userId}
+  │     applyRealtimeRow(prev, row): preserva stats RPC ao aplicar atualização do banco
+  │       preserva avgFeePct/volume30d/tx30d (vindos da RPC, não da row do DB)
+  │       atualiza connected, account, accountId, lastSync, tokenExpiresAt
+  ├── KPI cards (4 colunas):
+  │     "Gateways conectados" (N/total)
+  │     "Volume processado (30d)" — soma volume30d dos conectados
+  │     "Transações (30d)" — soma tx30d dos conectados
+  │     "Taxa média" — média ponderada pelo volume (avgFee*volume/totalVolume)
+  │                    fallback: média simples das taxas do catálogo se volume=0
+  ├── Seção "Conectados": GatewayCard com Verificar / Configurar / Desconectar / Renovar token
+  ├── Seção "Disponíveis": GatewayCard com "Conectar {name}"
+  ├── ConnectModal: OAuth (Globe azul) ou token manual — link externo dinâmico por provider
+  ├── TestModal: abre → testGatewayConnectionAction() → status loading/ok/error
+  ├── DisconnectModal: confirmação → disconnectGatewayAction()
+  │     patchGateway local: limpa connected/account/accountId/tokenExpiresAt
+  ├── ConfigureModal: AccountPicker → updateGatewayAction()
+  └── RenewModal: renovação OAuth sem desconectar (só para gateways com tokenExpiresAt)
+        AccountPicker → window.location.href = /api/payments/mercadopago-oauth?bank_account_id=
+```
+
+### GATEWAY_CATALOG (único provider ativo)
+
+```typescript
+// Apenas Mercado Pago funcional; outros serão re-adicionados quando integração for construída
+const GATEWAY_CATALOG = {
+  mercadopago: {
+    name: 'Mercado Pago', initial: 'M', color: 'oklch(0.62 0.16 240)',
+    description: 'Gateway tradicional com Pix, cartão (até 12x) e boleto. Antifraude integrado.',
+    methods: ['Pix', 'Cartão', 'Boleto'],
+    fee: { pix: 0.99, card: 4.99, boleto: 3.49 },
+    feeText: 'A partir de 0,99%',
+    externalUrl:   'https://www.mercadopago.com.br/developers/panel',  // ← dinâmico por provider
+    externalLabel: 'Painel MP',
+  },
+}
+```
+
+### GatewayItem — interface interna
+
+```typescript
+interface GatewayItem {
+  provider:       string
+  name:           string
+  connected:      boolean
+  account?:       string
+  accountId?:     string
+  status:         string
+  lastSync:       number        // timestamp ms
+  volume30d:      number
+  tx30d:          number
+  avgFeePct:      number        // avg_fee_pct real das transações (RPC gateways_stats)
+  fee:            Record<string, number>  // taxas do catálogo (fallback)
+  description:    string
+  methods:        string[]
+  feeText:        string
+  externalUrl:    string        // URL do painel do provider (dinâmico por provider)
+  externalLabel:  string        // label do link externo
+  tokenExpiresAt?: number       // timestamp ms — só OAuth; undefined = conexão manual
+}
+```
+
+### ExpiryBadge — indicador de expiração do token OAuth
+
+```typescript
+function daysUntilExpiry(ts: number, now: number): number {
+  return Math.ceil((ts - now) / (24 * 60 * 60 * 1000))
+}
+
+function ExpiryBadge({ expiresAt, now }: { expiresAt: number; now: number }) {
+  const days = daysUntilExpiry(expiresAt, now)
+  if (days <= 0)  return <Badge tone="danger"><AlertCircle />Token expirado</Badge>
+  if (days <= 7)  return <Badge tone="danger"><Clock />Expira em {days}d</Badge>
+  if (days <= 30) return <Badge tone="warning"><Clock />Expira em {days}d</Badge>
+  return <Badge tone="muted"><Clock />OAuth · {days}d</Badge>
+}
+// Exibido no cabeçalho do GatewayCard para gateways OAuth (tokenExpiresAt definido)
+// Banner de aviso dentro do card quando days <= 30 (link inline "Renovar")
+// Borda do card muda para warning quando days <= 30
+```
+
+### RenewModal — renovação de token OAuth
+
+```typescript
+function RenewModal({ open, onClose, g, bankAccounts }) {
+  // Mostra aviso de expiração + ExpiryBadge + AccountPicker
+  // handleRenew() → window.location.href = /api/payments/mercadopago-oauth?bank_account_id=
+  // Não desconecta: o callback OAuth faz upsert onConflict → substitui o token expirado
+}
+// Ativado pelo botão "Renovar token" (warning style) no GatewayCard
+// Exibido apenas quando g.tokenExpiresAt está definido (conexão OAuth)
+```
+
+### applyRealtimeRow — atualização Realtime preservando stats RPC
+
+```typescript
+function applyRealtimeRow(prev: GatewayItem[], row: RawGateway): GatewayItem[] {
+  return prev.map(g => {
+    if (g.provider !== row.provider) return g
+    return {
+      ...g,  // preserva avgFeePct, volume30d, tx30d (vindos da RPC — não na row do DB)
+      connected:      row.connected,
+      account:        row.account ?? undefined,
+      accountId:      row.account_id ?? undefined,
+      lastSync:       new Date(row.updated_at).getTime(),
+      tokenExpiresAt: row.token_expires_at
+        ? new Date(row.token_expires_at).getTime()
+        : undefined,
+    }
+  })
+}
+```
+
+### ConnectModal — fluxo OAuth vs manual
+
+```
+ConnectModal props: { g, bankAccounts, hasMpOAuth, onConnected }
+
+showOAuth = hasMpOAuth && g.provider === 'mercadopago'
+mode state: 'oauth' | 'manual'  (default = 'oauth' se showOAuth, else 'manual')
+
+Modo OAuth (showOAuth=true, mode='oauth'):
+  1. AccountPicker — seleciona conta bancária de recebimento
+  2. Botão azul "Conectar com Mercado Pago" (Globe icon)
+     → handleOAuthRedirect(): window.location.href = /api/payments/mercadopago-oauth?bank_account_id=xxx
+  3. Info: "token tem validade de 180 dias"
+  4. Link externo dinâmico: g.externalLabel → g.externalUrl (ex: "Painel MP" → mercadopago.com.br/developers/panel)
+  5. Link: "Prefiro inserir o Access Token manualmente" → setMode('manual')
+
+Modo Manual (mode='manual'):
+  1. AccountPicker
+  2. Input password (Access Token)
+  3. handleValidate() → validateGatewayCredentialsAction() → se ok, setStep('split')
+  4. Link: "Usar OAuth (recomendado)" → setMode('oauth')
+
+Step 'split': SplitExplanation (visual do split por venda)
+Step 'done':  ícone check verde + "Pagamentos já podem ser processados"
+```
+
+### OAuth Mercado Pago — fluxo completo
+
+```
+1. GET /api/payments/mercadopago-oauth?bank_account_id=xxx
+   ├── Auth: supabase.auth.getUser()
+   ├── IDOR: verifica bank_account.user_id === user.id
+   ├── Gera state: randomBytes(20).toString('hex') — proteção CSRF
+   ├── Seta cookies httpOnly (sameSite='lax', maxAge=600, secure em prod):
+   │     mp_oauth_state = state
+   │     mp_oauth_bank  = bankAccountId
+   └── Redireciona → https://auth.mercadopago.com/authorization?client_id&response_type=code&state&redirect_uri
+
+2. Mercado Pago redireciona → GET /api/payments/mercadopago-oauth/callback?code=xxx&state=xxx
+   ├── Verifica error param → redirect ?mp_error=authorization_denied
+   ├── CSRF: compara state com cookie mp_oauth_state → redirect ?mp_error=invalid_state se diferente
+   ├── Limpa cookies: delete mp_oauth_state + mp_oauth_bank
+   ├── Auth: supabase.auth.getUser()
+   ├── POST https://api.mercadopago.com/oauth/token (grant_type=authorization_code)
+   │     → access_token, refresh_token?, expires_in?, user_id?
+   ├── GET  https://api.mercadopago.com/v1/users/me → email ou nickname (accountInfo)
+   ├── Resolve label da conta bancária (SELECT bank_accounts WHERE id + user_id)
+   ├── encryptToken(accessToken) → AES-256-GCM
+   ├── token_expires_at = now() + 180 dias (limite do MP OAuth)  ← migração 075
+   ├── UPSERT gateways { connected:true, status:'active',
+   │     credentials:{token,account_info,oauth:true}, token_expires_at }
+   │     ON CONFLICT (user_id, provider)
+   ├── activity_event fire-and-forget (type='newBot', title='Mercado Pago conectado via OAuth')
+   └── Redireciona → /dashboard/gateways?mp_connected=1
+
+3. GatewaysClient.tsx
+   ├── useEffect([mpConnected, mpError]):
+   │     mpConnected=true → toast sucesso + track('gateway_connected', { gateway: 'mercadopago' })
+   │     mpError         → toast erro com MP_OAUTH_ERRORS[code] ?? mensagem genérica
+   │     router.replace('/dashboard/gateways') — remove ?mp_connected=1 da URL
+   └── MP_OAUTH_ERRORS: mapa code → mensagem em português
+       { authorization_denied, invalid_state, token_timeout, token_exchange_failed, db_save_failed }
+```
+
+### SplitExplanation — cálculo do split por venda
+
+```typescript
+const UMBRA_FEE_PCT = 3  // 3% por transação
+
+// Exemplo para venda de R$ 100 via Pix (taxa MP: 0,99%)
+gFee = 100 * 0.99 / 100 = 0.99   // Taxa gateway
+pFee = 100 * 3    / 100 = 3.00   // Comissão Umbra Bot
+net  = 100 - 0.99 - 3.00 = 96.01 // Você recebe
+// Visualizado como barra colorida: azul(MP) | roxo(Umbra) | verde(você)
+```
+
+### GatewayCard — stats grid 3 colunas
+
+```
+Stats grid (só quando conectado, layout 3-col):
+  "Volume (30d)"   — fmtBRL(g.volume30d)
+  "Transações"     — g.tx30d
+  "Taxa real"      — g.avgFeePct.toFixed(2)%  (avg_fee_pct da RPC — dado real das transações)
+                     (fallback: g.feeText do catálogo quando avgFeePct === 0)
+
+Cabeçalho do card:
+  ExpiryBadge quando g.tokenExpiresAt está definido (só OAuth)
+
+Banner de aviso no card quando daysLeft <= 30:
+  "Token expira em Nd. Renovar agora?" + link "Renovar" → abre RenewModal
+
+Borda do card: warning quando daysLeft <= 30; danger quando daysLeft <= 0
+
+Botão "Renovar token" (warning, só quando g.tokenExpiresAt definido):
+  → abre RenewModal
+```
+
+### Taxa média ponderada — KPI
+
+```typescript
+const avgFee = useMemo(() => {
+  const total = connected.reduce((s, g) => s + g.volume30d, 0)
+  if (total > 0) {
+    // Média ponderada pelo volume real de cada gateway
+    return connected.reduce((s, g) => s + (g.avgFeePct * g.volume30d), 0) / total
+  }
+  if (connected.length === 0) return 0
+  // Fallback: média simples das taxas Pix do catálogo (sem dados de transações ainda)
+  const fees = connected.map(g => g.fee.pix ?? g.fee.card ?? 2.99)
+  return fees.reduce((s, v) => s + v, 0) / fees.length
+}, [connected])
+```
+
+### migração 074 — alterações na tabela gateways
+
+```sql
+-- RLS corrigida: open (using true) → owner (auth.uid() = user_id)
+-- UNIQUE constraint: UNIQUE (user_id, provider) — permite upsert onConflict
+-- Nova coluna: account_id uuid references bank_accounts(id) on delete set null
+-- RPC: gateways_stats(p_user_id) → json { [provider]: { volume_30d, tx_30d, avg_fee_pct } }
+```
+
+### migração 075 — token_expires_at
+
+```sql
+-- Tokens do Mercado Pago via OAuth expiram em 180 dias.
+-- Preenchida pelo callback OAuth; zerada ao desconectar; NULL = token manual.
+alter table public.gateways
+  add column if not exists token_expires_at timestamptz;
+```
+
+### Segurança
+
+- `connectGatewayAction` re-valida credenciais server-side (defesa em profundidade)
+- OAuth: CSRF via state cookie (httpOnly, sameSite=lax, maxAge=600) — state destruído após uso
+- IDOR: bank_account verificado com `.eq('user_id', user.id)` antes de iniciar OAuth
+- `testGatewayConnectionAction`: descriptografa + chama API no servidor — token nunca vai ao browser
+- Rate limit: validate 15/h, connect 10/h (por user_id via Upstash Redis)
+- `disconnectGatewayAction`: limpa `credentials: {}` e `token_expires_at: null` — sem dados residuais
+- Realtime: filtro `user_id=eq.${userId}` no canal — usuário só recebe eventos dos próprios gateways
+
+### Variáveis de ambiente necessárias para OAuth
+
+```
+MERCADOPAGO_CLIENT_ID      # Número da aplicação no portal MP developers
+MERCADOPAGO_CLIENT_SECRET  # Client Secret (aba Credenciais do app MP)
+# Redirect URI a configurar no app MP: {APP_URL}/api/payments/mercadopago-oauth/callback
+# hasMpOAuth = !!MERCADOPAGO_CLIENT_ID — botão OAuth oculto se não configurado
+```
+
+### Eventos PostHog do módulo
+
+| Evento | Quando | Props |
+|---|---|---|
+| `gateway_connected` | ao conectar via token manual OU via OAuth (callback) | `{ gateway: provider }` |
+| `gateway_disconnected` | ao desconectar gateway | `{ gateway: provider }` |
+| `gateway_configured` | ao salvar conta bancária de recebimento | `{ gateway: provider }` |
+| `gateway_connection_tested` | ao verificar conexão | `{ gateway: provider, success: boolean }` |
