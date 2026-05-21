@@ -8,17 +8,46 @@ import * as Sentry            from '@sentry/nextjs'
 
 /* ─── Validation ─────────────────────────────────────────── */
 
+function validateCPF(digits: string): boolean {
+  if (/^(\d)\1{10}$/.test(digits)) return false
+  let sum = 0
+  for (let i = 0; i < 9; i++) sum += parseInt(digits[i]) * (10 - i)
+  let rem = (sum * 10) % 11
+  if (rem >= 10) rem = 0
+  if (rem !== parseInt(digits[9])) return false
+  sum = 0
+  for (let i = 0; i < 10; i++) sum += parseInt(digits[i]) * (11 - i)
+  rem = (sum * 10) % 11
+  if (rem >= 10) rem = 0
+  return rem === parseInt(digits[10])
+}
+
+function validateCNPJ(digits: string): boolean {
+  if (/^(\d)\1{13}$/.test(digits)) return false
+  const calc = (n: string, w: number[]) => {
+    const rem = w.reduce((s, v, i) => s + parseInt(n[i]) * v, 0) % 11
+    return rem < 2 ? 0 : 11 - rem
+  }
+  const w1 = [5,4,3,2,9,8,7,6,5,4,3,2]
+  const w2 = [6,5,4,3,2,9,8,7,6,5,4,3,2]
+  return calc(digits, w1) === parseInt(digits[12]) && calc(digits, w2) === parseInt(digits[13])
+}
+
 const paySchema = z.object({
   checkout_id:    z.string().uuid('checkout_id inválido.'),
   customer_name:  z.string().min(2,  'Nome deve ter ao menos 2 caracteres.').max(150),
   customer_email: z.string().email('E-mail inválido.'),
-  // Aceita CPF (11 dígitos) ou CNPJ (14 dígitos) — sempre obrigatório no checkout público
+  // Aceita CPF (11 dígitos) ou CNPJ (14 dígitos) com validação de dígito verificador
   customer_cpf:   z.string()
                    .transform((v) => v.replace(/\D/g, ''))
                    .pipe(
                      z.string().refine(
-                       (v) => v.length === 11 || v.length === 14,
-                       'CPF deve ter 11 dígitos ou CNPJ 14 dígitos.',
+                       (v) => {
+                         if (v.length === 11) return validateCPF(v)
+                         if (v.length === 14) return validateCNPJ(v)
+                         return false
+                       },
+                       'CPF ou CNPJ inválido.',
                      ),
                    ),
   customer_phone: z.string().max(20).nullish(),
@@ -153,7 +182,7 @@ export async function POST(request: NextRequest) {
   const pixInfo = mpData.point_of_interaction?.transaction_data
   const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString()
 
-  const fee = Number(checkout.price) * 0.0399 + 0.4
+  const fee = Number(checkout.price) * 0.0099
   const net = Number(checkout.price) - fee
 
   /* ── 4. Persiste transação ─────────────────────────────── */

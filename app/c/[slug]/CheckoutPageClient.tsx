@@ -64,9 +64,11 @@ const fmtBRL = (n: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(n)
 
 function fmtCountdown(sec: number): string {
-  const h = Math.floor(sec / 3600)
+  const d = Math.floor(sec / 86400)
+  const h = Math.floor((sec % 86400) / 3600)
   const m = Math.floor((sec % 3600) / 60)
   const s = sec % 60
+  if (d > 0) return `${d}d ${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`
   if (h > 0) return `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`
   return `${m}:${String(s).padStart(2,'0')}`
 }
@@ -206,6 +208,24 @@ export default function CheckoutPageClient({
     if (errors[id]) setErrors((prev) => { const e = { ...prev }; delete e[id]; return e })
   }
 
+  function validateCPF(d: string): boolean {
+    if (/^(\d)\1{10}$/.test(d)) return false
+    let sum = 0; let rem: number
+    for (let i = 0; i < 9; i++) sum += parseInt(d[i]) * (10 - i)
+    rem = (sum * 10) % 11; if (rem >= 10) rem = 0
+    if (rem !== parseInt(d[9])) return false
+    sum = 0
+    for (let i = 0; i < 10; i++) sum += parseInt(d[i]) * (11 - i)
+    rem = (sum * 10) % 11; if (rem >= 10) rem = 0
+    return rem === parseInt(d[10])
+  }
+
+  function validateCNPJ(d: string): boolean {
+    if (/^(\d)\1{13}$/.test(d)) return false
+    const calc = (n: string, w: number[]) => { const r = w.reduce((s, v, i) => s + parseInt(n[i]) * v, 0) % 11; return r < 2 ? 0 : 11 - r }
+    return calc(d, [5,4,3,2,9,8,7,6,5,4,3,2]) === parseInt(d[12]) && calc(d, [6,5,4,3,2,9,8,7,6,5,4,3,2]) === parseInt(d[13])
+  }
+
   function validate(): boolean {
     const errs: Record<string, string> = {}
     for (const f of fields) {
@@ -216,9 +236,9 @@ export default function CheckoutPageClient({
       }
       if (f.id === 'cpf') {
         const digits = v.replace(/\D/g, '')
-        if (digits.length !== 11 && digits.length !== 14) {
-          errs[f.id] = 'CPF deve ter 11 dígitos ou CNPJ 14 dígitos.'
-        }
+        if (digits.length === 11 && !validateCPF(digits)) errs[f.id] = 'CPF inválido.'
+        else if (digits.length === 14 && !validateCNPJ(digits)) errs[f.id] = 'CNPJ inválido.'
+        else if (digits.length !== 11 && digits.length !== 14) errs[f.id] = 'CPF deve ter 11 dígitos ou CNPJ 14 dígitos.'
       }
     }
     setErrors(errs)

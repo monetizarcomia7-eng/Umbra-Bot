@@ -647,21 +647,32 @@ function MiniStatC({ label, value, tone }: { label: string; value: string; tone?
 
 interface CheckoutFunnel { visited: number; cart: number; paid: number }
 
-function CheckoutCard({ checkout, gatewayChoices, onOpen, onDuplicate, onDelete, onArchive }: {
+function CheckoutCard({ checkout, gatewayChoices, appUrl, onOpen, onDuplicate, onDelete, onArchive, onReactivate }: {
   checkout:       Checkout
   gatewayChoices: GatewayChoice[]
+  appUrl:         string
   onOpen:         () => void
   onDuplicate:    () => void
   onDelete:       () => void
   onArchive:      () => void
+  onReactivate:   () => void
 }) {
   const [menuOpen,       setMenuOpen]       = useState(false)
   const [analyticsOpen,  setAnalyticsOpen]  = useState(false)
   const [funnel,         setFunnel]         = useState<CheckoutFunnel | null>(null)
   const [loadingFunnel,  setLoadingFunnel]  = useState(false)
+  const [copied,         setCopied]         = useState(false)
   const st = coStatusMap[checkout.status]
   const gw = gatewayChoices.find((g) => g.id === checkout.gateway)
   const sbCard = createClient()
+  const publicUrl = `${appUrl}/c/${checkout.slug}`
+
+  function copyLink() {
+    navigator.clipboard.writeText(publicUrl).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    }).catch(() => {})
+  }
 
   async function loadFunnel() {
     if (funnel) { setAnalyticsOpen((o) => !o); return }
@@ -711,9 +722,17 @@ function CheckoutCard({ checkout, gatewayChoices, onOpen, onDuplicate, onDelete,
               <button onClick={() => { setMenuOpen(false); onDuplicate() }} className="w-full text-left px-3 py-2 text-[12.5px] text-[var(--text)] hover:bg-[var(--surface-2)] flex items-center gap-2 transition-colors">
                 <Copy size={13} className="text-[var(--text-muted)]" /> Duplicar
               </button>
+              <button onClick={() => { setMenuOpen(false); copyLink() }} className="w-full text-left px-3 py-2 text-[12.5px] text-[var(--text)] hover:bg-[var(--surface-2)] flex items-center gap-2 transition-colors">
+                <Copy size={13} className="text-[var(--text-muted)]" /> {copied ? 'Link copiado!' : 'Copiar link'}
+              </button>
               {checkout.status !== 'archived' && (
                 <button onClick={() => { setMenuOpen(false); onArchive() }} className="w-full text-left px-3 py-2 text-[12.5px] text-[var(--text)] hover:bg-[var(--surface-2)] flex items-center gap-2 transition-colors">
                   <Archive size={13} className="text-[var(--text-muted)]" /> Arquivar
+                </button>
+              )}
+              {checkout.status === 'archived' && (
+                <button onClick={() => { setMenuOpen(false); onReactivate() }} className="w-full text-left px-3 py-2 text-[12.5px] text-[var(--text)] hover:bg-[var(--surface-2)] flex items-center gap-2 transition-colors">
+                  <Archive size={13} className="text-[var(--text-muted)]" /> Reativar
                 </button>
               )}
               <div className="h-px bg-[var(--border)] my-1" />
@@ -901,6 +920,13 @@ function CheckoutEditor({ checkout, gatewayChoices, pixelChoices, appUrl, userId
     }
     setUploadingImage(true)
     try {
+      // Remove imagem anterior para evitar arquivos órfãos quando a extensão muda
+      if (draft.productImage) {
+        const match = draft.productImage.match(/checkout-images\/([^?]+)/)
+        if (match) {
+          await sbEditor.storage.from('checkout-images').remove([match[1]])
+        }
+      }
       const ext  = file.name.split('.').pop()?.toLowerCase() ?? 'jpg'
       const path = `${userId}/${draft.id}.${ext}`
       const { error: uploadError } = await sbEditor.storage
@@ -936,6 +962,10 @@ function CheckoutEditor({ checkout, gatewayChoices, pixelChoices, appUrl, userId
 
   async function handleSave() {
     if (!draft.name.trim()) { showToast('O nome do checkout não pode estar vazio.', 'error'); return }
+    if (draft.successUrl) {
+      try { const u = new URL(draft.successUrl); if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new Error() }
+      catch { showToast('URL de redirecionamento inválida. Use http:// ou https://', 'error'); return }
+    }
     setSaving(true)
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current)
     const updated = { ...draft, updatedAt: Date.now() }
@@ -954,6 +984,10 @@ function CheckoutEditor({ checkout, gatewayChoices, pixelChoices, appUrl, userId
     if (!draft.name.trim()) { showToast('O nome do checkout não pode estar vazio.', 'error'); return }
     if (!draft.methods.pix && !draft.methods.card && !draft.methods.boleto) {
       showToast('Selecione pelo menos um método de pagamento.', 'error'); return
+    }
+    if (draft.successUrl) {
+      try { const u = new URL(draft.successUrl); if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new Error() }
+      catch { showToast('URL de redirecionamento inválida. Use http:// ou https://', 'error'); return }
     }
     setSaving(true)
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current)
@@ -1337,15 +1371,17 @@ function CheckoutEditor({ checkout, gatewayChoices, pixelChoices, appUrl, userId
    CheckoutsList
    ============================================================ */
 
-function CheckoutsList({ checkouts, creating, gatewayChoices, onOpen, onCreate, onDuplicate, onDelete, onArchive, onOpenTemplates }: {
-  checkouts:      Checkout[]
-  creating:       boolean
-  gatewayChoices: GatewayChoice[]
-  onOpen:         (id: string) => void
-  onCreate:       () => void
-  onDuplicate:    (id: string) => void
-  onDelete:       (id: string) => void
-  onArchive:      (id: string) => void
+function CheckoutsList({ checkouts, creating, gatewayChoices, appUrl, onOpen, onCreate, onDuplicate, onDelete, onArchive, onReactivate, onOpenTemplates }: {
+  checkouts:       Checkout[]
+  creating:        boolean
+  gatewayChoices:  GatewayChoice[]
+  appUrl:          string
+  onOpen:          (id: string) => void
+  onCreate:        () => void
+  onDuplicate:     (id: string) => void
+  onDelete:        (id: string) => void
+  onArchive:       (id: string) => void
+  onReactivate:    (id: string) => void
   onOpenTemplates: () => void
 }) {
   const [search, setSearch]   = useState('')
@@ -1435,10 +1471,12 @@ function CheckoutsList({ checkouts, creating, gatewayChoices, onOpen, onCreate, 
               key={c.id}
               checkout={c}
               gatewayChoices={gatewayChoices}
+              appUrl={appUrl}
               onOpen={() => onOpen(c.id)}
               onDuplicate={() => onDuplicate(c.id)}
               onDelete={() => onDelete(c.id)}
               onArchive={() => onArchive(c.id)}
+              onReactivate={() => onReactivate(c.id)}
             />
           ))}
           <button
@@ -1631,10 +1669,27 @@ export default function CheckoutClient({
     else    showToast('Erro ao arquivar.', 'error')
   }
 
+  async function reactivateCheckout(id: string) {
+    const c = checkouts.find((co) => co.id === id)
+    if (!c) return
+    const updated = { ...c, status: 'draft' as const, updatedAt: Date.now() }
+    const ok = await saveCheckout(updated)
+    if (ok) showToast('Checkout reativado como rascunho.', 'success')
+    else    showToast('Erro ao reativar.', 'error')
+  }
+
   async function deleteCheckout(id: string) {
     const c = checkouts.find((co) => co.id === id)
     setCheckouts((prev) => prev.filter((co) => co.id !== id))
     setDeleteId(null)
+
+    // Remove imagem do Storage antes de apagar o checkout
+    if (c?.productImage) {
+      const match = c.productImage.match(/checkout-images\/([^?]+)/)
+      if (match) {
+        sb.storage.from('checkout-images').remove([match[1]]).catch(() => {})
+      }
+    }
 
     const { error } = await sb
       .from('checkouts')
@@ -1725,11 +1780,13 @@ export default function CheckoutClient({
           checkouts={checkouts}
           creating={creating}
           gatewayChoices={gatewayChoices}
+          appUrl={appUrl}
           onOpen={setEditingId}
           onCreate={() => createCheckout()}
           onDuplicate={duplicateCheckout}
           onDelete={(id) => setDeleteId(id)}
           onArchive={archiveCheckout}
+          onReactivate={reactivateCheckout}
           onOpenTemplates={() => setShowTemplates(true)}
         />
       )}

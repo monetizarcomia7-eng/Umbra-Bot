@@ -229,6 +229,7 @@ bot_id:         uuid        FK → bots(id)
 flow_id:        uuid        FK → flows(id)
 contact_id:     uuid        FK → contacts(id)
 transaction_id: uuid        FK → transactions(id)
+checkout_id:    text        FK → checkouts(id)  ON DELETE SET NULL  [migração 078]
 event_type:     text        NOT NULL
 product_name:   text        NOT NULL  default ''
 utm_source:     text
@@ -238,36 +239,67 @@ metadata:       jsonb       NOT NULL  default '{}'
 created_at:     timestamptz NOT NULL  default now()
 ```
 
+Trigger `trg_sync_checkout_stats` (migração 078): dispara após INSERT em `checkout_events` onde `checkout_id IS NOT NULL`. Atualiza `checkouts.visits` (quando `event_type = 'visited'`) e `checkouts.conversions` + `checkouts.conversion` (quando `event_type = 'paid'`).
+
+RPC `track_checkout_visit(p_slug, p_utm_source, p_utm_medium, p_utm_campaign)` — security definer, grant to anon:
+- Resolve `checkout_id` e `user_id` via slug (checkouts WHERE status='published')
+- Insere evento 'visited' em checkout_events — trigger sincroniza visits++
+- Chamada pelo CheckoutPageClient no mount (sem auth necessária)
+
 ---
 
 ## public.checkouts
 
 ```
-id:           text        NOT NULL
-name:         text        NOT NULL
-slug:         text        NOT NULL
-product_name: text        NOT NULL  default ''
-product_desc: text        NOT NULL  default ''
-price:        numeric     NOT NULL  default 0
-installments: integer     NOT NULL  default 1
-gateway:      text        NOT NULL  default 'pushinpay'
-pixel:        text        NOT NULL  default 'none'
-primary_color:text        NOT NULL  default '#7c3aed'
-bg_variant:   text        NOT NULL  default 'light'
-font:         text        NOT NULL  default 'Inter'
-logo:         text        NOT NULL  default ''
-badge:        text
-fields:       jsonb       NOT NULL  default '{"cep":false,"cpf":false,"name":true,"email":true,"phone":false,"address":false}'
-methods:      jsonb       NOT NULL  default '{"pix":true,"card":true,"boleto":false}'
-layout:       text        NOT NULL  default 'two_col'
-status:       text        NOT NULL  default 'draft'
-visits:       integer     NOT NULL  default 0
-conversions:  integer     NOT NULL  default 0
-conversion:   numeric     NOT NULL  default 0
-created_at:   timestamptz NOT NULL  default now()
-updated_at:   timestamptz NOT NULL  default now()
-user_id:      uuid        FK → auth.users(id)
+id:             text        NOT NULL
+name:           text        NOT NULL
+slug:           text        NOT NULL  UNIQUE
+product_name:   text        NOT NULL  default ''
+product_desc:   text        NOT NULL  default ''
+product_image:  text                  (URL pública no bucket checkout-images) [migração 080]
+price:          numeric     NOT NULL  default 0
+installments:   integer     NOT NULL  default 1
+gateway:        text        NOT NULL  default 'pushinpay'
+pixel:          text        NOT NULL  default 'none'
+primary_color:  text        NOT NULL  default '#7c3aed'
+bg_variant:     text        NOT NULL  default 'light'
+font:           text        NOT NULL  default 'Inter'
+logo:           text        NOT NULL  default ''
+badge:          text
+fields:         jsonb       NOT NULL  default '{"cep":false,"cpf":true,"name":true,"email":true,"phone":false,"address":false}'
+methods:        jsonb       NOT NULL  default '{"pix":true,"card":true,"boleto":false}'
+layout:         text        NOT NULL  default 'two_col'
+status:         text        NOT NULL  default 'draft'
+visits:         integer     NOT NULL  default 0
+conversions:    integer     NOT NULL  default 0
+conversion:     numeric     NOT NULL  default 0
+created_at:     timestamptz NOT NULL  default now()
+updated_at:     timestamptz NOT NULL  default now()
+user_id:        uuid        FK → auth.users(id)
+success_url:    text                  (URL de redirecionamento após pagamento confirmado) [migração 081]
+guarantee_days: integer               (dias de garantia — exibidos como badge no checkout público) [migração 081]
+countdown_end:  timestamptz           (fim do contador de urgência no checkout público) [migração 081]
 ```
+
+**Colunas adicionadas por migração:**
+- Migração 080: `product_image text` — URL pública da imagem do produto no Supabase Storage
+- Migração 081: `success_url text`, `guarantee_days integer`, `countdown_end timestamptz`
+
+**RLS — migração 082:**
+- Política `checkouts_open` (`using(true)`) substituída por `checkouts_owner` (`auth.uid() = user_id`)
+- Nota: `checkouts.id` é `text` e `user_id` é `uuid`, portanto o cast `::text` é obrigatório
+- Índice `checkouts_user_id_idx` criado para acelerar queries filtradas por `user_id`
+- Vulnerabilidade IDOR crítica resolvida — antes qualquer autenticado via SDK direto podia ler/alterar checkouts alheios
+
+**Supabase Storage — bucket `checkout-images`** (migração 080):
+- Bucket público, max 2 MB por arquivo, tipos aceitos: `image/jpeg`, `image/png`, `image/webp`, `image/gif`
+- Organização por pasta: `{user_id}/{checkout_id}.{ext}`
+- 4 políticas RLS de storage: insert/select/update/delete verificam `auth.uid()` no path
+
+**RPC `checkout_tx_status(p_tx_id, p_checkout_id)`** (migração 079) — security definer, grant to anon:
+- Retorna `{ status: string }` apenas — sem dados sensíveis
+- Usado pelo CheckoutPageClient para polling do status PIX (intervalo 4s, sem auth necessária)
+- Valida que `tx_id` pertence ao `checkout_id` informado (sem cross-checkout leak)
 
 ---
 
@@ -643,6 +675,7 @@ id:                   uuid        NOT NULL  default gen_random_uuid()
 user_id:              uuid        NOT NULL  FK → auth.users(id)
 bot_id:               uuid        FK → bots(id)
 contact_id:           uuid        FK → contacts(id)
+checkout_id:          text        FK → checkouts(id)  ON DELETE SET NULL  [migração 079]
 gateway:              text        NOT NULL  default ''
 gateway_payment_id:   text
 amount:               numeric     NOT NULL
@@ -655,6 +688,7 @@ pix_expires_at:       timestamptz
 product_name:         text        NOT NULL  default ''
 customer_name:        text
 customer_email:       text
+customer_phone:       text                  [migração 079]
 customer_telegram_id: text
 metadata:             jsonb       NOT NULL  default '{}'
 created_at:           timestamptz NOT NULL  default now()
@@ -668,6 +702,10 @@ type:                 text        NOT NULL  default 'sale'
 payment_method:       text        NOT NULL  default 'pix'
 affiliate_id:         uuid        FK → affiliates(id)
 ```
+
+**Colunas adicionadas por migração:**
+- Migração 079: `checkout_id text FK → checkouts(id)` — vincula transação ao checkout público que gerou o pagamento; preenchido pelo `/api/checkout/pay` ao criar o PIX
+- Migração 079: `customer_phone text` — telefone do comprador (colhido no formulário quando campo habilitado)
 
 ---
 
@@ -724,12 +762,13 @@ auth.users
   │     ├── bot_id       → bots(id)
   │     ├── contact_id   → contacts(id)
   │     ├── flow_id      → flows(id)
-  │     └── affiliate_id → affiliates(id)
+  │     ├── affiliate_id → affiliates(id)
+  │     └── checkout_id  → checkouts(id)  [mig 079]
   ├── flows              (user_id)
   ├── broadcasts         (user_id)  bot_id → bots(id)
   ├── activity_events    (user_id)  bot_id → bots(id)  contact_id → contacts(id)
   ├── alerts             (user_id)
-  ├── checkout_events    (user_id)  bot_id / flow_id / contact_id / transaction_id
+  ├── checkout_events    (user_id)  bot_id / flow_id / contact_id / transaction_id / checkout_id [mig 078]
   ├── affiliates         (user_id)
   │     └── affiliate_payments (affiliate_id)
   ├── affiliate_config   (user_id)

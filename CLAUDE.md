@@ -121,6 +121,15 @@ umbra-bot/
 │   │       │                     # found=false → ProgramNotFound | active=false → ProgramClosed
 │   │       │                     # Exibe program_name, program_description, benefits[] dinâmicos
 │   │       └── ApplicationForm.tsx # Client Component: formulário de candidatura → POST /api/affiliates/apply
+│   ├── c/
+│   │   └── [slug]/
+│   │       ├── page.tsx          # Página pública do checkout (Server Component, admin client)
+│   │       │                     # Busca checkout por slug + pixels do dono (sem access_token)
+│   │       │                     # PublicCheckout inclui: success_url, guarantee_days, countdown_end
+│   │       ├── CheckoutPageClient.tsx # Client Component: formulário com CPF/CNPJ mask,
+│   │       │                          # timer PIX 30 min, polling checkout_tx_status (4s),
+│   │       │                          # success_url redirect, guarantee badge, countdown_end timer
+│   │       └── PixelScripts.tsx  # Snippets de pixel (Meta/TikTok/Google) injetados no head
 │   ├── r/
 │   │   └── [slug]/
 │   │       └── route.ts          # GET: rota pública — tenta afiliado primeiro, depois redirecionador
@@ -230,12 +239,17 @@ umbra-bot/
 │       │                          # dbStatus em PixelItem — computeStatus usa dbStatus quando sem eventos
 │       │                          #   (pixel verificado mostra 'healthy' em vez de 'waiting')
 │       │                          # SnippetCard — snippets HTML de instalação browser-side por provider
-│       ├── checkout/             # Checkout — SSR + CheckoutClient (dados reais, migração 078)
+│       ├── checkout/             # Checkout — SSR + CheckoutClient (dados reais, migrações 078–081)
 │       │   ├── page.tsx          # Server Component: SSR checkouts + gateways + pixels em paralelo; exporta RawCheckout/RawGateway/RawPixel
+│       │   │                     # RawCheckout inclui: success_url, guarantee_days, countdown_end (mig 081)
 │       │   └── CheckoutClient.tsx # Client Component: CRUD real (criar/salvar/publicar/duplicar/arquivar/apagar),
 │       │                          # templates modal (3 templates), auto-save 30s, BackConfirm, DeleteModal,
 │       │                          # Realtime canal 'checkouts-realtime', gateway+pixel pickers do banco,
-│       │                          # preview ao vivo, 4 eventos PostHog (checkout_created/published/deleted/duplicated)
+│       │                          # PreviewPanel (toggle Desktop/Mobile — phone frame 375px),
+│       │                          # seção "Configurações avançadas" (success_url/guarantee_days/countdown_end),
+│       │                          # upload de product_image (Supabase Storage bucket checkout-images),
+│       │                          # analytics drill-down por checkout (funil visited/cart/paid lazy),
+│       │                          # 4 eventos PostHog (checkout_created/published/deleted/duplicated)
 │       ├── biolink/              # Bio Link (mock)
 │       ├── webhooks/             # Webhooks (mock)
 │       ├── profile/              # Perfil + avatar upload (funcional + analytics)
@@ -557,6 +571,31 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Checkout — página pública /c/[slug] (Server Component admin client + CheckoutPageClient) | ✅ Implementado |
 | Checkout — rastreamento de visita via RPC track_checkout_visit (grant to anon, migração 078) | ✅ Implementado |
 | Checkout — /api/checkout/pay: pagamento público via admin client (busca token do dono, cria PIX MP) | ✅ Implementado |
+| Checkout — migração 079: checkout_id + customer_phone em transactions + RPC checkout_tx_status (anon) | ✅ Criada |
+| Checkout — migração 080: product_image em checkouts + bucket checkout-images (público, 2 MB, RLS por pasta user_id) | ✅ Criada |
+| Checkout — migração 081: success_url + guarantee_days + countdown_end em checkouts | ✅ Criada |
+| Checkout — migração 082: RLS checkouts_owner (auth.uid() = user_id) + índice user_id | ✅ Criada |
+| Checkout — /api/checkout/pay: suporte a CNPJ (14 dígitos) além de CPF (11 dígitos) | ✅ Implementado |
+| Checkout — CPF/CNPJ sempre obrigatório no formulário público (always: true, label 'CPF / CNPJ') | ✅ Implementado |
+| Checkout — máscara CPF/CNPJ automática (troca ao atingir 11 dígitos) no CheckoutPageClient | ✅ Implementado |
+| Checkout — countdown PIX 30 min: timer visual no CheckoutPageClient após gerar QR code | ✅ Implementado |
+| Checkout — polling de status PIX (4s) via RPC checkout_tx_status — sem auth, sem dados sensíveis | ✅ Implementado |
+| Checkout — success_url: redireciona comprador após pagamento confirmado (window.location.href) | ✅ Implementado |
+| Checkout — guarantee_days: badge de garantia exibido no checkout público quando configurado | ✅ Implementado |
+| Checkout — countdown_end: timer de urgência no topo do checkout público quando ativo | ✅ Implementado |
+| Checkout — product_image: upload de imagem do produto no editor (Supabase Storage) | ✅ Implementado |
+| Checkout — editor: seção "Configurações avançadas" com success_url, guarantee_days, countdown_end | ✅ Implementado |
+| Checkout — PreviewPanel com toggle Desktop/Mobile (375 px phone frame) | ✅ Implementado |
+| Checkout — analytics drill-down por checkout: funil de conversão lazy (visited/cart/paid) | ✅ Implementado |
+| Checkout — migração 082: RLS corrigida checkouts_owner (auth.uid() = user_id) — IDOR crítico resolvido | ✅ Implementado |
+| Checkout — taxa PIX corrigida: 0,99% flat (era 3,99%+R$0,40) em /api/checkout/pay | ✅ Corrigido |
+| Checkout — validação de algoritmo CPF/CNPJ (mod-11) no servidor (pay/route.ts) e cliente (CheckoutPageClient.tsx) | ✅ Implementado |
+| Checkout — handleImageUpload: remove imagem anterior do Storage antes de novo upload (sem órfãos) | ✅ Corrigido |
+| Checkout — deleteCheckout: remove product_image do Storage ao apagar checkout | ✅ Corrigido |
+| Checkout — botão Reativar no menu de checkouts arquivados (retorna para status draft) | ✅ Implementado |
+| Checkout — botão Copiar link no menu do CheckoutCard (copia umbra.bot/c/slug) | ✅ Implementado |
+| Checkout — validação de protocolo em success_url (http/https) no handleSave e handlePublish | ✅ Implementado |
+| Checkout — fmtCountdown suporta dias (ex: "1d 02:30:15") no checkout público | ✅ Corrigido |
 | Sistema de planos/billing | ❌ Não iniciado |
 | Remarketing — Server Component SSR + RemarketingClient (dados reais, sem mock) | ✅ Funcional |
 | Remarketing — createCampaign: INSERT real com user_id + UUID real retornado | ✅ Implementado |
@@ -3819,3 +3858,250 @@ O JSON inclui apenas campos educativos — tokens e dados reais nunca expostos n
 | `pixel_verified` | ao verificar conexão via API | `{ provider, status: 'ok' \| 'error' }` |
 | `pixel_test_sent` | ao enviar evento de teste (CAPI/Events API) | `{ provider }` |
 | `utm_link_copied` | ao copiar link UTM gerado | `{ has_utm: boolean }` |
+
+---
+
+## 26. MÓDULO DE CHECKOUT
+
+### Arquivos
+
+```
+app/dashboard/checkout/
+  ├── page.tsx          # Server Component — SSR checkouts + gateways + pixels em paralelo
+  │                     # exporta RawCheckout (inclui success_url, guarantee_days, countdown_end)
+  │                     # exporta RawGateway e RawPixel
+  └── CheckoutClient.tsx # Client Component — editor completo + lista com analytics drill-down
+
+app/c/[slug]/
+  ├── page.tsx          # Server Component público (admin client, sem auth do comprador)
+  │                     # Busca checkout por slug (status='published') + pixels do dono
+  │                     # PublicCheckout: success_url, guarantee_days, countdown_end
+  │                     # Pixels: provider, pixelId, pixelCode (sem access_token)
+  ├── CheckoutPageClient.tsx # Client Component público — formulário de compra completo
+  └── PixelScripts.tsx  # Snippets de pixel injetados no <head> da página pública
+
+app/api/checkout/
+  ├── pay/route.ts      # POST: cria pagamento PIX (sem auth) — admin client
+  │                     # Suporte a CPF (11 dígitos) e CNPJ (14 dígitos)
+  │                     # Persiste checkout_id + customer_phone na transaction (mig 079)
+  └── track/route.ts    # POST: registra eventos de funil (visited/cart_added/payment_initiated)
+                        # Usa RPC track_checkout_event (security definer, mig 041)
+```
+
+### Fluxo de dados — Editor (dashboard)
+
+```
+CheckoutPage (Server Component)
+  ├── Auth guard: if (!user) redirect('/login')
+  ├── Promise.all em paralelo:
+  │     ├── checkouts: todos os campos incluindo success_url, guarantee_days, countdown_end
+  │     ├── gateways: id, provider, account (connected=true)
+  │     └── pixels: id, provider, pixel_id, capi
+  └── passa como props:
+        initialCheckouts: RawCheckout[]
+        userId: string
+        connectedGateways: RawGateway[]
+        configuredPixels: RawPixel[]
+        appUrl: string
+
+CheckoutClient (Client Component)
+  ├── checkouts state: initialCheckouts.map(mapRaw)
+  ├── editing state: Checkout | null — null = lista; Checkout = editor
+  │
+  ├── Lista de checkouts:
+  │     CheckoutCard: nome, status, visits/conversions/conversion
+  │     Funil lazy (analytics drill-down) por checkout:
+  │       funnels state: Record<id, CheckoutFunnel>
+  │       loadFunnel(id): busca em paralelo:
+  │         checkout_events COUNT WHERE checkout_id=id AND event_type='visited'
+  │         checkout_events COUNT WHERE checkout_id=id AND event_type='cart_added'
+  │         transactions COUNT WHERE checkout_id=id AND status='approved'
+  │       FunnelBar: barra de progresso 3 etapas (Visitou / Carrinho / Pago) ao expandir card
+  │
+  ├── Editor (quando editing !== null):
+  │     Abas: Identidade | Produto | Pagamento | Campos | Layout | Avançado
+  │
+  │     Aba Produto:
+  │       product_image: input URL + upload para Supabase Storage (bucket checkout-images)
+  │         Pasta: {userId}/{checkoutId}.{ext}, max 2 MB
+  │         Preview ao vivo após upload bem-sucedido
+  │
+  │     Aba Avançado (seção "Configurações avançadas"):
+  │       success_url: input URL — validado com new URL() antes de salvar
+  │         Exibe preview do domínio ao digitar URL válida
+  │       guarantee_days: input number — exibe badge "<N> dias de garantia" ao vivo
+  │         <Shield> icon com cor primary quando preenchido
+  │       countdown_end: datetime-local input — exibe "⏳ Ativo até ..." quando futuro
+  │         Indicador "Expirado" quando no passado
+  │
+  │     PreviewPanel (lado direito do editor):
+  │       toggle Desktop/Mobile no topo do painel
+  │       Desktop: CheckoutPreview em largura normal
+  │       Mobile: frame de celular (border-4 rounded-[32px], max-width 375px, max-height 640px overflow-y-auto)
+  │
+  ├── createCheckout(): INSERT com user_id + success_url/guarantee_days/countdown_end = null
+  ├── saveCheckout(updated): UPDATE com novos campos + success_url/guarantee_days/countdown_end
+  ├── duplicateCheckout(id): copia com slug = original.slug + '-copia-' + newId.slice(0,4)
+  │     copia também success_url, guarantee_days, countdown_end
+  ├── publishCheckout / archiveCheckout / deleteCheckout: padrão com .eq('user_id')
+  └── Realtime canal 'checkouts-realtime', filtrado por user_id
+```
+
+### Fluxo de dados — Página pública /c/[slug]
+
+```
+PublicCheckoutPage (Server Component)
+  ├── Admin client (sem sessão do comprador)
+  ├── Busca checkout pelo slug WHERE status='published'
+  │     Campos: id, slug, name, product_name, product_desc, product_image, price,
+  │             installments, gateway, primary_color, bg_variant, font, logo, badge,
+  │             fields, methods, layout, user_id, success_url, guarantee_days, countdown_end
+  ├── Busca pixels do dono (sem access_token — apenas provider, pixel_id, pixel_code)
+  └── Passa checkout + pixels + utmParams ao CheckoutPageClient
+
+CheckoutPageClient (Client Component)
+  ├── Registra visita ao montar: fetch POST /api/checkout/track { checkout_id, event_type:'visited' }
+  │     (ou RPC track_checkout_visit se disponível)
+  │
+  ├── countdown_end: timer de urgência no topo (formato DD:HH:MM:SS)
+  │     Oculto quando countdown_end é null ou já expirou
+  │     useEffect com setInterval 1s; clearInterval no unmount
+  │
+  ├── guarantee_days: badge "<N> dias de garantia" no rodapé do formulário
+  │     <Shield> icon + "Garantia de N dias"
+  │     Oculto quando guarantee_days é null ou 0
+  │
+  ├── Formulário de compra:
+  │     CPF/CNPJ: sempre exibido (campo always: true) — label 'CPF / CNPJ'
+  │       Máscara automática: 000.000.000-00 (CPF) ↔ 00.000.000/0000-00 (CNPJ)
+  │       Troca de máscara ao atingir 11 dígitos numéricos
+  │     Demais campos: renderizados conforme checkout.fields (name, email, phone, cep, address)
+  │
+  ├── Após submit:
+  │     POST /api/checkout/pay → { transaction_id, pix_qr_code, pix_copy_paste, expires_at, amount }
+  │     Exibe tela PIX com QR code + copia-e-cola + countdown 30 min
+  │
+  ├── Countdown PIX 30 min:
+  │     expires_at retornado pela API → calcula segundos restantes
+  │     Atualiza a cada segundo; mostra "Código expirado" quando chega a zero
+  │
+  ├── Polling de status PIX (4s via setInterval):
+  │     GET ou RPC checkout_tx_status({ tx_id, checkout_id }) → { status }
+  │     'approved' → redireciona para success_url (se configurado) ou exibe sucesso inline
+  │     'expired' / 'cancelled' → exibe mensagem de expiração
+  │     AbortController: limpa ao desmontar ou ao confirmar pagamento
+  │
+  └── Sucesso:
+        Se success_url configurado: window.location.href = success_url (comprador sai do checkout)
+        Se não configurado: exibe tela de confirmação inline com ícone ✓
+```
+
+### Interfaces TypeScript
+
+```typescript
+// RawCheckout — exportada de page.tsx do dashboard
+export interface RawCheckout {
+  id, name, slug, product_name, product_desc, product_image: string | null
+  price, installments
+  gateway, pixel, primary_color, bg_variant, font, logo
+  badge: string | null
+  fields, methods: Record<string, boolean>
+  layout: 'two_col' | 'one_col'
+  status: 'published' | 'draft' | 'archived'
+  visits, conversions, conversion
+  created_at, updated_at
+  success_url: string | null     // migração 081
+  guarantee_days: number | null  // migração 081
+  countdown_end: string | null   // migração 081
+}
+
+// Checkout — interface interna (camelCase)
+interface Checkout {
+  id, name, slug, productName, productDesc, productImage: string | null
+  price, installments
+  gateway, pixel, primaryColor, bgVariant, font, logo
+  badge: string | null
+  fields, methods: Record<string, boolean>
+  layout: 'two_col' | 'one_col'
+  status: 'published' | 'draft' | 'archived'
+  visits, conversions, conversion
+  createdAt, updatedAt
+  successUrl: string            // '' quando null no banco
+  guaranteeDays: number | null
+  countdownEnd: string | null   // ISO string ou ''
+}
+
+// CheckoutFunnel — funil lazy por checkout
+interface CheckoutFunnel {
+  visited: number
+  cart:    number
+  paid:    number
+}
+
+// PublicCheckout — exportada de page.tsx público
+export interface PublicCheckout {
+  id, slug, name, product_name, product_desc, product_image: string | null
+  price, installments, gateway, primary_color, bg_variant, font, logo
+  badge: string | null
+  fields, methods: Record<string, boolean>
+  layout: 'two_col' | 'one_col'
+  user_id
+  success_url: string | null
+  guarantee_days: number | null
+  countdown_end: string | null
+}
+```
+
+### API /api/checkout/pay — melhorias
+
+```typescript
+// Suporte a CNPJ (migração 079)
+customer_cpf: z.string()
+  .transform((v) => v.replace(/\D/g, ''))
+  .pipe(z.string().refine(
+    (v) => v.length === 11 || v.length === 14,
+    'CPF deve ter 11 dígitos ou CNPJ 14 dígitos.',
+  ))
+
+const docType = customer_cpf.length === 14 ? 'CNPJ' : 'CPF'
+
+// Persiste checkout_id na transaction (migração 079)
+await admin.from('transactions').insert({
+  // ... campos existentes ...
+  checkout_id: checkout_id,        // string UUID do checkout
+  customer_phone: customerPhone,   // número de telefone (opcional)
+})
+
+// Cartão/boleto retornam 400 clara (não implementados)
+if (method !== 'pix') return NextResponse.json(
+  { error: 'Pagamento por cartão e boleto ainda não disponível. Use o Pix.' },
+  { status: 400 }
+)
+```
+
+### Migrações do módulo
+
+| Migração | O que fez |
+|---|---|
+| 078 | Adicionou `checkout_id text FK → checkouts(id)` em `checkout_events`; trigger `trg_sync_checkout_stats` (visits++ e conversions++ automáticos); RPC `track_checkout_visit(p_slug, ...)` — security definer, grant to anon |
+| 079 | Adicionou `checkout_id text FK → checkouts(id)` e `customer_phone text` em `transactions`; RPC `checkout_tx_status(p_tx_id, p_checkout_id)` — retorna apenas `{ status }`, grant to anon |
+| 080 | Adicionou `product_image text` em `checkouts`; bucket `checkout-images` (público, 2 MB, jpg/png/webp/gif, RLS por pasta user_id) |
+| 081 | Adicionou `success_url text`, `guarantee_days integer`, `countdown_end timestamptz` em `checkouts` |
+
+### Segurança
+
+- `admin client` na página pública `/c/[slug]` — necessário pois o comprador não tem sessão; segurança pela natureza dos dados (checkout publicado, pixels sem token)
+- `checkout_tx_status`: retorna apenas `{ status }` — sem QR code, sem dados do comprador (zero leak)
+- `track_checkout_visit`: security definer resolve user_id via slug — caller (anon) não precisa informar user_id
+- Upload de imagem: RLS de storage valida `auth.uid()` no path (pasta `{user_id}/`) — sem IDOR
+- `/api/checkout/pay`: rate limit 20/min por IP; `checkout_id` e `user_id` buscados do banco (IDOR-safe)
+- CPF/CNPJ: apenas dígitos enviados à API do Mercado Pago (`replace(/\D/g, '')` antes do envio)
+
+### Eventos PostHog do módulo
+
+| Evento | Quando | Props |
+|---|---|---|
+| `checkout_created` | ao criar checkout (blank ou template) | `{}` |
+| `checkout_published` | ao publicar checkout | `{}` |
+| `checkout_deleted` | ao confirmar exclusão | `{}` |
+| `checkout_duplicated` | ao duplicar checkout | `{}` |
