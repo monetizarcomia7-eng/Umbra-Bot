@@ -15,8 +15,8 @@ C:\Users\Usuario\OneDrive\Documentos\Obsidian Vault\umbra-bot\
 | `02 - Stack e Arquitetura.md` | Tecnologias, DashboardProvider, pastas, crons |
 | `03 - Estado do Projeto.md` | Checklist completo: pronto / mock / pendente |
 | `04 - Banco de Dados e Migrações.md` | 62 migrações, schema, RLS, RPCs, triggers |
-| `05 - Segurança.md` | AES-256-GCM, CSP, IDOR, RLS, rate limit, admin client |
-| `06 - Variáveis de Ambiente.md` | Todas as envs documentadas (incl. SUPABASE_SERVICE_ROLE_KEY) |
+| `05 - Segurança.md` | AES-256-GCM, CSP, IDOR, RLS, rate limit, admin client, reCAPTCHA v2 |
+| `06 - Variáveis de Ambiente.md` | Todas as envs documentadas (incl. SUPABASE_SERVICE_ROLE_KEY, NEXT_PUBLIC_RECAPTCHA_SITE_KEY, RECAPTCHA_SECRET_KEY) |
 | `Módulo - Dashboard e KPIs.md` | KPIs, deltas, gráfico |
 | `Módulo - Financeiro.md` | Transactions, withdrawals, invoices, bank_accounts |
 | `Módulo - Analytics.md` | Funil, coorte, UTM, filtros SQL |

@@ -12,6 +12,17 @@ Contexto automático para sessões de desenvolvimento. Atualizar sempre que o pr
 
 ---
 
+## 1b. LEITURA OBRIGATÓRIA POR SESSÃO
+
+**Ao iniciar qualquer sessão de desenvolvimento, ler obrigatoriamente:**
+
+- **`CLAUDE.md`** — este arquivo (fonte da verdade para o Claude Code)
+- **`INTEGRATIONS.md`** — contexto completo de todas as integrações externas (Supabase, Telegram, Mercado Pago, Upstash Redis, Sentry, PostHog, reCAPTCHA, Meta CAPI, TikTok, Google, web-push, GramJS, Vercel)
+
+> O arquivo `INTEGRATIONS.md` documenta: visão geral de todas as integrações, rotas de API com método/auth/rate-limit, webhooks recebidos, variáveis de ambiente, tabelas do banco, mecanismos de segurança e crons. Sem ele, o contexto de integrações estará incompleto.
+
+---
+
 ## 2. ESTRUTURA ATUAL
 
 ```
@@ -27,14 +38,16 @@ umbra-bot/
 │   │   │                         # updateBotAction, deleteBotAction — userId sempre do servidor (sem IDOR)
 │   │   │                         # getBotTelegramProfileAction (perfil + foto base64), saveBotTelegramProfileAction,
 │   │   │                         # setBotPhotoAction (multipart → setMyPhoto Bot API 7.3)
-│   │   └── gateways.ts           # 5 Server Actions: validateGatewayCredentialsAction (chama API do gateway),
-│   │                             # connectGatewayAction (valida + encryptToken + upsert), disconnectGatewayAction,
-│   │                             # updateGatewayAction (só conta bancária), testGatewayConnectionAction (decryptToken + API)
-│   │                             # Rate limit por action; userId sempre do servidor (sem IDOR)
+│   │   ├── gateways.ts           # 5 Server Actions: validateGatewayCredentialsAction (chama API do gateway),
+│   │   │                         # connectGatewayAction (valida + encryptToken + upsert), disconnectGatewayAction,
+│   │   │                         # updateGatewayAction (só conta bancária), testGatewayConnectionAction (decryptToken + API)
+│   │   │                         # Rate limit por action; userId sempre do servidor (sem IDOR)
+│   │   └── recaptcha.ts          # verifyRecaptchaAction: Server Action para verificar token reCAPTCHA v2
+│   │                             # Chama verifyRecaptchaToken de lib/recaptcha — secret key nunca exposta ao browser
 │   ├── (auth)/
-│   │   ├── login/page.tsx        # Login com email + Google OAuth
-│   │   ├── register/page.tsx     # Registro com email + Google OAuth
-│   │   └── forgot-password/page.tsx  # Recuperação de senha
+│   │   ├── login/page.tsx        # Login com email + Google OAuth + reCAPTCHA v2 (verifyRecaptchaAction antes do Supabase)
+│   │   ├── register/page.tsx     # Registro com email + Google OAuth + reCAPTCHA v2
+│   │   └── forgot-password/page.tsx  # Recuperação de senha + reCAPTCHA v2
 │   ├── auth/
 │   │   ├── callback/route.ts     # Callback OAuth + dispara user_registered
 │   │   └── reset-password/page.tsx   # Redefinição de senha (via link do e-mail)
@@ -108,6 +121,7 @@ umbra-bot/
 │   │   │   ├── pay/route.ts      # POST: cria pagamento PIX via checkout público (sem auth do comprador)
 │   │   │   │                     # Público, rate-limit 20/min por IP; usa createAdminClient para buscar
 │   │   │   │                     # credenciais do dono do checkout; valida checkout published + método habilitado
+│   │   │   │                     # Verifica recaptcha_token via verifyRecaptchaToken (lib/recaptcha) se enviado
 │   │   │   │                     # Aceita coupon_code (chama validate_and_apply_coupon RPC) + order_bump boolean
 │   │   │   │                     # totalPrice = (price − desconto) + bumpPrice; retorna pix_qr_code + amount
 │   │   │   └── validate-coupon/route.ts  # GET: valida cupom sem incrementar uso (preview para o comprador)
@@ -116,6 +130,7 @@ umbra-bot/
 │   │   ├── affiliates/
 │   │   │   └── apply/route.ts    # POST: candidatura pública ao programa de afiliados
 │   │   │                         # Público (sem auth), rate-limit 10/h por IP
+│   │   │                         # Verifica recaptcha_token via verifyRecaptchaToken se enviado
 │   │   │                         # Usa RPC submit_affiliate_application (security definer, migração 054)
 │   │   └── migrations/route.ts   # Protegida por ADMIN_EMAIL
 │   ├── afiliar/
@@ -125,6 +140,7 @@ umbra-bot/
 │   │       │                     # found=false → ProgramNotFound | active=false → ProgramClosed
 │   │       │                     # Exibe program_name, program_description, benefits[] dinâmicos
 │   │       └── ApplicationForm.tsx # Client Component: formulário de candidatura → POST /api/affiliates/apply
+│   │                               # reCAPTCHA v2 obrigatório; recaptcha_token enviado no body
 │   ├── c/
 │   │   └── [slug]/
 │   │       ├── page.tsx          # Página pública do checkout (Server Component, admin client)
@@ -138,7 +154,8 @@ umbra-bot/
 │   │       │                          # (Supabase Realtime Presence quando visitor_tracking=true),
 │   │       │                          # formulário 2 etapas (two_step), cupom de desconto (preview via
 │   │       │                          # GET /api/checkout/validate-coupon), order bump checkbox,
-│   │       │                          # upsell step pós-pagamento (modal antes do redirect)
+│   │       │                          # upsell step pós-pagamento (modal antes do redirect),
+│   │       │                          # reCAPTCHA v2 obrigatório antes do botão Pagar
 │   │       └── PixelScripts.tsx  # Snippets de pixel (Meta/TikTok/Google) injetados no head
 │   │                              # step inclui 'upsell' — Purchase dispara em success + upsell
 │   ├── r/
@@ -282,6 +299,9 @@ umbra-bot/
 │       ├── guide/                # Guia da plataforma (mock)
 │       └── academy/              # Academia (mock)
 ├── components/
+│   ├── ReCaptchaWidget.tsx       # Widget reCAPTCHA v2 reutilizável (react-google-recaptcha)
+│   │                             # Renderiza null se NEXT_PUBLIC_RECAPTCHA_SITE_KEY não configurada (dev-safe)
+│   │                             # hl="pt-BR"; onExpired reseta token para null
 │   └── dashboard/
 │       ├── Layout.tsx            # Shell: DashboardProvider → LayoutShell (Sidebar + Topbar)
 │       ├── Sidebar.tsx           # Navegação colapsável (260px / 80px) + badge via DashboardProvider
@@ -320,6 +340,9 @@ umbra-bot/
 │   │                             # Lê pixels com capi=true via admin client; sha256 em email/nome;
 │   │                             # event_id=txId (deduplicação Meta); Promise.allSettled por provider;
 │   │                             # Meta CAPI / TikTok Events API / Google Measurement Protocol
+│   ├── recaptcha.ts              # verifyRecaptchaToken(token): Promise<boolean>
+│   │                             # Chama https://www.google.com/recaptcha/api/siteverify
+│   │                             # Retorna true se RECAPTCHA_SECRET_KEY não configurada (dev-safe / preview-safe)
 │   └── supabase/
 │       ├── server.ts             # createClient() para Server Components / API Routes (anon key + cookies)
 │       ├── client.ts             # createClient() para Client Components (browser)
@@ -566,6 +589,7 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Schema do banco (28 tabelas — inclui invoices, migration 043) | ✅ Migrações SQL criadas e aplicadas no Supabase |
 | RLS em todas as tabelas | ✅ Configurado (flows corrigida na migração 040) |
 | Content-Security-Policy (CSP sem unsafe-eval em produção) | ✅ Configurado no middleware |
+| Google reCAPTCHA v2 (login, cadastro, recuperação de senha, afiliados, checkout público) | ✅ Implementado |
 | Notificações — Server Component SSR + Client Component (dados reais do banco) | ✅ Funcional |
 | Notificações — save() persiste via upsert ON CONFLICT user_id (migração 060 + 061) | ✅ Implementado |
 | Notificações — email e bot Telegram reais (user.email + bots.username do banco) | ✅ Implementado |
@@ -961,6 +985,18 @@ DashboardLayout (components/dashboard/Layout.tsx)
 - **Fix:** migração 040 adiciona `user_id uuid references auth.users(id)` + policy `flows_owner (auth.uid() = user_id)` — reforça migração 021
 - **Código:** `createFlow()` em `FlowsClient.tsx` inclui `user_id: userId` no INSERT; `saveFlow()` usa `.update().eq('user_id', userId)` (proteção IDOR no client + RLS no banco)
 - **SQL consolidado:** `supabase/migrations/_pending_analytics_037_to_041.sql` — contém migrações 037–045 prontas para rodar no Supabase SQL Editor
+
+### Google reCAPTCHA v2
+
+- **Páginas protegidas:** login, cadastro, recuperação de senha, candidatura de afiliados (`/afiliar/[userId]`), checkout público (`/c/[slug]`)
+- **Fluxo:** widget renderizado no browser → token gerado pelo Google → verificado server-side via `lib/recaptcha.ts` antes de qualquer ação
+- **`lib/recaptcha.ts`**: `verifyRecaptchaToken(token)` → chama `https://www.google.com/recaptcha/api/siteverify`
+  - Retorna `true` se `RECAPTCHA_SECRET_KEY` não configurada (seguro para dev/preview — não bloqueia)
+- **`app/actions/recaptcha.ts`**: Server Action `verifyRecaptchaAction(token)` — usado nas páginas de auth (Supabase é client-side, então precisa de Server Action para verificar sem expor a secret)
+- **`components/ReCaptchaWidget.tsx`**: renderiza `null` se `NEXT_PUBLIC_RECAPTCHA_SITE_KEY` vazio — formulários funcionam normalmente em dev sem configuração
+- **APIs públicas**: `/api/checkout/pay` e `/api/affiliates/apply` verificam `recaptcha_token` no body quando presente
+- **Variáveis**: `NEXT_PUBLIC_RECAPTCHA_SITE_KEY` (client) + `RECAPTCHA_SECRET_KEY` (server-only)
+- **Criar chaves**: https://www.google.com/recaptcha/admin/create → tipo "reCAPTCHA v2 — checkbox"
 
 ---
 
@@ -1434,6 +1470,10 @@ Variáveis adicionais documentadas (além do básico):
 - `NEXT_PUBLIC_VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_EMAIL`
 - `NEXT_PUBLIC_SENTRY_DSN` / `SENTRY_ORG` / `SENTRY_PROJECT` / `SENTRY_AUTH_TOKEN`
 - `NEXT_PUBLIC_POSTHOG_KEY` / `NEXT_PUBLIC_POSTHOG_HOST`
+- `NEXT_PUBLIC_RECAPTCHA_SITE_KEY` — chave pública do reCAPTCHA v2 (exposta ao browser)
+- `RECAPTCHA_SECRET_KEY` — chave secreta do reCAPTCHA v2 (server-only, nunca ao browser)
+  - Criar em: https://www.google.com/recaptcha/admin/create → tipo "reCAPTCHA v2 — checkbox"
+  - Sem essas variáveis: widget não aparece e verificação retorna `true` (dev-safe)
 
 ---
 
