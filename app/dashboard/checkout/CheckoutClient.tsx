@@ -913,8 +913,8 @@ function CheckoutEditor({ checkout, gatewayChoices, pixelChoices, appUrl, userId
   async function handleImageUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
-    if (file.size > 2 * 1024 * 1024) {
-      showToast('Imagem muito grande. Máximo 2 MB.', 'error')
+    if (file.size > 10 * 1024 * 1024) {
+      showToast('Imagem muito grande. Máximo 10 MB.', 'error')
       e.target.value = ''
       return
     }
@@ -1212,7 +1212,7 @@ function CheckoutEditor({ checkout, gatewayChoices, pixelChoices, appUrl, userId
                           <div className="flex flex-col items-center gap-2 text-[var(--text-muted)] group-hover:text-[var(--primary)] transition-colors">
                             <Upload size={20} />
                             <span className="text-[12px] font-medium">Clique para enviar imagem</span>
-                            <span className="text-[11px]">JPG, PNG, WebP · até 2 MB</span>
+                            <span className="text-[11px]">JPG, PNG, WebP · até 10 MB</span>
                           </div>
                         )}
                       </label>
