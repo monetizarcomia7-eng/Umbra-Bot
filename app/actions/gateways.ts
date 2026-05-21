@@ -8,11 +8,6 @@ import { rateLimit } from '@/lib/rate-limit'
 
 const PROVIDER_NAMES: Record<string, string> = {
   mercadopago: 'Mercado Pago',
-  pushinpay:   'Pushinpay',
-  pagarme:     'Pagar.me',
-  stripe:      'Stripe',
-  pagseguro:   'PagSeguro',
-  asaas:       'Asaas',
 }
 
 async function callGatewayApi(

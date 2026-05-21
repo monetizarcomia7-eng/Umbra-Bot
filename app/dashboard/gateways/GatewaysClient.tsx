@@ -48,40 +48,10 @@ const GATEWAY_CATALOG: Record<string, Omit<GatewayItem, 'id' | 'provider' | 'con
     description: 'Gateway tradicional com Pix, cartão (até 12x) e boleto. Antifraude integrado.',
     methods: ['Pix', 'Cartão', 'Boleto'], fee: { pix: 0.99, card: 4.99, boleto: 3.49 }, feeText: 'A partir de 0,99%',
   },
-  pushinpay: {
-    name: 'Pushinpay', initial: 'P', color: 'oklch(0.65 0.18 145)',
-    description: 'Gateway brasileiro focado em Pix instantâneo, antecipação grátis e split nativo.',
-    methods: ['Pix'], fee: { pix: 1.69 }, feeText: 'A partir de 1,69%',
-  },
-  pagarme: {
-    name: 'Pagar.me', initial: 'P', color: 'oklch(0.55 0.20 285)',
-    description: 'Gateway da Stone com split nativo e antifraude pro. Ótimo para marketplaces.',
-    methods: ['Pix', 'Cartão', 'Boleto'], fee: { pix: 0.99, card: 3.29, boleto: 3.49 }, feeText: 'A partir de 0,99%',
-  },
-  stripe: {
-    name: 'Stripe', initial: 'S', color: 'oklch(0.62 0.16 290)',
-    description: 'Gateway internacional. Suporta múltiplas moedas, clientes globais e assinaturas.',
-    methods: ['Cartão'], fee: { card: 4.5 }, feeText: '4,5% + R$ 0,40',
-  },
-  pagseguro: {
-    name: 'PagSeguro', initial: 'P', color: 'oklch(0.68 0.17 50)',
-    description: 'Gateway da UOL com cobertura nacional, antifraude e parcelamento sem juros.',
-    methods: ['Pix', 'Cartão', 'Boleto'], fee: { pix: 0.99, card: 2.69 }, feeText: 'A partir de 0,99%',
-  },
-  asaas: {
-    name: 'Asaas', initial: 'A', color: 'oklch(0.62 0.20 325)',
-    description: 'Gateway financeiro com Pix, boleto recorrente e split nativo para SaaS e infoprodutos.',
-    methods: ['Pix', 'Cartão', 'Boleto'], fee: { pix: 1.99 }, feeText: 'A partir de 1,99%',
-  },
 }
 
 const CREDENTIAL_SCHEMA: Record<string, { label: string; placeholder: string; hint: string }> = {
   mercadopago: { label: 'Access Token', placeholder: 'APP_USR-0000000000000000-MMDDHHMMSS-XXXXXX', hint: 'Em Mercado Pago → Credenciais → Access Token de Produção.' },
-  pushinpay:   { label: 'Token de Acesso', placeholder: 'pushinpay_live_xxxxxxxx', hint: 'Em Pushinpay → API → Token de Acesso.' },
-  pagarme:     { label: 'Chave Secreta', placeholder: 'sk_xxxxxxxxxxxxxxxx', hint: 'Em Pagar.me → Developers → Chave Secreta.' },
-  stripe:      { label: 'Chave Secreta', placeholder: 'sk_live_xxxxxxxxxxxxxxxx', hint: 'Em Stripe → Developers → API Keys → Secret Key.' },
-  pagseguro:   { label: 'Token de Integração', placeholder: '', hint: 'Em PagSeguro → Minha Conta → Preferências → Integrações.' },
-  asaas:       { label: 'API Key', placeholder: '$aact_xxxxxxxx', hint: 'Em Asaas → Configurações → Integrações → API Key.' },
 }
 
 const UMBRA_FEE_PCT   = 3
