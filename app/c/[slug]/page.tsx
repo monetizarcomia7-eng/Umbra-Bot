@@ -34,6 +34,25 @@ export interface PublicCheckout {
   bg_cover:       boolean
 }
 
+/* ─── Metadata dinâmica — título = nome do produto ──────── */
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ slug: string }>
+}) {
+  const { slug } = await params
+  const admin = createAdminClient()
+  const { data } = await admin
+    .from('checkouts')
+    .select('product_name, name')
+    .eq('slug', slug)
+    .eq('status', 'published')
+    .maybeSingle()
+  const title = data?.product_name || data?.name || slug
+  return { title }
+}
+
 /* ─── Server Component público ───────────────────────────── */
 
 export default async function PublicCheckoutPage({
