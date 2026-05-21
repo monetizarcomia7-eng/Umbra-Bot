@@ -1162,17 +1162,37 @@ function CheckoutEditor({ checkout, gatewayChoices, pixelChoices, appUrl, userId
 
                   <FieldC label="Imagem do produto">
                     {draft.productImage ? (
-                      <div className="relative rounded-lg overflow-hidden border border-[var(--border)]">
+                      <div className="relative rounded-lg overflow-hidden border border-[var(--border)] group/img">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img src={draft.productImage} alt="Produto" className="w-full aspect-video object-cover" />
-                        <button
-                          type="button"
-                          onClick={() => set({ productImage: '' })}
-                          className="absolute top-2 right-2 w-7 h-7 flex items-center justify-center rounded-full bg-black/60 text-white hover:bg-black/80 transition-colors"
-                          title="Remover imagem"
-                        >
-                          <X size={12} />
-                        </button>
+                        {/* Overlay ao hover com opções */}
+                        <div className="absolute inset-0 bg-black/50 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                          <label className="flex items-center gap-1.5 h-8 px-3 bg-white/90 hover:bg-white text-[12px] font-medium text-gray-800 rounded-lg cursor-pointer transition-colors">
+                            <Upload size={13} />
+                            Trocar imagem
+                            <input
+                              type="file"
+                              accept="image/jpeg,image/png,image/webp,image/gif"
+                              className="sr-only"
+                              onChange={handleImageUpload}
+                              disabled={uploadingImage}
+                            />
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => set({ productImage: '' })}
+                            className="h-8 px-3 bg-white/90 hover:bg-white text-[12px] font-medium text-red-600 rounded-lg transition-colors flex items-center gap-1.5"
+                            title="Remover imagem"
+                          >
+                            <X size={13} /> Remover
+                          </button>
+                        </div>
+                        {/* Spinner durante upload */}
+                        {uploadingImage && (
+                          <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
+                            <Loader2 size={24} className="animate-spin text-white" />
+                          </div>
+                        )}
                       </div>
                     ) : (
                       <label className={`flex flex-col items-center justify-center w-full aspect-video rounded-lg border-2 border-dashed cursor-pointer transition-colors group ${uploadingImage ? 'border-[var(--primary)] bg-[var(--primary)]/5' : 'border-[var(--border)] hover:border-[var(--primary)] hover:bg-[var(--primary)]/5'}`}>
