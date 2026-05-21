@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react'
 import {
   Lock, Zap, CreditCard, FileText, User, Mail, BadgeCheck,
-  Phone, MapPin, Loader2, Check, AlertTriangle, X, QrCode,
+  Phone, MapPin, Loader2, Check, AlertTriangle, X, QrCode, RefreshCw,
 } from 'lucide-react'
 import type { PublicCheckout } from './page'
 
@@ -54,14 +54,15 @@ export default function CheckoutPageClient({
   const methods = (['pix', 'card', 'boleto'] as const).filter((m) => c.methods[m])
   const fields  = allFieldDefs.filter((f) => c.fields[f.id])
 
-  const [step,        setStep]        = useState<PayStep>('form')
-  const [method,      setMethod]      = useState<string>(methods[0] ?? 'pix')
-  const [form,        setForm]        = useState<Record<string, string>>({})
-  const [errors,      setErrors]      = useState<Record<string, string>>({})
-  const [submitting,  setSubmitting]  = useState(false)
-  const [pixData,     setPixData]     = useState<{ qr_code: string; copy_paste: string; expires_at: string } | null>(null)
-  const [errMsg,      setErrMsg]      = useState('')
-  const [copied,      setCopied]      = useState(false)
+  const [step,          setStep]          = useState<PayStep>('form')
+  const [method,        setMethod]        = useState<string>(methods[0] ?? 'pix')
+  const [form,          setForm]          = useState<Record<string, string>>({})
+  const [errors,        setErrors]        = useState<Record<string, string>>({})
+  const [submitting,    setSubmitting]    = useState(false)
+  const [pixData,       setPixData]       = useState<{ qr_code: string; copy_paste: string; expires_at: string } | null>(null)
+  const [transactionId, setTransactionId] = useState<string | null>(null)
+  const [errMsg,        setErrMsg]        = useState('')
+  const [copied,        setCopied]        = useState(false)
   const visitTracked = useRef(false)
 
   // Palette
@@ -96,6 +97,45 @@ export default function CheckoutPageClient({
       body,
     }).catch(() => { /* fire-and-forget */ })
   }, [c.slug, utmSource, utmMedium, utmCampaign])
+
+  // Polling de confirmação PIX — a cada 4s enquanto step='payment'
+  // Para automaticamente em: aprovado, cancelado ou após 120 tentativas (≈8 min)
+  useEffect(() => {
+    if (step !== 'payment' || !transactionId) return
+
+    let attempts = 0
+    const MAX_ATTEMPTS = 120
+
+    const controller = new AbortController()
+
+    async function poll() {
+      if (attempts >= MAX_ATTEMPTS) return
+      attempts++
+
+      try {
+        const res = await fetch(
+          `/api/checkout/status?tx_id=${encodeURIComponent(transactionId ?? '')}&checkout_id=${encodeURIComponent(c.id)}`,
+          { signal: controller.signal },
+        )
+        if (!res.ok) return
+        const { status } = await res.json() as { status: string }
+        if (status === 'approved') {
+          setStep('success')
+        } else if (status === 'cancelled') {
+          setErrMsg('O PIX expirou ou foi cancelado. Gere um novo para tentar novamente.')
+          setStep('error')
+        }
+      } catch {
+        /* network error ou abort — ignora silenciosamente */
+      }
+    }
+
+    const interval = setInterval(poll, 4_000)
+    return () => {
+      clearInterval(interval)
+      controller.abort()
+    }
+  }, [step, transactionId, c.id])
 
   function handleField(id: string, raw: string) {
     const def = allFieldDefs.find((f) => f.id === id)
@@ -143,6 +183,7 @@ export default function CheckoutPageClient({
 
       if (method === 'pix') {
         setPixData({ qr_code: data.pix_qr_code, copy_paste: data.pix_copy_paste, expires_at: data.expires_at })
+        setTransactionId(data.transaction_id ?? null)
         setStep('payment')
       } else {
         setStep('success')
@@ -330,7 +371,7 @@ export default function CheckoutPageClient({
                 </div>
                 <h2 className="text-[17px] font-bold mb-1">Pague via Pix</h2>
                 <p className="text-[12.5px] mb-5 text-center" style={{ color: palette.muted }}>
-                  Escaneie o QR Code ou copie o código abaixo. Após o pagamento, a confirmação é instantânea.
+                  Escaneie o QR Code ou copie o código abaixo. Após o pagamento, a confirmação é automática.
                 </p>
 
                 {pixData.qr_code && (
@@ -363,13 +404,24 @@ export default function CheckoutPageClient({
                   </button>
                 </div>
 
+                {/* Indicador de polling — aguardando confirmação do pagamento */}
+                <div
+                  className="w-full rounded-xl px-3 py-2.5 mb-2 flex items-center gap-2"
+                  style={{ background: isDark ? '#0d2a1a' : '#f0fdf4', border: `1px solid ${isDark ? '#166534' : '#bbf7d0'}` }}
+                >
+                  <RefreshCw size={12} className="animate-spin shrink-0" style={{ color: '#22c55e' }} />
+                  <span className="text-[11.5px]" style={{ color: isDark ? '#86efac' : '#166534' }}>
+                    Aguardando confirmação do pagamento…
+                  </span>
+                </div>
+
                 <p className="text-[11px]" style={{ color: palette.subtle }}>
-                  Código válido por 30 minutos.
+                  Código válido por 30 minutos · confirmação automática após o pagamento.
                 </p>
               </div>
             )}
 
-            {/* === SUCESSO (não-Pix) === */}
+            {/* === SUCESSO === */}
             {step === 'success' && (
               <div className="flex flex-col items-center py-8">
                 <div
@@ -378,10 +430,20 @@ export default function CheckoutPageClient({
                 >
                   <Check size={32} className="text-green-500" />
                 </div>
-                <h2 className="text-[20px] font-bold mb-2">Pedido realizado!</h2>
-                <p className="text-[13px] text-center leading-relaxed" style={{ color: palette.muted }}>
-                  Recebemos o seu pagamento e você receberá um e-mail de confirmação em breve.
+                <h2 className="text-[20px] font-bold mb-2">Pagamento confirmado!</h2>
+                <p className="text-[13px] text-center leading-relaxed mb-4" style={{ color: palette.muted }}>
+                  {method === 'pix'
+                    ? 'Seu Pix foi recebido e o pedido foi confirmado com sucesso.'
+                    : 'Recebemos o seu pagamento e você receberá um e-mail de confirmação em breve.'}
                 </p>
+                {form.email && (
+                  <div
+                    className="rounded-xl px-4 py-3 text-[12px] text-center"
+                    style={{ background: isDark ? '#0d2a1a' : '#f0fdf4', border: `1px solid ${isDark ? '#166534' : '#bbf7d0'}`, color: isDark ? '#86efac' : '#166534' }}
+                  >
+                    Uma confirmação foi enviada para <strong>{form.email}</strong>
+                  </div>
+                )}
               </div>
             )}
 

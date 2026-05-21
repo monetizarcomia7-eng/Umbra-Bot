@@ -67,7 +67,7 @@ export async function POST(request: NextRequest) {
   // Find our transaction by gateway_payment_id
   const { data: tx } = await supabase
     .from('transactions')
-    .select('id, user_id, bot_id, flow_id, customer_telegram_id, customer_name, customer_email, amount, net, product_name, status, affiliate_id')
+    .select('id, user_id, bot_id, flow_id, checkout_id, customer_telegram_id, customer_name, customer_email, amount, net, product_name, status, affiliate_id')
     .eq('gateway_payment_id', String(paymentId))
     .eq('gateway', 'mercadopago')
     .single()
@@ -100,6 +100,7 @@ export async function POST(request: NextRequest) {
       user_id:        tx.user_id,
       bot_id:         tx.bot_id ?? null,
       flow_id:        (tx as { flow_id?: string | null }).flow_id ?? null,
+      checkout_id:    (tx as { checkout_id?: string | null }).checkout_id ?? null,
       transaction_id: tx.id,
       event_type:     'paid',
       product_name:   tx.product_name,

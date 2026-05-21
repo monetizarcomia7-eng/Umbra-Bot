@@ -15,7 +15,7 @@ const paySchema = z.object({
   customer_cpf:   z.string()
                    .transform((v) => v.replace(/\D/g, ''))
                    .pipe(z.string().length(11, 'CPF deve ter 11 dígitos.')),
-  customer_phone: z.string().max(20).optional(),
+  customer_phone: z.string().max(20).nullish(),
   method:         z.enum(['pix', 'card', 'boleto']),
   utm_source:     z.string().max(100).nullish(),
   utm_medium:     z.string().max(100).nullish(),
@@ -52,6 +52,8 @@ export async function POST(request: NextRequest) {
     checkout_id, customer_name, customer_email, customer_cpf,
     customer_phone, method, utm_source, utm_medium, utm_campaign,
   } = parsed.data
+
+  const customerPhone = customer_phone ?? null
 
   const admin = createAdminClient()
 
@@ -144,6 +146,7 @@ export async function POST(request: NextRequest) {
     .from('transactions')
     .insert({
       user_id:            checkout.user_id,
+      checkout_id:        checkout.id,
       gateway:            checkout.gateway,
       gateway_payment_id: String(mpData.id),
       amount:             Number(checkout.price),
@@ -158,6 +161,7 @@ export async function POST(request: NextRequest) {
       product_name:       checkout.product_name,
       customer_name,
       customer_email,
+      customer_phone:     customerPhone,
       utm_source:         utm_source ?? null,
       utm_medium:         utm_medium ?? null,
       utm_campaign:       utm_campaign ?? null,
