@@ -15,8 +15,24 @@ import {
   Eye, EyeOff, AlertCircle, RefreshCw, ArrowUpRight, ArrowDownRight,
   Link2, Instagram, MessageSquare, ShoppingBag, ChevronRight,
   Check, X, Circle, BookOpen, Copy, Activity, Pencil, Plug, XCircle,
-  ShieldCheck, Info, FlaskConical, TrendingUp, Wifi,
+  ShieldCheck, Info, FlaskConical, TrendingUp, Wifi, Download, Code2,
 } from 'lucide-react'
+
+/* ============================================================
+   Format validation
+   ============================================================ */
+
+const FORMAT_REGEX: Record<string, RegExp> = {
+  meta:   /^\d{10,16}$/,
+  tiktok: /^\d{7,20}$/,
+  google: /^G-[A-Z0-9]{4,12}$/i,
+}
+
+const FORMAT_HINT: Record<string, string> = {
+  meta:   'Deve ter entre 10 e 16 dígitos numéricos.',
+  tiktok: 'Advertiser ID: entre 7 e 20 dígitos numéricos.',
+  google: 'Deve ser G-XXXXXXXXXX (letras e números após "G-").',
+}
 
 /* ============================================================
    Static catalog
@@ -38,7 +54,7 @@ interface CatalogEntry {
   idHint:           string
   tokenLabel:       string
   tokenPlaceholder: string
-  capiLabel:        string   // label para o toggle server-side (varia por provider)
+  capiLabel:        string
   capiDesc:         string
   eventDefs:        EventDef[]
 }
@@ -80,7 +96,7 @@ const PIXEL_CATALOG: Record<string, CatalogEntry> = {
     docsHint:      'Encontre em TikTok Ads Manager → Ativos → Eventos.',
     idLabel:       'TikTok Advertiser ID',
     idPlaceholder: '7123456789012345',
-    idHint:        'ID numérico do anunciante (Advertiser ID) — TikTok Ads Manager → Configurações da conta. Usado para verificar a conexão. Para enviar eventos, use o Pixel Code.',
+    idHint:        'ID numérico do anunciante (Advertiser ID) — TikTok Ads Manager → Configurações da conta. Usado para verificar a conexão.',
     tokenLabel:    'Access Token da Events API',
     tokenPlaceholder: 'ttk_xxxxxx…',
     capiLabel:     'Envio server-side (Events API)',
@@ -124,20 +140,68 @@ const PIXEL_CATALOG: Record<string, CatalogEntry> = {
 const CATALOG_PROVIDERS = ['meta', 'tiktok', 'google'] as const
 
 /* ============================================================
+   Payload preview builder (educacional — client-side)
+   ============================================================ */
+
+function buildSamplePayload(provider: string, pixelId: string, pixelCode?: string | null): string {
+  if (provider === 'meta') {
+    return JSON.stringify({
+      data: [{
+        event_name:    'Purchase',
+        event_time:    Math.floor(Date.now() / 1000),
+        action_source: 'website',
+        user_data: {
+          client_ip_address: '177.x.x.x',
+          client_user_agent: 'Mozilla/5.0...',
+          em: ['<sha256(email)>'],
+          ph: ['<sha256(telefone)>'],
+        },
+        custom_data: { currency: 'BRL', value: 97.00 },
+      }],
+    }, null, 2)
+  }
+  if (provider === 'tiktok') {
+    return JSON.stringify({
+      pixel_code: pixelCode || '<Pixel Code>',
+      event:      'CompletePayment',
+      timestamp:  new Date().toISOString(),
+      context: {
+        user_agent: 'Mozilla/5.0...',
+        ip:         '177.x.x.x',
+        user: { email: '<sha256(email)>', phone_number: '<sha256(telefone)>' },
+      },
+      properties: { currency: 'BRL', value: '97.00' },
+    }, null, 2)
+  }
+  if (provider === 'google') {
+    return JSON.stringify({
+      client_id: '<telegram_id-do-lead>',
+      events: [{
+        name:   'purchase',
+        params: { currency: 'BRL', value: 97.00, transaction_id: '<uuid-da-transacao>' },
+      }],
+    }, null, 2)
+  }
+  return '{}'
+}
+
+/* ============================================================
    Internal types
    ============================================================ */
 
 interface PixelItem {
-  id:       string | null
-  provider: string
-  pixelId:  string | null
-  hasToken: boolean
-  events:   Record<string, boolean>
-  capi:     boolean
-  status:   'healthy' | 'warning' | 'error' | 'inactive'
+  id:        string | null
+  provider:  string
+  pixelId:   string | null
+  pixelCode: string | null  // TikTok Pixel Code (distinto do Advertiser ID)
+  hasToken:  boolean
+  events:    Record<string, boolean>
+  capi:      boolean
+  status:    'healthy' | 'waiting' | 'warning' | 'error' | 'inactive'
   eventsSentToday: number
   eventsMatched:   number
   lastEvent:       number | null
+  lastTestAt:      number | null
   name:             string
   fullName:         string
   description:      string
@@ -176,7 +240,7 @@ function computeStatus(
   now: number,
 ): PixelItem['status'] {
   if (!pixelId) return 'inactive'
-  if (!lastEventMs) return 'warning'
+  if (!lastEventMs) return 'waiting'
   const diff = now - lastEventMs
   if (diff < 30 * 60_000) return 'healthy'
   if (diff < 60 * 60_000) return 'warning'
@@ -186,19 +250,21 @@ function computeStatus(
 function mergePixels(rows: RawPixelRow[], stats: PixelStats, now: number): PixelItem[] {
   const lastEventMs = stats.last_event ? new Date(stats.last_event).getTime() : null
   return CATALOG_PROVIDERS.map(provider => {
-    const cat  = PIXEL_CATALOG[provider]
-    const row  = rows.find(r => r.provider === provider)
+    const cat = PIXEL_CATALOG[provider]
+    const row = rows.find(r => r.provider === provider)
     return {
-      id:       row?.id ?? null,
+      id:          row?.id ?? null,
       provider,
-      pixelId:  row?.pixel_id ?? null,
-      hasToken: !!row?.access_token,
-      events:   (row?.events as Record<string, boolean>) ?? defaultEvents(provider),
-      capi:     row?.capi ?? false,
-      status:   computeStatus(row?.pixel_id ?? null, lastEventMs, now),
+      pixelId:     row?.pixel_id ?? null,
+      pixelCode:   row?.pixel_code ?? null,
+      hasToken:    !!row?.access_token,
+      events:      (row?.events as Record<string, boolean>) ?? defaultEvents(provider),
+      capi:        row?.capi ?? false,
+      status:      computeStatus(row?.pixel_id ?? null, lastEventMs, now),
       eventsSentToday: stats.events_sent_today,
       eventsMatched:   stats.events_matched,
       lastEvent:       lastEventMs,
+      lastTestAt:      row?.last_test_at ? new Date(row.last_test_at).getTime() : null,
       ...cat,
     }
   })
@@ -228,10 +294,11 @@ function relTime(ms: number | null, now: number): string {
 }
 
 const statusMap: Record<string, StatusInfo> = {
-  healthy:  { label: 'Saudável',        tone: 'success', dot: 'bg-green-500',          pulse: true,  desc: 'Eventos chegando há menos de 30 min.' },
-  warning:  { label: 'Volume baixo',    tone: 'warning', dot: 'bg-yellow-500',          pulse: false, desc: 'Nenhum evento nos últimos 30–60 min.' },
-  error:    { label: 'Sem eventos',     tone: 'danger',  dot: 'bg-red-500',             pulse: false, desc: 'Sem eventos há mais de 1 hora.' },
-  inactive: { label: 'Não configurado', tone: 'muted',   dot: 'bg-[var(--text-muted)]', pulse: false, desc: 'Configure o ID do pixel para ativar.' },
+  healthy:  { label: 'Saudável',           tone: 'success',  dot: 'bg-green-500',          pulse: true,  desc: 'Eventos chegando há menos de 30 min.' },
+  waiting:  { label: 'Aguardando evento',  tone: 'primary',  dot: 'bg-blue-400',            pulse: false, desc: 'Pixel configurado — aguardando o primeiro evento do checkout.' },
+  warning:  { label: 'Volume baixo',       tone: 'warning',  dot: 'bg-yellow-500',          pulse: false, desc: 'Nenhum evento nos últimos 30–60 min.' },
+  error:    { label: 'Sem eventos',        tone: 'danger',   dot: 'bg-red-500',             pulse: false, desc: 'Sem eventos há mais de 1 hora.' },
+  inactive: { label: 'Não configurado',    tone: 'muted',    dot: 'bg-[var(--text-muted)]', pulse: false, desc: 'Configure o ID do pixel para ativar.' },
 }
 
 /* ============================================================
@@ -308,6 +375,7 @@ function FieldT({ label, hint, children }: { label: string; hint?: string; child
 }
 
 const inputCls = 'w-full h-10 px-3 bg-[var(--surface)] border border-[var(--border)] rounded-lg text-[13px] text-[var(--text)] placeholder:text-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/30 focus:border-[var(--primary)]/50'
+const inputErrorCls = 'w-full h-10 px-3 bg-[var(--surface)] border border-red-500/60 rounded-lg text-[13px] text-[var(--text)] placeholder:text-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-red-500/30 focus:border-red-500/60'
 
 /* ============================================================
    KPI card
@@ -341,31 +409,6 @@ function KpiTr({ label, value, sub, icon: Icon_, delta, tone, highlight }: {
 }
 
 /* ============================================================
-   NoDataState
-   ============================================================ */
-
-function NoDataState({ onConfigure }: { onConfigure: () => void }) {
-  return (
-    <div className="flex flex-col items-center justify-center py-20 text-center">
-      <div className="w-14 h-14 rounded-2xl bg-[var(--primary)]/10 flex items-center justify-center mb-4">
-        <Zap size={24} className="text-[var(--primary)]" />
-      </div>
-      <h3 className="text-[15px] font-semibold text-[var(--text)] mb-1.5">Nenhum pixel configurado</h3>
-      <p className="text-[13px] text-[var(--text-muted)] max-w-sm leading-relaxed mb-5">
-        Configure o Meta Pixel, TikTok Pixel ou Google Tag para rastrear conversões e otimizar seus anúncios automaticamente.
-      </p>
-      <button
-        onClick={onConfigure}
-        className="inline-flex items-center gap-2 h-9 px-4 text-[13px] font-medium rounded-lg bg-[var(--primary)] text-white hover:opacity-90 transition-opacity"
-      >
-        <Plug size={14} />
-        Configurar primeiro pixel
-      </button>
-    </div>
-  )
-}
-
-/* ============================================================
    Pixel Card
    ============================================================ */
 
@@ -387,7 +430,6 @@ function PixelCard({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
             <h3 className="text-[14.5px] font-semibold text-[var(--text)]">{pixel.name}</h3>
-            {/* Status badge com tooltip */}
             <Bdg tone={st.tone} title={st.desc}>
               {st.pulse && (
                 <span className={`relative w-1.5 h-1.5 rounded-full ${st.dot}`}>
@@ -415,24 +457,31 @@ function PixelCard({
             <Circle size={9} />Sem ID configurado
           </div>
         )}
+        {/* TikTok pixel code indicator */}
+        {pixel.provider === 'tiktok' && pixel.pixelCode && (
+          <div className="flex items-center gap-2 mt-1.5 bg-[var(--surface-2)]/50 border border-[var(--border)] rounded-md px-2.5 py-1.5">
+            <Code2 size={11} className="text-[var(--text-muted)] shrink-0" />
+            <span className="text-[10.5px] text-[var(--text-muted)] shrink-0">Pixel:</span>
+            <code className="text-[11.5px] font-mono text-[var(--text)] truncate flex-1">{pixel.pixelCode}</code>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-3 gap-2 mt-3.5 pt-3.5 border-t border-[var(--border)]">
         <StatT label="Eventos ativos" value={`${enabledCount}/${total}`} />
         <StatT
           label="Enviados (24h)"
-          value={pixel.pixelId && pixel.eventsSentToday > 0 ? fmtNum(pixel.eventsSentToday) : '—'}
+          value={pixel.pixelId ? fmtNum(pixel.eventsSentToday) : '—'}
           note={pixel.pixelId ? 'global' : undefined}
         />
         <StatT
           label="Match rate"
-          value={pixel.pixelId && pixel.eventsSentToday > 0 ? fmtPct(matchRate, 1) : '—'}
+          value={pixel.pixelId && pixel.eventsSentToday > 0 ? fmtPct(matchRate, 1) : pixel.pixelId ? '0%' : '—'}
           tone={matchRate >= 85 ? 'success' : matchRate > 0 ? 'warning' : 'muted'}
           note={pixel.pixelId && pixel.eventsSentToday > 0 ? 'global' : undefined}
         />
       </div>
 
-      {/* Tip de match rate baixo */}
       {showMatchTip && (
         <div className="mt-3 flex items-start gap-2 bg-yellow-500/8 border border-yellow-500/20 rounded-lg px-2.5 py-2">
           <TrendingUp size={11} className="text-yellow-500 mt-0.5 shrink-0" />
@@ -446,6 +495,13 @@ function PixelCard({
         <Clock size={11} />
         Último evento:&nbsp;<span className="text-[var(--text)]">{pixel.pixelId ? relTime(pixel.lastEvent, now) : '—'}</span>
       </div>
+
+      {pixel.lastTestAt && (
+        <div className="text-[11px] text-[var(--text-muted)] mt-1 flex items-center gap-1.5">
+          <FlaskConical size={11} />
+          Último teste:&nbsp;<span className="text-[var(--text)]">{relTime(pixel.lastTestAt, now)}</span>
+        </div>
+      )}
 
       <div className="mt-4 pt-3 border-t border-[var(--border)] flex items-center gap-2">
         {pixel.pixelId ? (
@@ -494,23 +550,27 @@ function EditPixelModal({
   open: boolean; onClose: () => void; pixel: PixelItem | null
   onSave: (provider: string, patch: PixelPatch) => Promise<void>
 }) {
-  const [pixelId,   setPixelId]   = useState('')
-  const [tokenVal,  setTokenVal]  = useState('')
-  const [clearTok,  setClearTok]  = useState(false)
-  const [events,    setEvents]    = useState<Record<string, boolean>>({})
-  const [capi,      setCapi]      = useState(true)
-  const [showTok,   setShowTok]   = useState(false)
-  const [saving,    setSaving]    = useState(false)
+  const [pixelId,    setPixelId]    = useState('')
+  const [pixelCode,  setPixelCode]  = useState('')  // TikTok only
+  const [tokenVal,   setTokenVal]   = useState('')
+  const [clearTok,   setClearTok]   = useState(false)
+  const [events,     setEvents]     = useState<Record<string, boolean>>({})
+  const [capi,       setCapi]       = useState(true)
+  const [showTok,    setShowTok]    = useState(false)
+  const [saving,     setSaving]     = useState(false)
+  const [formatErr,  setFormatErr]  = useState('')
 
   useEffect(() => {
     if (open && pixel) {
       setPixelId(pixel.pixelId || '')
+      setPixelCode(pixel.pixelCode || '')
       setTokenVal('')
       setClearTok(false)
       setEvents({ ...pixel.events })
       setCapi(pixel.capi)
       setShowTok(false)
       setSaving(false)
+      setFormatErr('')
     }
   }, [open, pixel])
 
@@ -523,17 +583,36 @@ function EditPixelModal({
     setEvents(Object.fromEntries(catalog.map(e => [e.id, value])))
   }
 
+  function validateFormat(id: string): boolean {
+    const trimmed = id.trim()
+    if (!trimmed) return true  // empty is allowed (will be null)
+    const regex = FORMAT_REGEX[pixel!.provider]
+    if (!regex) return true
+    if (!regex.test(trimmed)) {
+      setFormatErr(FORMAT_HINT[pixel!.provider] ?? 'Formato inválido.')
+      return false
+    }
+    setFormatErr('')
+    return true
+  }
+
   async function save() {
+    if (!validateFormat(pixelId)) return
     setSaving(true)
-    await onSave(pixel!.provider, {
-      pixelId:    pixelId.trim() || null,
-      newToken:   tokenVal.trim() || null,
-      clearToken: clearTok,
-      events,
-      capi,
-    })
-    setSaving(false)
-    onClose()
+    try {
+      await onSave(pixel!.provider, {
+        pixelId:    pixelId.trim() || null,
+        pixelCode:  pixelCode.trim() || null,
+        newToken:   tokenVal.trim() || null,
+        clearToken: clearTok,
+        events,
+        capi,
+      })
+      setSaving(false)
+      onClose()
+    } catch {
+      setSaving(false)
+    }
   }
 
   return (
@@ -569,13 +648,38 @@ function EditPixelModal({
           </div>
 
           {/* Pixel ID */}
-          <FieldT label={pixel.idLabel} hint={pixel.idHint}>
+          <FieldT label={pixel.idLabel} hint={formatErr ? undefined : pixel.idHint}>
             <input
-              type="text" value={pixelId} onChange={e => setPixelId(e.target.value)}
+              type="text" value={pixelId}
+              onChange={e => { setPixelId(e.target.value); setFormatErr('') }}
+              onBlur={() => validateFormat(pixelId)}
               placeholder={pixel.idPlaceholder} autoFocus
-              className={inputCls + ' font-mono'}
+              className={(formatErr ? inputErrorCls : inputCls) + ' font-mono'}
             />
+            {formatErr && (
+              <div className="flex items-center gap-1.5 mt-1.5 text-[11px] text-red-500">
+                <AlertCircle size={11} />{formatErr}
+              </div>
+            )}
+            {!formatErr && pixel.idHint && (
+              <div className="text-[11px] text-[var(--text-muted)] mt-1 leading-snug">{pixel.idHint}</div>
+            )}
           </FieldT>
+
+          {/* TikTok Pixel Code (campo extra — distinto do Advertiser ID) */}
+          {pixel.provider === 'tiktok' && (
+            <FieldT
+              label="TikTok Pixel Code (para envio de eventos)"
+              hint="Diferente do Advertiser ID. Encontre em TikTok Events Manager → selecione o pixel → ID do pixel. Formato: C0XXXXXXXXXXXXXXXXX ou numérico. Necessário para enviar eventos via Events API."
+            >
+              <input
+                type="text" value={pixelCode}
+                onChange={e => setPixelCode(e.target.value)}
+                placeholder="C0XXXXXXXXXXXXXXX"
+                className={inputCls + ' font-mono'}
+              />
+            </FieldT>
+          )}
 
           {/* Access Token */}
           <FieldT
@@ -622,7 +726,7 @@ function EditPixelModal({
             )}
           </FieldT>
 
-          {/* Server-side toggle — label dinâmico por provider */}
+          {/* Server-side toggle */}
           <div className="flex items-start justify-between gap-3 bg-[var(--surface-2)]/40 border border-[var(--border)] rounded-lg p-3">
             <div className="min-w-0">
               <div className="text-[12.5px] font-semibold text-[var(--text)]">{pixel.capiLabel}</div>
@@ -659,7 +763,7 @@ function EditPixelModal({
           </button>
           <button
             onClick={save}
-            disabled={!pixelId.trim() || saving}
+            disabled={!pixelId.trim() || saving || !!formatErr}
             className="h-9 px-4 text-[13px] font-medium rounded-lg bg-[var(--primary)] text-white hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
           >
             {saving ? <div className="w-3.5 h-3.5 rounded-full border-2 border-white border-t-transparent animate-spin" /> : <Check size={14} />}
@@ -711,12 +815,13 @@ function VerifyPixelModal({
   const [sendingTest, setSendingTest] = useState(false)
   const [logs,        setLogs]        = useState<LogEntry[]>([])
   const [verdict,     setVerdict]     = useState<TestResult | null>(null)
+  const [tab,         setTab]         = useState<'verify' | 'preview'>('verify')
 
   const appendLog = useCallback((log: LogEntry) => setLogs(l => [...l, log]), [])
 
   useEffect(() => {
     if (open && pixel?.id) {
-      setRunning(false); setSendingTest(false); setLogs([]); setVerdict(null)
+      setRunning(false); setSendingTest(false); setLogs([]); setVerdict(null); setTab('verify')
       if (pixel.pixelId) runVerify()
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -784,6 +889,9 @@ function VerifyPixelModal({
   if (!pixel) return null
 
   const canSendTest = !!pixel.pixelId && !!pixel.id && pixel.hasToken && !running && !sendingTest
+  const samplePayload = pixel.pixelId
+    ? buildSamplePayload(pixel.provider, pixel.pixelId, pixel.pixelCode)
+    : null
 
   return (
     <div className={`fixed inset-0 z-50 flex items-center justify-center p-4 ${open ? '' : 'hidden'}`}>
@@ -802,6 +910,23 @@ function VerifyPixelModal({
         </div>
 
         <div className="px-5 py-4 space-y-3">
+          {/* Tab selector */}
+          <div className="flex items-center gap-1 bg-[var(--surface-2)]/50 rounded-lg p-0.5">
+            <button
+              onClick={() => setTab('verify')}
+              className={`flex-1 h-7 text-[11.5px] font-medium rounded-md transition-colors ${tab === 'verify' ? 'bg-[var(--surface)] text-[var(--text)] shadow-sm' : 'text-[var(--text-muted)] hover:text-[var(--text)]'}`}
+            >
+              Verificação
+            </button>
+            <button
+              onClick={() => setTab('preview')}
+              className={`flex-1 h-7 text-[11.5px] font-medium rounded-md transition-colors ${tab === 'preview' ? 'bg-[var(--surface)] text-[var(--text)] shadow-sm' : 'text-[var(--text-muted)] hover:text-[var(--text)]'}`}
+            >
+              Prévia do payload
+            </button>
+          </div>
+
+          {/* Pixel summary */}
           <div className="flex items-center gap-3 bg-[var(--surface-2)]/40 border border-[var(--border)] rounded-lg p-3">
             <PixelLogo initial={pixel.initial} color={pixel.color} size={36} />
             <div className="min-w-0 flex-1">
@@ -813,75 +938,115 @@ function VerifyPixelModal({
             </Bdg>
           </div>
 
-          {!pixel.pixelId && (
-            <div className="flex items-start gap-2 bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-3 text-[12px] leading-relaxed">
-              <AlertCircle size={13} className="text-yellow-500 mt-0.5 shrink-0" />
-              <span className="text-[var(--text)]">Configure o ID do pixel antes de verificar.</span>
-            </div>
-          )}
-
-          {!pixel.hasToken && pixel.pixelId && pixel.provider !== 'google' && (
-            <div className="flex items-start gap-2 bg-[var(--surface-2)]/60 border border-[var(--border)] rounded-lg p-3 text-[12px] leading-relaxed">
-              <Info size={13} className="text-[var(--text-muted)] mt-0.5 shrink-0" />
-              <span className="text-[var(--text-muted)]">Sem access token: apenas o formato do ID pode ser validado. Para verificar e enviar eventos de teste, adicione o token na edição do pixel.</span>
-            </div>
-          )}
-
-          <div className="bg-[var(--surface)] border border-[var(--border)] rounded-lg overflow-hidden">
-            <div className="px-3 py-2 border-b border-[var(--border)] bg-[var(--surface-2)]/50 flex items-center justify-between">
-              <div className="text-[10.5px] uppercase tracking-wider font-semibold text-[var(--text-muted)]">Logs de verificação</div>
-              {(running || sendingTest) && <div className="w-3 h-3 rounded-full border-2 border-[var(--primary)] border-t-transparent animate-spin" />}
-            </div>
-            <div className="font-mono divide-y divide-[var(--border)] max-h-[220px] overflow-y-auto">
-              {logs.length === 0 && (
-                <div className="px-3 py-4 text-[var(--text-muted)] text-center italic text-[11px]">
-                  {pixel.pixelId ? 'Iniciando verificação…' : 'Configure o pixel para iniciar.'}
+          {tab === 'verify' && (
+            <>
+              {!pixel.pixelId && (
+                <div className="flex items-start gap-2 bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-3 text-[12px] leading-relaxed">
+                  <AlertCircle size={13} className="text-yellow-500 mt-0.5 shrink-0" />
+                  <span className="text-[var(--text)]">Configure o ID do pixel antes de verificar.</span>
                 </div>
               )}
-              {logs.map((log, i) => <LogLine key={i} log={log} />)}
-            </div>
-          </div>
 
-          {verdict && (
-            <div className={`flex items-start gap-2.5 rounded-lg p-3 border ${verdict.ok ? 'bg-green-500/10 border-green-500/30' : 'bg-red-500/10 border-red-500/30'}`}>
-              {verdict.ok
-                ? <CheckCircle2 size={16} className="text-green-500 mt-0.5" />
-                : <XCircle      size={16} className="text-red-500 mt-0.5" />}
-              <div className="text-[12px] flex-1">
-                <div className={`font-semibold ${verdict.ok ? 'text-green-500' : 'text-red-500'}`}>
-                  {verdict.ok ? 'Verificação bem-sucedida' : 'Falha na verificação'}
+              {!pixel.hasToken && pixel.pixelId && pixel.provider !== 'google' && (
+                <div className="flex items-start gap-2 bg-[var(--surface-2)]/60 border border-[var(--border)] rounded-lg p-3 text-[12px] leading-relaxed">
+                  <Info size={13} className="text-[var(--text-muted)] mt-0.5 shrink-0" />
+                  <span className="text-[var(--text-muted)]">Sem access token: apenas o formato do ID pode ser validado. Para verificar e enviar eventos de teste, adicione o token na edição do pixel.</span>
                 </div>
-                <div className="text-[var(--text-muted)] mt-0.5">{verdict.message}</div>
-                {verdict.ok && verdict.latency !== null && verdict.latency > 0 && (
-                  <div className="text-[var(--text-muted)] mt-1 text-[10.5px]">Latência: {verdict.latency} ms</div>
-                )}
+              )}
+
+              <div className="bg-[var(--surface)] border border-[var(--border)] rounded-lg overflow-hidden">
+                <div className="px-3 py-2 border-b border-[var(--border)] bg-[var(--surface-2)]/50 flex items-center justify-between">
+                  <div className="text-[10.5px] uppercase tracking-wider font-semibold text-[var(--text-muted)]">Logs de verificação</div>
+                  {(running || sendingTest) && <div className="w-3 h-3 rounded-full border-2 border-[var(--primary)] border-t-transparent animate-spin" />}
+                </div>
+                <div className="font-mono divide-y divide-[var(--border)] max-h-[220px] overflow-y-auto">
+                  {logs.length === 0 && (
+                    <div className="px-3 py-4 text-[var(--text-muted)] text-center italic text-[11px]">
+                      {pixel.pixelId ? 'Iniciando verificação…' : 'Configure o pixel para iniciar.'}
+                    </div>
+                  )}
+                  {logs.map((log, i) => <LogLine key={i} log={log} />)}
+                </div>
               </div>
+
+              {verdict && (
+                <div className={`flex items-start gap-2.5 rounded-lg p-3 border ${verdict.ok ? 'bg-green-500/10 border-green-500/30' : 'bg-red-500/10 border-red-500/30'}`}>
+                  {verdict.ok
+                    ? <CheckCircle2 size={16} className="text-green-500 mt-0.5" />
+                    : <XCircle      size={16} className="text-red-500 mt-0.5" />}
+                  <div className="text-[12px] flex-1">
+                    <div className={`font-semibold ${verdict.ok ? 'text-green-500' : 'text-red-500'}`}>
+                      {verdict.ok ? 'Verificação bem-sucedida' : 'Falha na verificação'}
+                    </div>
+                    <div className="text-[var(--text-muted)] mt-0.5">{verdict.message}</div>
+                    {verdict.ok && verdict.latency !== null && verdict.latency > 0 && (
+                      <div className="text-[var(--text-muted)] mt-1 text-[10.5px]">Latência: {verdict.latency} ms</div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+
+          {tab === 'preview' && (
+            <div className="space-y-3">
+              <div className="flex items-start gap-2 bg-[var(--primary)]/8 border border-[var(--primary)]/20 rounded-lg p-3 text-[12px] leading-relaxed">
+                <Info size={13} className="text-[var(--primary)] mt-0.5 shrink-0" />
+                <span className="text-[var(--text-muted)]">
+                  Exemplo do payload enviado para um evento <strong className="text-[var(--text)]">Purchase</strong>. Dados reais incluem hash SHA-256 do e-mail e telefone do comprador.
+                  {pixel.provider === 'tiktok' && !pixel.pixelCode && (
+                    <span className="text-yellow-600 dark:text-yellow-400"> Configure o Pixel Code para envio de eventos.</span>
+                  )}
+                </span>
+              </div>
+
+              {samplePayload ? (
+                <div className="bg-[var(--surface)] border border-[var(--border)] rounded-lg overflow-hidden">
+                  <div className="px-3 py-2 border-b border-[var(--border)] bg-[var(--surface-2)]/50 flex items-center justify-between">
+                    <div className="text-[10.5px] uppercase tracking-wider font-semibold text-[var(--text-muted)]">
+                      Payload de exemplo — evento Purchase
+                    </div>
+                    <Bdg tone="muted">JSON</Bdg>
+                  </div>
+                  <pre className="text-[10.5px] font-mono text-[var(--text)] p-3 overflow-x-auto max-h-[320px] overflow-y-auto leading-relaxed whitespace-pre">
+                    {samplePayload}
+                  </pre>
+                </div>
+              ) : (
+                <div className="text-[12px] text-[var(--text-muted)] italic text-center py-6">
+                  Configure o ID do pixel para ver o payload.
+                </div>
+              )}
             </div>
           )}
         </div>
 
         <div className="px-5 py-4 border-t border-[var(--border)] flex items-center gap-2">
-          <button
-            onClick={runTestEvent}
-            disabled={!canSendTest}
-            title={!pixel.hasToken ? 'Configure o access token para enviar evento de teste' : 'Envia um evento Purchase de teste ao provider'}
-            className="h-9 px-3 text-[12px] font-medium rounded-lg border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--surface-2)] disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
-          >
-            <FlaskConical size={13} className={sendingTest ? 'animate-pulse' : ''} />
-            {sendingTest ? 'Enviando…' : 'Enviar evento de teste'}
-          </button>
+          {tab === 'verify' && (
+            <button
+              onClick={runTestEvent}
+              disabled={!canSendTest}
+              title={!pixel.hasToken ? 'Configure o access token para enviar evento de teste' : 'Envia um evento Purchase de teste ao provider'}
+              className="h-9 px-3 text-[12px] font-medium rounded-lg border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--surface-2)] disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
+            >
+              <FlaskConical size={13} className={sendingTest ? 'animate-pulse' : ''} />
+              {sendingTest ? 'Enviando…' : 'Enviar evento de teste'}
+            </button>
+          )}
           <div className="flex-1" />
           <button onClick={onClose} className="h-9 px-4 text-[13px] font-medium rounded-lg border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--surface-2)]">
             Fechar
           </button>
-          <button
-            onClick={runVerify}
-            disabled={running || !pixel.pixelId}
-            className="h-9 px-4 text-[13px] font-medium rounded-lg bg-[var(--primary)] text-white hover:opacity-90 disabled:opacity-40 inline-flex items-center gap-1.5"
-          >
-            <RefreshCw size={13} className={running ? 'animate-spin' : ''} />
-            {running ? 'Verificando…' : 'Verificar de novo'}
-          </button>
+          {tab === 'verify' && (
+            <button
+              onClick={runVerify}
+              disabled={running || !pixel.pixelId}
+              className="h-9 px-4 text-[13px] font-medium rounded-lg bg-[var(--primary)] text-white hover:opacity-90 disabled:opacity-40 inline-flex items-center gap-1.5"
+            >
+              <RefreshCw size={13} className={running ? 'animate-spin' : ''} />
+              {running ? 'Verificando…' : 'Verificar de novo'}
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -982,11 +1147,11 @@ function UTMSection({ onCopy }: { onCopy: (hasUtm: boolean) => void }) {
               </div>
             )}
           </div>
-          <UtmField label="utm_source"            value={utm.source}   onChange={v => setUtm(u => ({ ...u, source: v }))}   placeholder="instagram" />
-          <UtmField label="utm_medium"            value={utm.medium}   onChange={v => setUtm(u => ({ ...u, medium: v }))}   placeholder="cpc" />
-          <UtmField label="utm_campaign"          value={utm.campaign} onChange={v => setUtm(u => ({ ...u, campaign: v }))} placeholder="black-2026" />
-          <UtmField label="utm_term (opcional)"   value={utm.term}     onChange={v => setUtm(u => ({ ...u, term: v }))}     placeholder="palavra-chave" />
-          <UtmField label="utm_content (opcional)" value={utm.content} onChange={v => setUtm(u => ({ ...u, content: v }))}  placeholder="reels-30s" />
+          <UtmField label="utm_source"             value={utm.source}   onChange={v => setUtm(u => ({ ...u, source: v }))}   placeholder="instagram" />
+          <UtmField label="utm_medium"             value={utm.medium}   onChange={v => setUtm(u => ({ ...u, medium: v }))}   placeholder="cpc" />
+          <UtmField label="utm_campaign"           value={utm.campaign} onChange={v => setUtm(u => ({ ...u, campaign: v }))} placeholder="black-2026" />
+          <UtmField label="utm_term (opcional)"    value={utm.term}     onChange={v => setUtm(u => ({ ...u, term: v }))}     placeholder="palavra-chave" />
+          <UtmField label="utm_content (opcional)" value={utm.content}  onChange={v => setUtm(u => ({ ...u, content: v }))}  placeholder="reels-30s" />
         </div>
 
         <div className="mt-4">
@@ -1073,8 +1238,19 @@ export default function TrackingClient({ initialPixels, initialStats, userId }: 
   const [verifying, setVerifying] = useState<PixelItem | null>(null)
   const [toast,     setToast]     = useState<ToastState | null>(null)
 
-  const statsRef = useRef(stats)
+  const statsRef        = useRef(stats)
+  const pendingVerifyRef = useRef<PixelItem | null>(null)
+
   useEffect(() => { statsRef.current = stats }, [stats])
+
+  // Auto-open verify when edit modal closes (after saving a new pixel)
+  useEffect(() => {
+    if (!editing && pendingVerifyRef.current) {
+      const pixel = pendingVerifyRef.current
+      pendingVerifyRef.current = null
+      setVerifying(pixel)
+    }
+  }, [editing])
 
   // Tick — timestamps relativos corretos
   useEffect(() => {
@@ -1126,7 +1302,7 @@ export default function TrackingClient({ initialPixels, initialStats, userId }: 
             const deletedProvider = (payload.old as { provider: string }).provider
             setPixels(prev => prev.map(p =>
               p.provider === deletedProvider
-                ? { ...p, id: null, pixelId: null, hasToken: false, capi: false, events: defaultEvents(p.provider), status: 'inactive' as const }
+                ? { ...p, id: null, pixelId: null, pixelCode: null, hasToken: false, capi: false, events: defaultEvents(p.provider), status: 'inactive' as const, lastTestAt: null }
                 : p
             ))
           } else {
@@ -1135,12 +1311,14 @@ export default function TrackingClient({ initialPixels, initialStats, userId }: 
               p.provider === row.provider
                 ? {
                     ...p,
-                    id:       row.id,
-                    pixelId:  row.pixel_id,
-                    hasToken: !!row.access_token,
-                    events:   (row.events as Record<string, boolean>) || p.events,
-                    capi:     row.capi,
-                    status:   computeStatus(row.pixel_id, lastEventMs, nowTs),
+                    id:         row.id,
+                    pixelId:    row.pixel_id,
+                    pixelCode:  row.pixel_code,
+                    hasToken:   !!row.access_token,
+                    events:     (row.events as Record<string, boolean>) || p.events,
+                    capi:       row.capi,
+                    lastTestAt: row.last_test_at ? new Date(row.last_test_at).getTime() : p.lastTestAt,
+                    status:     computeStatus(row.pixel_id, lastEventMs, nowTs),
                   }
                 : p
             ))
@@ -1170,8 +1348,10 @@ export default function TrackingClient({ initialPixels, initialStats, userId }: 
   // ---- Handlers ----
 
   async function handleSavePixel(provider: string, patch: PixelPatch) {
+    const wasNew = !editing?.id
+    const currentEditing = editing!
     try {
-      await savePixelAction(provider, patch)
+      const result = await savePixelAction(provider, patch)
       router.refresh()
       const enabledCount = Object.values(patch.events).filter(Boolean).length
       track('pixel_configured', {
@@ -1180,6 +1360,22 @@ export default function TrackingClient({ initialPixels, initialStats, userId }: 
         events_enabled_count: enabledCount,
       })
       setToast({ msg: 'Pixel salvo com sucesso.', type: 'success' })
+
+      // Se era pixel novo com ID configurado, abre verify após fechar o edit modal
+      if (wasNew && patch.pixelId?.trim()) {
+        const provisionalPixel: PixelItem = {
+          ...currentEditing,
+          id:         result.id,
+          pixelId:    patch.pixelId.trim(),
+          pixelCode:  patch.pixelCode?.trim() || null,
+          hasToken:   !!(patch.newToken?.trim()),
+          events:     patch.events,
+          capi:       patch.capi,
+          status:     'waiting',
+          lastTestAt: null,
+        }
+        pendingVerifyRef.current = provisionalPixel
+      }
     } catch (err) {
       setToast({ msg: err instanceof Error ? err.message : 'Erro ao salvar pixel.', type: 'error' })
       throw err
@@ -1193,10 +1389,39 @@ export default function TrackingClient({ initialPixels, initialStats, userId }: 
 
   function handleTestSent(provider: string) {
     track('pixel_test_sent', { provider })
+    // Atualiza lastTestAt localmente após teste bem-sucedido
+    const nowTs = Date.now()
+    setPixels(prev => prev.map(p => p.provider === provider ? { ...p, lastTestAt: nowTs } : p))
+    if (verifying?.provider === provider) {
+      setVerifying(v => v ? { ...v, lastTestAt: nowTs } : v)
+    }
   }
 
   function handleUtmCopy(hasUtm: boolean) {
     track('utm_link_copied', { has_utm: hasUtm })
+  }
+
+  function handleExportJson() {
+    const config = pixels
+      .filter(p => p.pixelId)
+      .map(p => ({
+        provider:      p.provider,
+        pixelId:       p.pixelId,
+        pixelCode:     p.pixelCode,
+        events:        p.events,
+        capi:          p.capi,
+        status:        p.status,
+        lastTestAt:    p.lastTestAt ? new Date(p.lastTestAt).toISOString() : null,
+        exportedAt:    new Date().toISOString(),
+      }))
+
+    const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' })
+    const url  = URL.createObjectURL(blob)
+    const a    = document.createElement('a')
+    a.href     = url
+    a.download = `pixels-${new Date().toISOString().slice(0, 10)}.json`
+    a.click()
+    URL.revokeObjectURL(url)
   }
 
   // ---- Totals ----
@@ -1220,12 +1445,23 @@ export default function TrackingClient({ initialPixels, initialStats, userId }: 
         title="Trackeamento"
         subtitle="Pixels, UTMs e atribuição multi-canal — Meta, TikTok e Google."
         actions={
-          <a
-            href="/dashboard/docs/07-analytics/visao-geral-analytics"
-            className="inline-flex items-center gap-2 h-9 px-4 text-[13px] font-medium rounded-lg border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--surface-2)] transition-colors"
-          >
-            <BookOpen size={14} />Documentação
-          </a>
+          <div className="flex items-center gap-2">
+            {hasAnyPixelConfigured && (
+              <button
+                onClick={handleExportJson}
+                title="Exportar configurações dos pixels como JSON"
+                className="inline-flex items-center gap-2 h-9 px-3 text-[13px] font-medium rounded-lg border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--surface-2)] transition-colors"
+              >
+                <Download size={13} />Exportar JSON
+              </button>
+            )}
+            <a
+              href="/dashboard/docs/07-analytics/visao-geral-analytics"
+              className="inline-flex items-center gap-2 h-9 px-4 text-[13px] font-medium rounded-lg border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--surface-2)] transition-colors"
+            >
+              <BookOpen size={14} />Documentação
+            </a>
+          </div>
         }
       />
 
@@ -1269,17 +1505,16 @@ export default function TrackingClient({ initialPixels, initialStats, userId }: 
       </div>
 
       {/* Banner: stats globais */}
-      {hasAnyPixelConfigured && (
-        <div className="mb-5 flex items-center gap-2.5 bg-[var(--surface-2)]/50 border border-[var(--border)] rounded-lg px-3.5 py-2.5">
-          <Wifi size={13} className="text-[var(--text-muted)] shrink-0" />
-          <span className="text-[12px] text-[var(--text-muted)]">
-            Estatísticas compartilhadas entre todos os pixels — os mesmos eventos de checkout são enviados para cada provider ativo.
-            Contadores atualizam em tempo real via Supabase Realtime e a cada 5 minutos automaticamente.
-          </span>
-        </div>
-      )}
+      <div className="mb-5 flex items-center gap-2.5 bg-[var(--surface-2)]/50 border border-[var(--border)] rounded-lg px-3.5 py-2.5">
+        <Wifi size={13} className="text-[var(--text-muted)] shrink-0" />
+        <span className="text-[12px] text-[var(--text-muted)]">
+          {hasAnyPixelConfigured
+            ? 'Estatísticas compartilhadas entre todos os pixels — os mesmos eventos de checkout são enviados para cada provider ativo. Contadores atualizam em tempo real via Supabase Realtime e a cada 5 minutos automaticamente.'
+            : 'Configure um pixel para começar a rastrear conversões. Os eventos de venda, lead e checkout são enviados automaticamente para cada provider ativo.'}
+        </span>
+      </div>
 
-      {/* Pixels section */}
+      {/* Pixels section — sempre exibe os 3 cards */}
       <section className="mb-6">
         <div className="flex items-center gap-3 mb-3">
           <h2 className="text-[11px] uppercase tracking-wider font-semibold text-[var(--text-muted)]">Pixels & APIs de conversão</h2>
@@ -1287,15 +1522,11 @@ export default function TrackingClient({ initialPixels, initialStats, userId }: 
           <div className="flex-1 h-px bg-[var(--border)]" />
         </div>
 
-        {!hasAnyPixelConfigured ? (
-          <NoDataState onConfigure={() => setEditing(pixels[0] ?? null)} />
-        ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
-            {pixels.map(p => (
-              <PixelCard key={p.provider} pixel={p} now={now} onEdit={setEditing} onCheck={setVerifying} />
-            ))}
-          </div>
-        )}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+          {pixels.map(p => (
+            <PixelCard key={p.provider} pixel={p} now={now} onEdit={setEditing} onCheck={setVerifying} />
+          ))}
+        </div>
       </section>
 
       {/* UTM section */}

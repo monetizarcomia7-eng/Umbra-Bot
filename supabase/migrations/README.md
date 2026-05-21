@@ -467,10 +467,12 @@ id:           uuid        NOT NULL  default gen_random_uuid()
 user_id:      uuid        NOT NULL  FK → auth.users(id)  ON DELETE CASCADE
 provider:     text        NOT NULL  check in ('meta', 'tiktok', 'google')
 pixel_id:     text                  (ID do pixel/advertiser/measurement)
+pixel_code:   text                  (TikTok Pixel Code — distinto do Advertiser ID em pixel_id) [migração 077]
 access_token: text                  (criptografado AES-256-GCM — enc:<iv>:<tag>:<cipher>)
 status:       text        NOT NULL  default 'inactive'  check in ('healthy','warning','error','inactive')
 events:       jsonb       NOT NULL  default '{}'        (mapa evento→boolean)
 capi:         boolean     NOT NULL  default false
+last_test_at: timestamptz           (timestamp do último evento de teste enviado) [migração 077]
 created_at:   timestamptz NOT NULL  default now()
 updated_at:   timestamptz NOT NULL  default now()
 ```
@@ -484,6 +486,10 @@ Trigger: `pixels_updated_at` (chama `set_updated_at()`)
 - RLS `pixels_open` (`using true`) → IDOR crítico
 - `access_token` em plain text → agora criptografado pela app
 - Sem `UNIQUE(user_id, provider)` → agora garantido em nível de banco
+
+**Migração 077** adicionou:
+- `pixel_code text`: TikTok Pixel Code — campo separado do Advertiser ID (`pixel_id`). Usado para envio de eventos via Events API (`/pixel/track/`). O Advertiser ID continua em `pixel_id` para verificação da conta via `/pixel/list/`.
+- `last_test_at timestamptz`: timestamp do último evento de teste enviado com sucesso via VerifyPixelModal. Exibido no PixelCard como "Último teste: há Xh".
 
 RPC `pixels_stats(p_user_id uuid)` → `json`:
 ```json

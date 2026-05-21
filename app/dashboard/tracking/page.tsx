@@ -7,10 +7,12 @@ export interface RawPixelRow {
   id:           string
   provider:     string
   pixel_id:     string | null
+  pixel_code:   string | null  // TikTok Pixel Code (distinto do Advertiser ID)
   access_token: string | null  // criptografado — usado só para derivar hasToken
   status:       string
   events:       Record<string, boolean>
   capi:         boolean
+  last_test_at: string | null  // último evento de teste enviado
   created_at:   string
   updated_at:   string
 }
@@ -29,7 +31,7 @@ export default async function TrackingPage() {
   const [pixelsRes, statsRes] = await Promise.all([
     supabase
       .from('pixels')
-      .select('id, provider, pixel_id, access_token, status, events, capi, created_at, updated_at')
+      .select('id, provider, pixel_id, pixel_code, access_token, status, events, capi, last_test_at, created_at, updated_at')
       .eq('user_id', user.id)
       .order('created_at'),
     supabase.rpc('pixels_stats', { p_user_id: user.id }),

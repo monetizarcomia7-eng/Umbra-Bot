@@ -11,6 +11,7 @@ import type { PixelStats } from '@/app/dashboard/tracking/page'
 
 export interface PixelPatch {
   pixelId:          string | null
+  pixelCode:        string | null  // TikTok Pixel Code (distinto do Advertiser ID)
   newToken:         string | null  // null = usuário não digitou nada
   clearToken:       boolean        // true = usuário limpou o campo explicitamente
   events:           Record<string, boolean>
@@ -50,10 +51,10 @@ async function testMetaPixel(pixelId: string, accessToken: string): Promise<Test
   }
 }
 
-async function testTikTokPixel(pixelId: string, accessToken: string): Promise<TestResult> {
+async function testTikTokPixel(advertiserId: string, accessToken: string): Promise<TestResult> {
   const start = Date.now()
   try {
-    const url = `https://business-api.tiktok.com/open_api/v1.3/pixel/list/?advertiser_id=${encodeURIComponent(pixelId)}`
+    const url = `https://business-api.tiktok.com/open_api/v1.3/pixel/list/?advertiser_id=${encodeURIComponent(advertiserId)}`
     const res = await fetch(url, {
       headers: { 'Access-Token': accessToken },
       signal: AbortSignal.timeout(8_000),
@@ -134,7 +135,7 @@ async function sendMetaTestEvent(pixelId: string, accessToken: string): Promise<
   }
 }
 
-async function sendTikTokTestEvent(pixelId: string, accessToken: string): Promise<TestResult> {
+async function sendTikTokTestEvent(pixelCode: string, accessToken: string): Promise<TestResult> {
   const start = Date.now()
   try {
     const url = 'https://business-api.tiktok.com/open_api/v1.3/pixel/track/'
@@ -145,7 +146,7 @@ async function sendTikTokTestEvent(pixelId: string, accessToken: string): Promis
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        pixel_code: pixelId,
+        pixel_code: pixelCode,
         event: 'CompletePayment',
         timestamp: new Date().toISOString(),
         context: {
@@ -221,11 +222,12 @@ async function sendGoogleTestEvent(measurementId: string, apiSecret: string): Pr
 
 /**
  * Salva ou atualiza a configuração de um pixel do usuário.
+ * Retorna o id do registro para que o caller possa abrir o modal de verificação.
  */
 export async function savePixelAction(
   provider: string,
   patch: PixelPatch,
-): Promise<void> {
+): Promise<{ id: string }> {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) throw new Error('Não autorizado')
@@ -233,12 +235,13 @@ export async function savePixelAction(
   await rateLimit(`pixel_save:${user.id}`, 20, 60_000)
 
   const payload: Record<string, unknown> = {
-    user_id:  user.id,
+    user_id:    user.id,
     provider,
-    pixel_id: patch.pixelId?.trim() || null,
-    events:   patch.events,
-    capi:     patch.capi,
-    status:   patch.pixelId?.trim() ? 'warning' : 'inactive',
+    pixel_id:   patch.pixelId?.trim() || null,
+    pixel_code: patch.pixelCode?.trim() || null,
+    events:     patch.events,
+    capi:       patch.capi,
+    status:     patch.pixelId?.trim() ? 'warning' : 'inactive',
   }
 
   if (patch.newToken?.trim()) {
@@ -247,11 +250,14 @@ export async function savePixelAction(
     payload.access_token = null
   }
 
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('pixels')
     .upsert(payload, { onConflict: 'user_id,provider' })
+    .select('id')
+    .single()
 
   if (error) throw new Error(error.message)
+  return { id: (data as { id: string }).id }
 }
 
 /**
@@ -308,7 +314,7 @@ export async function sendTestPixelEvent(pixelDbId: string): Promise<TestResult>
 
   const { data: pixel } = await supabase
     .from('pixels')
-    .select('provider, pixel_id, access_token')
+    .select('provider, pixel_id, pixel_code, access_token')
     .eq('id', pixelDbId)
     .eq('user_id', user.id)
     .single()
@@ -319,12 +325,33 @@ export async function sendTestPixelEvent(pixelDbId: string): Promise<TestResult>
 
   const plainToken = decryptToken(pixel.access_token)
 
+  let result: TestResult
   switch (pixel.provider) {
-    case 'meta':   return sendMetaTestEvent(pixel.pixel_id, plainToken)
-    case 'tiktok': return sendTikTokTestEvent(pixel.pixel_id, plainToken)
-    case 'google': return sendGoogleTestEvent(pixel.pixel_id, plainToken)
-    default:       return { ok: false, message: 'Provider não suportado.', latency: null }
+    case 'meta':
+      result = await sendMetaTestEvent(pixel.pixel_id, plainToken)
+      break
+    case 'tiktok':
+      // Para TikTok: usa pixel_code para envio de eventos; fallback para pixel_id se não configurado
+      result = await sendTikTokTestEvent(pixel.pixel_code ?? pixel.pixel_id, plainToken)
+      break
+    case 'google':
+      result = await sendGoogleTestEvent(pixel.pixel_id, plainToken)
+      break
+    default:
+      return { ok: false, message: 'Provider não suportado.', latency: null }
   }
+
+  // Registra timestamp do teste no banco (fire-and-forget)
+  if (result.ok) {
+    supabase
+      .from('pixels')
+      .update({ last_test_at: new Date().toISOString() })
+      .eq('id', pixelDbId)
+      .eq('user_id', user.id)
+      .then(() => {/* silencioso */})
+  }
+
+  return result
 }
 
 /**
