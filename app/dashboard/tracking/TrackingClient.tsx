@@ -1,0 +1,1169 @@
+'use client'
+
+import { useState, useEffect, useMemo, useRef, useCallback, useTransition } from 'react'
+import { useRouter } from 'next/navigation'
+import { DashboardLayout } from '@/components/dashboard/Layout'
+import { PageHeader } from '@/components/dashboard/PageHeader'
+import { createClient } from '@/lib/supabase/client'
+import { savePixelAction, testPixelAction, type PixelPatch, type TestResult } from '@/app/actions/pixels'
+import { useAnalytics } from '@/hooks/use-analytics'
+import type { RawPixelRow, PixelStats } from './page'
+import {
+  Zap, Send, CheckCircle2, Target, Clock, Hash, ExternalLink,
+  Eye, EyeOff, AlertCircle, RefreshCw, ArrowUpRight, ArrowDownRight,
+  Link2, Instagram, MessageSquare, ShoppingBag, ChevronRight,
+  Check, X, Circle, BookOpen, Copy, Activity, Pencil, Plug, XCircle,
+  ShieldCheck, Info,
+} from 'lucide-react'
+
+/* ============================================================
+   Static catalog — dados que não mudam por provider
+   ============================================================ */
+
+interface EventDef { id: string; label: string; desc: string }
+
+interface CatalogEntry {
+  name:         string
+  fullName:     string
+  description:  string
+  initial:      string
+  color:        string
+  externalUrl:  string
+  externalLabel:string
+  docsHint:     string
+  idPlaceholder:string
+  idHint:       string
+  tokenPlaceholder: string
+  eventDefs:    EventDef[]
+}
+
+const PIXEL_CATALOG: Record<string, CatalogEntry> = {
+  meta: {
+    name:          'Meta',
+    fullName:      'Meta Pixel (Facebook + Instagram)',
+    description:   'Eventos via Conversions API — rastreia vendas e leads do Facebook/Instagram Ads.',
+    initial:       'f',
+    color:         'oklch(0.55 0.18 260)',
+    externalUrl:   'https://business.facebook.com/events_manager',
+    externalLabel: 'Gerenciador de Eventos',
+    docsHint:      'Encontre no Gerenciador de Eventos do Meta → Configurações do pixel.',
+    idPlaceholder: '123456789012345',
+    idHint:        'Número de 15 dígitos — aba "Pixels" no Gerenciador de Eventos.',
+    tokenPlaceholder: 'EAAxxxxxxxx…',
+    eventDefs: [
+      { id: 'PageView',         label: 'PageView',         desc: 'Usuário entra no fluxo / página.' },
+      { id: 'ViewContent',      label: 'ViewContent',      desc: 'Visualização de produto ou oferta.' },
+      { id: 'Lead',             label: 'Lead',             desc: 'Lead capturado (nome ou e-mail).' },
+      { id: 'AddToCart',        label: 'AddToCart',        desc: 'Adicionou produto ao carrinho.' },
+      { id: 'InitiateCheckout', label: 'InitiateCheckout', desc: 'Iniciou checkout no gateway.' },
+      { id: 'Purchase',         label: 'Purchase',         desc: 'Venda concluída — envia valor + moeda.' },
+    ],
+  },
+  tiktok: {
+    name:          'TikTok',
+    fullName:      'TikTok Pixel',
+    description:   'Eventos via Events API — rastreia conversões do TikTok Ads.',
+    initial:       't',
+    color:         'oklch(0.42 0.04 180)',
+    externalUrl:   'https://business.tiktok.com/portal/events-manager',
+    externalLabel: 'TikTok Events Manager',
+    docsHint:      'Encontre em TikTok Ads Manager → Ativos → Eventos.',
+    idPlaceholder: 'CDABCDEFG12345',
+    idHint:        'ID do pixel no TikTok Events Manager → Gerenciar → Detalhes.',
+    tokenPlaceholder: 'ttk_xxxxxx…',
+    eventDefs: [
+      { id: 'PageView',         label: 'PageView',         desc: 'Visualização inicial do fluxo.' },
+      { id: 'ViewContent',      label: 'ViewContent',      desc: 'Visualizou produto / oferta.' },
+      { id: 'AddToCart',        label: 'AddToCart',        desc: 'Adicionou ao carrinho.' },
+      { id: 'InitiateCheckout', label: 'InitiateCheckout', desc: 'Iniciou checkout.' },
+      { id: 'CompletePayment',  label: 'CompletePayment',  desc: 'Pagamento confirmado.' },
+      { id: 'SubscribeLead',    label: 'SubscribeLead',    desc: 'Lead capturado.' },
+    ],
+  },
+  google: {
+    name:          'Google',
+    fullName:      'Google Tag (GA4 + Ads)',
+    description:   'Eventos para Google Analytics 4 e Google Ads via Measurement Protocol.',
+    initial:       'G',
+    color:         'oklch(0.66 0.15 60)',
+    externalUrl:   'https://analytics.google.com',
+    externalLabel: 'Google Analytics',
+    docsHint:      'Formato: G-XXXXXXXXXX — não confundir com o ID de stream.',
+    idPlaceholder: 'G-XXXXXXXXXX',
+    idHint:        'Admin → Fluxos de dados → selecione o fluxo → ID de medição.',
+    tokenPlaceholder: 'API_SECRET_xxx…',
+    eventDefs: [
+      { id: 'page_view',      label: 'page_view',      desc: 'Visualização de página / fluxo.' },
+      { id: 'view_item',      label: 'view_item',      desc: 'Visualizou produto / oferta.' },
+      { id: 'add_to_cart',    label: 'add_to_cart',    desc: 'Adicionou ao carrinho.' },
+      { id: 'begin_checkout', label: 'begin_checkout', desc: 'Iniciou checkout.' },
+      { id: 'purchase',       label: 'purchase',       desc: 'Compra concluída.' },
+      { id: 'generate_lead',  label: 'generate_lead',  desc: 'Lead capturado.' },
+    ],
+  },
+}
+
+const CATALOG_PROVIDERS = ['meta', 'tiktok', 'google'] as const
+
+/* ============================================================
+   Internal types
+   ============================================================ */
+
+interface PixelItem {
+  // Do banco (null = ainda não salvo para este provider)
+  id:       string | null
+  provider: string
+  pixelId:  string | null
+  hasToken: boolean  // !!access_token — token nunca exposto ao cliente
+  events:   Record<string, boolean>
+  capi:     boolean
+  // Computados
+  status:   'healthy' | 'warning' | 'error' | 'inactive'
+  eventsSentToday: number
+  eventsMatched:   number
+  lastEvent:       number | null  // timestamp ms
+  // Do catálogo estático
+  name:             string
+  fullName:         string
+  description:      string
+  initial:          string
+  color:            string
+  externalUrl:      string
+  externalLabel:    string
+  docsHint:         string
+  idPlaceholder:    string
+  idHint:           string
+  tokenPlaceholder: string
+  eventDefs:        EventDef[]
+}
+
+interface StatusInfo { label: string; tone: string; dot: string; pulse: boolean; desc: string }
+interface LogEntry { type: 'system' | 'recv'; text?: string; status?: 'ok' | 'error' | 'info'; label?: string; time?: string; valid?: boolean; isTest?: boolean }
+interface ToastState { msg: string; type: 'success' | 'error' }
+
+/* ============================================================
+   Helpers
+   ============================================================ */
+
+function defaultEvents(provider: string): Record<string, boolean> {
+  const cat = PIXEL_CATALOG[provider]
+  if (!cat) return {}
+  return Object.fromEntries(cat.eventDefs.map(e => [e.id, false]))
+}
+
+function computeStatus(
+  pixelId: string | null,
+  lastEventMs: number | null,
+  now: number,
+): PixelItem['status'] {
+  if (!pixelId) return 'inactive'
+  if (!lastEventMs) return 'warning'
+  const diff = now - lastEventMs
+  if (diff < 30 * 60_000) return 'healthy'
+  if (diff < 60 * 60_000) return 'warning'
+  return 'error'
+}
+
+function mergePixels(rows: RawPixelRow[], stats: PixelStats, now: number): PixelItem[] {
+  const lastEventMs = stats.last_event ? new Date(stats.last_event).getTime() : null
+  return CATALOG_PROVIDERS.map(provider => {
+    const cat  = PIXEL_CATALOG[provider]
+    const row  = rows.find(r => r.provider === provider)
+    return {
+      id:       row?.id ?? null,
+      provider,
+      pixelId:  row?.pixel_id ?? null,
+      hasToken: !!row?.access_token,
+      events:   (row?.events as Record<string, boolean>) ?? defaultEvents(provider),
+      capi:     row?.capi ?? false,
+      status:   computeStatus(row?.pixel_id ?? null, lastEventMs, now),
+      eventsSentToday: stats.events_sent_today,
+      eventsMatched:   stats.events_matched,
+      lastEvent:       lastEventMs,
+      ...cat,
+    }
+  })
+}
+
+const fmtNum = (n: number) => new Intl.NumberFormat('pt-BR').format(n)
+const fmtPct = (n: number, d = 0) => n.toFixed(d).replace('.', ',') + '%'
+
+function relTime(ms: number | null, now: number): string {
+  if (!ms) return '—'
+  const diff = now - ms
+  const m = Math.floor(diff / 60_000)
+  if (m < 1) return 'agora'
+  if (m < 60) return `há ${m} min`
+  const h = Math.floor(m / 60)
+  if (h < 24) return `há ${h}h`
+  return new Date(ms).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })
+}
+
+const statusMap: Record<string, StatusInfo> = {
+  healthy:  { label: 'Saudável',        tone: 'success', dot: 'bg-green-500',            pulse: true,  desc: 'Eventos chegando em tempo real.' },
+  warning:  { label: 'Volume baixo',    tone: 'warning', dot: 'bg-yellow-500',            pulse: false, desc: 'Nenhum evento recebido nos últimos 30 min.' },
+  error:    { label: 'Sem eventos',     tone: 'danger',  dot: 'bg-red-500',               pulse: false, desc: 'Nenhum evento recebido há mais de 1h.' },
+  inactive: { label: 'Não configurado', tone: 'muted',   dot: 'bg-[var(--text-muted)]',   pulse: false, desc: 'Aguardando ID do pixel.' },
+}
+
+/* ============================================================
+   Micro-components
+   ============================================================ */
+
+function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <button
+      role="switch" aria-checked={checked} onClick={() => onChange(!checked)}
+      className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]/50 ${checked ? 'bg-[var(--primary)]' : 'bg-[var(--border)]'}`}
+    >
+      <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${checked ? 'translate-x-4' : 'translate-x-0.5'}`} />
+    </button>
+  )
+}
+
+function CheckboxInline({ checked, onChange }: { checked: boolean; onChange: () => void }) {
+  return (
+    <button
+      role="checkbox" aria-checked={checked} onClick={onChange}
+      className={`w-4 h-4 rounded border-2 flex items-center justify-center transition-colors shrink-0 ${checked ? 'bg-[var(--primary)] border-[var(--primary)]' : 'bg-[var(--surface)] border-[var(--border)] hover:border-[var(--primary)]/50'}`}
+    >
+      {checked && <Check size={10} className="text-white" />}
+    </button>
+  )
+}
+
+function Bdg({ tone, children }: { tone: string; children: React.ReactNode }) {
+  const cls: Record<string, string> = {
+    success: 'bg-green-500/10 text-green-600 dark:text-green-400',
+    warning: 'bg-yellow-500/10 text-yellow-600 dark:text-yellow-400',
+    danger:  'bg-red-500/10 text-red-600 dark:text-red-400',
+    primary: 'bg-[var(--primary)]/10 text-[var(--primary)]',
+    muted:   'bg-[var(--surface-2)] text-[var(--text-muted)]',
+  }
+  return <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10.5px] font-medium ${cls[tone] ?? cls.muted}`}>{children}</span>
+}
+
+function PixelLogo({ initial, color, size = 44 }: { initial: string; color: string; size?: number }) {
+  return (
+    <div className="rounded-xl flex items-center justify-center text-white font-bold shrink-0"
+      style={{ width: size, height: size, background: color, fontSize: size * 0.5, letterSpacing: '-0.04em' }}>
+      {initial}
+    </div>
+  )
+}
+
+function StatT({ label, value, tone }: { label: string; value: string; tone?: string }) {
+  return (
+    <div>
+      <div className="text-[10px] uppercase tracking-wider font-semibold text-[var(--text-muted)]">{label}</div>
+      <div className={['text-[13px] font-semibold tracking-tight mt-0.5', tone === 'success' ? 'text-green-500' : tone === 'warning' ? 'text-yellow-500' : tone === 'muted' ? 'text-[var(--text-muted)]' : 'text-[var(--text)]'].join(' ')}>{value}</div>
+    </div>
+  )
+}
+
+function FieldT({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <label className="block text-[12.5px] font-medium text-[var(--text)] mb-1.5">{label}</label>
+      {children}
+      {hint && <div className="text-[11px] text-[var(--text-muted)] mt-1 leading-snug">{hint}</div>}
+    </div>
+  )
+}
+
+const inputCls = 'w-full h-10 px-3 bg-[var(--surface)] border border-[var(--border)] rounded-lg text-[13px] text-[var(--text)] placeholder:text-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/30 focus:border-[var(--primary)]/50'
+
+/* ============================================================
+   KPI card
+   ============================================================ */
+
+function KpiTr({ label, value, sub, icon: Icon_, delta, tone, highlight }: {
+  label: string; value: string; sub?: string; icon: React.ElementType
+  delta?: number; tone?: string; highlight?: boolean
+}) {
+  const positive = (delta ?? 0) >= 0
+  return (
+    <div className="bg-[var(--surface)] border border-[var(--border)] rounded-xl p-4">
+      <div className="flex items-start justify-between mb-3">
+        <div className="text-[12px] text-[var(--text-muted)] font-medium">{label}</div>
+        <div className={`w-7 h-7 rounded-md flex items-center justify-center ${tone === 'primary' ? 'bg-[var(--primary)]/10 text-[var(--primary)]' : highlight ? 'bg-green-500/10 text-green-500' : 'bg-[var(--surface-2)] text-[var(--text-muted)]'}`}>
+          <Icon_ size={14} />
+        </div>
+      </div>
+      <div className={`text-[24px] font-semibold tracking-tight leading-none ${highlight ? 'text-green-500' : 'text-[var(--text)]'}`}>{value}</div>
+      <div className="flex items-center gap-2 mt-2.5">
+        {delta !== undefined && (
+          <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md font-medium text-[11px] ${positive ? 'bg-green-500/10 text-green-500' : 'bg-red-500/10 text-red-500'}`}>
+            {positive ? <ArrowUpRight size={11} /> : <ArrowDownRight size={11} />}
+            {fmtPct(Math.abs(delta))}
+          </span>
+        )}
+        {sub && <span className="text-[11.5px] text-[var(--text-muted)]">{sub}</span>}
+      </div>
+    </div>
+  )
+}
+
+/* ============================================================
+   NoDataState
+   ============================================================ */
+
+function NoDataState({ onConfigure }: { onConfigure: () => void }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-20 text-center">
+      <div className="w-14 h-14 rounded-2xl bg-[var(--primary)]/10 flex items-center justify-center mb-4">
+        <Zap size={24} className="text-[var(--primary)]" />
+      </div>
+      <h3 className="text-[15px] font-semibold text-[var(--text)] mb-1.5">Nenhum pixel configurado</h3>
+      <p className="text-[13px] text-[var(--text-muted)] max-w-sm leading-relaxed mb-5">
+        Configure o Meta Pixel, TikTok Pixel ou Google Tag para rastrear conversões e otimizar seus anúncios automaticamente.
+      </p>
+      <button
+        onClick={onConfigure}
+        className="inline-flex items-center gap-2 h-9 px-4 text-[13px] font-medium rounded-lg bg-[var(--primary)] text-white hover:opacity-90 transition-opacity"
+      >
+        <Plug size={14} />
+        Configurar primeiro pixel
+      </button>
+    </div>
+  )
+}
+
+/* ============================================================
+   Pixel Card
+   ============================================================ */
+
+function PixelCard({
+  pixel, now, onEdit, onCheck,
+}: {
+  pixel: PixelItem; now: number; onEdit: (p: PixelItem) => void; onCheck: (p: PixelItem) => void
+}) {
+  const st = statusMap[pixel.status]
+  const enabledCount = Object.values(pixel.events).filter(Boolean).length
+  const total = pixel.eventDefs.length
+  const matchRate = pixel.eventsSentToday > 0 ? (pixel.eventsMatched / pixel.eventsSentToday) * 100 : 0
+
+  return (
+    <div className="bg-[var(--surface)] border border-[var(--border)] rounded-xl p-5 hover:border-[var(--text-muted)]/40 transition-colors flex flex-col">
+      <div className="flex items-start gap-3.5">
+        <PixelLogo initial={pixel.initial} color={pixel.color} />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <h3 className="text-[14.5px] font-semibold text-[var(--text)]">{pixel.name}</h3>
+            <Bdg tone={st.tone}>
+              {st.pulse && (
+                <span className={`relative w-1.5 h-1.5 rounded-full ${st.dot}`}>
+                  <span className={`absolute inset-0 rounded-full ${st.dot} animate-ping opacity-60`} />
+                </span>
+              )}
+              {!st.pulse && pixel.pixelId && <span className={`w-1.5 h-1.5 rounded-full ${st.dot}`} />}
+              {st.label}
+            </Bdg>
+            {pixel.capi && pixel.hasToken && <Bdg tone="primary"><ShieldCheck size={9} />CAPI</Bdg>}
+          </div>
+          <p className="text-[12px] text-[var(--text-muted)] mt-1 leading-snug">{pixel.description}</p>
+        </div>
+      </div>
+
+      <div className="mt-4 pt-4 border-t border-[var(--border)]">
+        {pixel.pixelId ? (
+          <div className="flex items-center gap-2 bg-[var(--surface-2)]/50 border border-[var(--border)] rounded-md px-2.5 py-1.5">
+            <Hash size={11} className="text-[var(--text-muted)] shrink-0" />
+            <span className="text-[10.5px] text-[var(--text-muted)] shrink-0">ID:</span>
+            <code className="text-[11.5px] font-mono text-[var(--text)] truncate flex-1">{pixel.pixelId}</code>
+          </div>
+        ) : (
+          <div className="text-[11.5px] text-[var(--text-muted)] italic flex items-center gap-1.5">
+            <Circle size={9} />Sem ID configurado
+          </div>
+        )}
+      </div>
+
+      <div className="grid grid-cols-3 gap-2 mt-3.5 pt-3.5 border-t border-[var(--border)]">
+        <StatT label="Eventos ativos" value={`${enabledCount}/${total}`} />
+        <StatT label="Enviados (24h)"  value={pixel.pixelId && pixel.eventsSentToday > 0 ? fmtNum(pixel.eventsSentToday) : '—'} />
+        <StatT
+          label="Match rate"
+          value={pixel.pixelId && pixel.eventsSentToday > 0 ? fmtPct(matchRate, 1) : '—'}
+          tone={matchRate >= 85 ? 'success' : matchRate > 0 ? 'warning' : 'muted'}
+        />
+      </div>
+
+      <div className="text-[11px] text-[var(--text-muted)] mt-3 flex items-center gap-1.5">
+        <Clock size={11} />
+        Último evento:&nbsp;<span className="text-[var(--text)]">{pixel.pixelId ? relTime(pixel.lastEvent, now) : '—'}</span>
+      </div>
+
+      <div className="mt-4 pt-3 border-t border-[var(--border)] flex items-center gap-2">
+        {pixel.pixelId ? (
+          <>
+            <button
+              onClick={() => onCheck(pixel)}
+              className="inline-flex items-center gap-1.5 h-8 px-3 text-[12px] font-medium rounded-lg bg-[var(--primary)] text-white hover:opacity-90 transition-opacity"
+            >
+              <Activity size={13} />Verificar pixel
+            </button>
+            <button
+              onClick={() => onEdit(pixel)}
+              className="inline-flex items-center gap-1.5 h-8 px-3 text-[12px] font-medium rounded-lg border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--surface-2)] transition-colors"
+            >
+              <Pencil size={13} />Editar
+            </button>
+            <a
+              href={pixel.externalUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="ml-auto inline-flex items-center gap-1 text-[11px] text-[var(--text-muted)] hover:text-[var(--primary)] transition-colors"
+            >
+              <ExternalLink size={11} />{pixel.externalLabel}
+            </a>
+          </>
+        ) : (
+          <button
+            onClick={() => onEdit(pixel)}
+            className="w-full inline-flex items-center justify-center gap-1.5 h-8 px-3 text-[12px] font-medium rounded-lg bg-[var(--primary)] text-white hover:opacity-90 transition-opacity"
+          >
+            <Plug size={13} />Configurar {pixel.name}
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/* ============================================================
+   Edit Pixel Modal
+   ============================================================ */
+
+function EditPixelModal({
+  open, onClose, pixel, onSave,
+}: {
+  open: boolean; onClose: () => void; pixel: PixelItem | null; onSave: (provider: string, patch: PixelPatch) => Promise<void>
+}) {
+  const [pixelId,   setPixelId]   = useState('')
+  const [tokenVal,  setTokenVal]  = useState('')  // '' = não digitou nada
+  const [clearTok,  setClearTok]  = useState(false)
+  const [events,    setEvents]    = useState<Record<string, boolean>>({})
+  const [capi,      setCapi]      = useState(true)
+  const [showTok,   setShowTok]   = useState(false)
+  const [saving,    setSaving]    = useState(false)
+
+  useEffect(() => {
+    if (open && pixel) {
+      setPixelId(pixel.pixelId || '')
+      setTokenVal('')
+      setClearTok(false)
+      setEvents({ ...pixel.events })
+      setCapi(pixel.capi)
+      setShowTok(false)
+      setSaving(false)
+    }
+  }, [open, pixel])
+
+  if (!pixel) return null
+
+  const catalog = pixel.eventDefs
+  const enabledCount = Object.values(events).filter(Boolean).length
+
+  function toggleAll(value: boolean) {
+    setEvents(Object.fromEntries(catalog.map(e => [e.id, value])))
+  }
+
+  async function save() {
+    setSaving(true)
+    await onSave(pixel!.provider, {
+      pixelId:    pixelId.trim() || null,
+      newToken:   tokenVal.trim() || null,
+      clearToken: clearTok,
+      events,
+      capi,
+    })
+    setSaving(false)
+    onClose()
+  }
+
+  return (
+    <div className={`fixed inset-0 z-50 flex items-center justify-center p-4 ${open ? '' : 'hidden'}`}>
+      <div className="absolute inset-0 bg-black/50" onClick={onClose} />
+      <div className="relative bg-[var(--surface)] border border-[var(--border)] rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto shadow-2xl">
+        <div className="flex items-start justify-between gap-3 px-5 pt-5 pb-4 border-b border-[var(--border)]">
+          <div>
+            <h2 className="text-[15px] font-semibold text-[var(--text)]">
+              {pixel.pixelId ? `Editar ${pixel.fullName}` : `Configurar ${pixel.fullName}`}
+            </h2>
+            <p className="text-[12px] text-[var(--text-muted)] mt-0.5">
+              {pixel.pixelId ? 'Atualize o ID do pixel e os eventos disparados.' : 'Cole o ID e ative os eventos que devem ser enviados.'}
+            </p>
+          </div>
+          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-[var(--surface-2)] text-[var(--text-muted)]">
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="px-5 py-4 space-y-4">
+          {/* Pixel header */}
+          <div className="flex items-center gap-3 p-3 bg-[var(--surface-2)]/40 border border-[var(--border)] rounded-lg">
+            <PixelLogo initial={pixel.initial} color={pixel.color} size={36} />
+            <div className="min-w-0 flex-1">
+              <div className="text-[13px] font-semibold text-[var(--text)]">{pixel.fullName}</div>
+              <div className="text-[11px] text-[var(--text-muted)]">{pixel.description}</div>
+            </div>
+            <a href={pixel.externalUrl} target="_blank" rel="noopener noreferrer"
+              className="text-[11.5px] text-[var(--primary)] hover:underline inline-flex items-center gap-1 shrink-0">
+              <ExternalLink size={11} />Como obter
+            </a>
+          </div>
+
+          {/* Pixel ID */}
+          <FieldT label={`${pixel.name} Pixel ID`} hint={pixel.idHint}>
+            <input
+              type="text" value={pixelId} onChange={e => setPixelId(e.target.value)}
+              placeholder={pixel.idPlaceholder} autoFocus
+              className={inputCls + ' font-mono'}
+            />
+          </FieldT>
+
+          {/* Access Token */}
+          <FieldT
+            label="Token de acesso da API (opcional, mas recomendado)"
+            hint={pixel.hasToken && !clearTok && !tokenVal
+              ? 'Token configurado. Digite para substituir ou marque "Remover token" para apagar.'
+              : 'Necessário para envio server-side (CAPI). Não trafega no navegador — salvo criptografado.'}
+          >
+            {pixel.hasToken && !clearTok && !tokenVal ? (
+              <div className="flex items-center gap-2">
+                <div className={inputCls + ' font-mono flex items-center text-[var(--text-muted)] cursor-default'}>
+                  <span className="select-none tracking-[0.2em]">●●●●●●●●●●●●●●●●</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setTokenVal(' ')} // abre o campo
+                  className="shrink-0 h-10 px-3 text-[12px] font-medium rounded-lg border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--surface-2)]"
+                >
+                  Substituir
+                </button>
+              </div>
+            ) : (
+              <div className="relative">
+                <input
+                  type={showTok ? 'text' : 'password'}
+                  value={tokenVal === ' ' ? '' : tokenVal}
+                  onChange={e => { setTokenVal(e.target.value); setClearTok(false) }}
+                  placeholder={pixel.tokenPlaceholder}
+                  className={inputCls + ' font-mono pr-10'}
+                />
+                <button
+                  type="button" tabIndex={-1} onClick={() => setShowTok(s => !s)}
+                  className="absolute right-1 top-1/2 -translate-y-1/2 w-8 h-8 inline-flex items-center justify-center rounded-md text-[var(--text-muted)] hover:bg-[var(--surface-2)]"
+                >
+                  {showTok ? <EyeOff size={14} /> : <Eye size={14} />}
+                </button>
+              </div>
+            )}
+            {pixel.hasToken && (
+              <label className="flex items-center gap-2 mt-2 cursor-pointer">
+                <CheckboxInline checked={clearTok} onChange={() => { setClearTok(c => !c); setTokenVal('') }} />
+                <span className="text-[11.5px] text-[var(--text-muted)]">Remover token salvo</span>
+              </label>
+            )}
+          </FieldT>
+
+          {/* CAPI toggle */}
+          <div className="flex items-start justify-between gap-3 bg-[var(--surface-2)]/40 border border-[var(--border)] rounded-lg p-3">
+            <div className="min-w-0">
+              <div className="text-[12.5px] font-semibold text-[var(--text)]">Envio server-side (CAPI)</div>
+              <div className="text-[11.5px] text-[var(--text-muted)] mt-0.5 leading-snug">Envia eventos pela API server-side além do pixel client. Aumenta o match rate e burla bloqueadores.</div>
+            </div>
+            <Toggle checked={capi} onChange={setCapi} />
+          </div>
+
+          {/* Events */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="block text-[12.5px] font-medium text-[var(--text)]">Eventos enviados ({enabledCount}/{catalog.length})</label>
+              <div className="flex items-center gap-2 text-[11px]">
+                <button onClick={() => toggleAll(true)} className="text-[var(--primary)] hover:underline">Ativar todos</button>
+                <span className="text-[var(--text-muted)]">·</span>
+                <button onClick={() => toggleAll(false)} className="text-[var(--text-muted)] hover:text-[var(--text)]">Limpar</button>
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              {catalog.map(e => (
+                <label key={e.id} className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-[var(--surface-2)]/50 cursor-pointer">
+                  <CheckboxInline checked={!!events[e.id]} onChange={() => setEvents(v => ({ ...v, [e.id]: !v[e.id] }))} />
+                  <code className="text-[11.5px] font-mono text-[var(--text)] font-medium shrink-0 min-w-[150px]">{e.label}</code>
+                  <span className="flex-1 text-[11.5px] text-[var(--text-muted)] truncate">{e.desc}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="px-5 py-4 border-t border-[var(--border)] flex items-center justify-end gap-2">
+          <button onClick={onClose} className="h-9 px-4 text-[13px] font-medium rounded-lg border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--surface-2)]">
+            Cancelar
+          </button>
+          <button
+            onClick={save}
+            disabled={!pixelId.trim() || saving}
+            className="h-9 px-4 text-[13px] font-medium rounded-lg bg-[var(--primary)] text-white hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
+          >
+            {saving ? <div className="w-3.5 h-3.5 rounded-full border-2 border-white border-t-transparent animate-spin" /> : <Check size={14} />}
+            {saving ? 'Salvando…' : 'Salvar configuração'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/* ============================================================
+   Verify Pixel Modal
+   ============================================================ */
+
+function LogLine({ log }: { log: LogEntry }) {
+  if (log.type === 'system') {
+    return (
+      <div className="px-3 py-1.5 flex items-center gap-2">
+        {log.status === 'ok'    ? <Check  size={10} className="text-green-500" /> :
+         log.status === 'error' ? <X      size={10} className="text-red-500" />   :
+                                  <Circle size={10} className="text-[var(--text-muted)]" />}
+        <span className="text-[var(--text)] text-[11px]">{log.text}</span>
+      </div>
+    )
+  }
+  if (log.type === 'recv') {
+    return (
+      <div className="px-3 py-1.5 flex items-center gap-2">
+        <Zap size={10} className={log.valid ? 'text-green-500' : 'text-red-500'} />
+        <span className="text-green-500 font-semibold text-[10px]">RECV</span>
+        <code className="text-[var(--text)] text-[11px]">{log.label}</code>
+        {log.isTest && <Bdg tone="primary">teste</Bdg>}
+        <span className="ml-auto text-[var(--text-muted)] text-[10px]">{log.time}</span>
+      </div>
+    )
+  }
+  return null
+}
+
+function VerifyPixelModal({
+  open, onClose, pixel, onTrack,
+}: {
+  open: boolean; onClose: () => void; pixel: PixelItem | null; onTrack: (ok: boolean) => void
+}) {
+  const [running,   setRunning]   = useState(false)
+  const [logs,      setLogs]      = useState<LogEntry[]>([])
+  const [verdict,   setVerdict]   = useState<TestResult | null>(null)
+
+  const appendLog = useCallback((log: LogEntry) => setLogs(l => [...l, log]), [])
+
+  useEffect(() => {
+    if (open && pixel?.id) {
+      setRunning(false); setLogs([]); setVerdict(null)
+      // Auto-inicia a verificação se o pixel tem ID
+      if (pixel.pixelId) runVerify()
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, pixel?.id])
+
+  async function runVerify() {
+    if (!pixel?.id || !pixel.pixelId) return
+    setRunning(true)
+    setLogs([])
+    setVerdict(null)
+
+    // Logs de progresso
+    appendLog({ type: 'system', text: `Conectando ao endpoint do ${pixel.name}…`, status: 'info' })
+    appendLog({ type: 'system', text: `Pixel ID: ${pixel.pixelId}`, status: 'ok' })
+    if (pixel.capi && pixel.hasToken) {
+      appendLog({ type: 'system', text: 'CAPI ativo — verificando via API server-side', status: 'info' })
+    } else if (!pixel.hasToken) {
+      appendLog({ type: 'system', text: 'Sem access token — verificação limitada ao formato do ID', status: 'info' })
+    }
+
+    try {
+      const result = await testPixelAction(pixel.id)
+      appendLog({
+        type: 'system',
+        text: result.ok ? 'Verificação concluída com sucesso.' : `Erro: ${result.message}`,
+        status: result.ok ? 'ok' : 'error',
+      })
+      if (result.ok && result.latency !== null && result.latency > 0) {
+        appendLog({ type: 'recv', label: 'verification_ping', time: `${result.latency} ms`, valid: true })
+      }
+      setVerdict(result)
+      onTrack(result.ok)
+    } catch {
+      appendLog({ type: 'system', text: 'Erro inesperado ao verificar o pixel.', status: 'error' })
+      setVerdict({ ok: false, message: 'Erro interno. Tente novamente.', latency: null })
+      onTrack(false)
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  if (!pixel) return null
+
+  return (
+    <div className={`fixed inset-0 z-50 flex items-center justify-center p-4 ${open ? '' : 'hidden'}`}>
+      <div className="absolute inset-0 bg-black/50" onClick={onClose} />
+      <div className="relative bg-[var(--surface)] border border-[var(--border)] rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto shadow-2xl">
+        <div className="flex items-start justify-between gap-3 px-5 pt-5 pb-4 border-b border-[var(--border)]">
+          <div>
+            <h2 className="text-[15px] font-semibold text-[var(--text)]">Verificar {pixel.fullName}</h2>
+            <p className="text-[12px] text-[var(--text-muted)] mt-0.5">
+              {pixel.hasToken ? 'Testando credenciais contra a API do provider.' : 'Validando formato do ID.'}
+            </p>
+          </div>
+          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-[var(--surface-2)] text-[var(--text-muted)]">
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="px-5 py-4 space-y-3">
+          <div className="flex items-center gap-3 bg-[var(--surface-2)]/40 border border-[var(--border)] rounded-lg p-3">
+            <PixelLogo initial={pixel.initial} color={pixel.color} size={36} />
+            <div className="min-w-0 flex-1">
+              <div className="text-[12.5px] font-semibold text-[var(--text)]">{pixel.fullName}</div>
+              <code className="text-[11px] font-mono text-[var(--text-muted)]">{pixel.pixelId || 'sem ID'}</code>
+            </div>
+            <Bdg tone={statusMap[pixel.status].tone}>{statusMap[pixel.status].label}</Bdg>
+          </div>
+
+          {!pixel.pixelId && (
+            <div className="flex items-start gap-2 bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-3 text-[12px] leading-relaxed">
+              <AlertCircle size={13} className="text-yellow-500 mt-0.5 shrink-0" />
+              <span className="text-[var(--text)]">Configure o ID do pixel antes de verificar.</span>
+            </div>
+          )}
+
+          {!pixel.hasToken && pixel.pixelId && pixel.provider !== 'google' && (
+            <div className="flex items-start gap-2 bg-[var(--surface-2)]/60 border border-[var(--border)] rounded-lg p-3 text-[12px] leading-relaxed">
+              <Info size={13} className="text-[var(--text-muted)] mt-0.5 shrink-0" />
+              <span className="text-[var(--text-muted)]">Sem access token: apenas o formato do ID pode ser validado. Para verificar via CAPI, adicione o token na edição do pixel.</span>
+            </div>
+          )}
+
+          <div className="bg-[var(--surface)] border border-[var(--border)] rounded-lg overflow-hidden">
+            <div className="px-3 py-2 border-b border-[var(--border)] bg-[var(--surface-2)]/50 flex items-center justify-between">
+              <div className="text-[10.5px] uppercase tracking-wider font-semibold text-[var(--text-muted)]">Logs de verificação</div>
+              {running && <div className="w-3 h-3 rounded-full border-2 border-[var(--primary)] border-t-transparent animate-spin" />}
+            </div>
+            <div className="font-mono divide-y divide-[var(--border)] max-h-[240px] overflow-y-auto">
+              {logs.length === 0 && (
+                <div className="px-3 py-4 text-[var(--text-muted)] text-center italic text-[11px]">
+                  {pixel.pixelId ? 'Iniciando verificação…' : 'Configure o pixel para iniciar.'}
+                </div>
+              )}
+              {logs.map((log, i) => <LogLine key={i} log={log} />)}
+            </div>
+          </div>
+
+          {verdict && (
+            <div className={`flex items-start gap-2.5 rounded-lg p-3 border ${verdict.ok ? 'bg-green-500/10 border-green-500/30' : 'bg-red-500/10 border-red-500/30'}`}>
+              {verdict.ok
+                ? <CheckCircle2 size={16} className="text-green-500 mt-0.5" />
+                : <XCircle      size={16} className="text-red-500 mt-0.5" />}
+              <div className="text-[12px] flex-1">
+                <div className={`font-semibold ${verdict.ok ? 'text-green-500' : 'text-red-500'}`}>
+                  {verdict.ok ? 'Pixel verificado com sucesso' : 'Falha na verificação'}
+                </div>
+                <div className="text-[var(--text-muted)] mt-0.5">{verdict.message}</div>
+                {verdict.ok && verdict.latency !== null && verdict.latency > 0 && (
+                  <div className="text-[var(--text-muted)] mt-1 text-[10.5px]">Latência: {verdict.latency} ms</div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="px-5 py-4 border-t border-[var(--border)] flex items-center justify-end gap-2">
+          <button onClick={onClose} className="h-9 px-4 text-[13px] font-medium rounded-lg border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--surface-2)]">
+            Fechar
+          </button>
+          <button
+            onClick={runVerify}
+            disabled={running || !pixel.pixelId}
+            className="h-9 px-4 text-[13px] font-medium rounded-lg bg-[var(--primary)] text-white hover:opacity-90 disabled:opacity-40 inline-flex items-center gap-1.5"
+          >
+            <RefreshCw size={13} className={running ? 'animate-spin' : ''} />
+            {running ? 'Verificando…' : 'Verificar de novo'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/* ============================================================
+   UTM Section
+   ============================================================ */
+
+function UTMSection({ onCopy }: { onCopy: (hasUtm: boolean) => void }) {
+  const [utm, setUtm] = useState({
+    base:     '',
+    source:   '',
+    medium:   '',
+    campaign: '',
+    term:     '',
+    content:  '',
+  })
+  const [copied, setCopied] = useState(false)
+
+  const fullUrl = useMemo(() => {
+    const b = utm.base.trim()
+    if (!b) return ''
+    const params = (['source', 'medium', 'campaign', 'term', 'content'] as const)
+      .filter(k => utm[k]?.trim())
+      .map(k => `utm_${k}=${encodeURIComponent(utm[k].trim())}`)
+      .join('&')
+    return params ? `${b}${b.includes('?') ? '&' : '?'}${params}` : b
+  }, [utm])
+
+  const hasUtm = !!(utm.source.trim() || utm.medium.trim() || utm.campaign.trim())
+
+  function copy() {
+    if (!fullUrl) return
+    try { navigator.clipboard?.writeText(fullUrl) } catch {}
+    setCopied(true)
+    onCopy(hasUtm)
+    setTimeout(() => setCopied(false), 1800)
+  }
+
+  const propagSteps = [
+    { icon: Instagram,     label: 'Clique',   desc: 'Captura inicial' },
+    { icon: Link2,         label: 'Redirect', desc: 'Persiste no cookie' },
+    { icon: MessageSquare, label: 'Bot',      desc: 'Anexa ao lead' },
+    { icon: ShoppingBag,   label: 'Pixel',    desc: 'Envia no Purchase' },
+  ]
+
+  return (
+    <div className="bg-[var(--surface)] border border-[var(--border)] rounded-xl p-5">
+      <div className="flex items-start gap-3 mb-4">
+        <div className="w-10 h-10 rounded-lg bg-[var(--primary)]/10 text-[var(--primary)] flex items-center justify-center shrink-0">
+          <Link2 size={18} />
+        </div>
+        <div>
+          <h2 className="text-[15px] font-semibold text-[var(--text)]">Parâmetros UTM</h2>
+          <p className="text-[12px] text-[var(--text-muted)] mt-0.5 max-w-2xl leading-relaxed">
+            Os parâmetros UTM são <strong className="text-[var(--text)]">capturados no clique</strong> e <strong className="text-[var(--text)]">propagados automaticamente</strong> pelos fluxos, redirecionadores e checkouts — chegam até o evento de venda no pixel, fechando a atribuição.
+          </p>
+        </div>
+      </div>
+
+      {/* Jornada visual */}
+      <div className="grid grid-cols-4 gap-2 mb-5">
+        {propagSteps.map((s, i) => (
+          <div key={i} className="relative">
+            <div className="bg-[var(--surface-2)]/40 border border-[var(--border)] rounded-lg p-3 text-center">
+              <div className="w-8 h-8 rounded-md bg-[var(--primary)]/10 text-[var(--primary)] flex items-center justify-center mx-auto mb-1.5">
+                <s.icon size={14} />
+              </div>
+              <div className="text-[11.5px] font-semibold text-[var(--text)]">{s.label}</div>
+              <div className="text-[10.5px] text-[var(--text-muted)] mt-0.5">{s.desc}</div>
+            </div>
+            {i < 3 && (
+              <div className="absolute top-1/2 -right-1.5 -translate-y-1/2 w-3 h-3 z-10 hidden md:flex items-center justify-center text-[var(--text-muted)]">
+                <ChevronRight size={12} />
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* Construtor */}
+      <div className="border-t border-[var(--border)] pt-4">
+        <div className="text-[11px] uppercase tracking-wider font-semibold text-[var(--text-muted)] mb-3">Construtor de link com UTM</div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <UtmField label="URL base *"            value={utm.base}     onChange={v => setUtm(u => ({ ...u, base: v }))}     placeholder="https://umbra.bot/r/meu-link" wide />
+          <UtmField label="utm_source"            value={utm.source}   onChange={v => setUtm(u => ({ ...u, source: v }))}   placeholder="instagram" />
+          <UtmField label="utm_medium"            value={utm.medium}   onChange={v => setUtm(u => ({ ...u, medium: v }))}   placeholder="cpc" />
+          <UtmField label="utm_campaign"          value={utm.campaign} onChange={v => setUtm(u => ({ ...u, campaign: v }))} placeholder="black-2026" />
+          <UtmField label="utm_term (opcional)"   value={utm.term}     onChange={v => setUtm(u => ({ ...u, term: v }))}     placeholder="palavra-chave" />
+          <UtmField label="utm_content (opcional)" value={utm.content} onChange={v => setUtm(u => ({ ...u, content: v }))}  placeholder="reels-30s" />
+        </div>
+
+        <div className="mt-4">
+          <div className="flex items-center justify-between mb-1.5">
+            <div className="text-[11px] uppercase tracking-wider font-semibold text-[var(--text-muted)]">Link final</div>
+            <button
+              onClick={copy}
+              disabled={!fullUrl}
+              className="text-[11.5px] text-[var(--primary)] hover:underline inline-flex items-center gap-1 rounded px-1 disabled:opacity-40"
+            >
+              {copied ? <Check size={11} className="text-green-500" /> : <Copy size={11} />}
+              {copied ? 'Copiado' : 'Copiar'}
+            </button>
+          </div>
+          {fullUrl ? (
+            <code className="block text-[11.5px] font-mono text-[var(--text)] bg-[var(--surface-2)]/50 border border-[var(--border)] rounded-lg p-3 break-all leading-relaxed">
+              {fullUrl}
+            </code>
+          ) : (
+            <div className="text-[11.5px] text-[var(--text-muted)] italic bg-[var(--surface-2)]/40 border border-[var(--border)] rounded-lg p-3">
+              Preencha a URL base para gerar o link…
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Jornada completa */}
+      <div className="mt-5 pt-5 border-t border-[var(--border)]">
+        <div className="text-[11px] uppercase tracking-wider font-semibold text-[var(--text-muted)] mb-3">Exemplo: jornada completa</div>
+        <div className="space-y-2">
+          <JourneyStep n={1} title="Clique no anúncio do Instagram"   detail="Lead acessa o link com UTMs anexadas no parâmetro da URL."                                     chip="utm_source=instagram" />
+          <JourneyStep n={2} title="Redirect captura e propaga"       detail="O Umbra Bot lê os parâmetros, salva no cookie e anexa ao lead recém-criado no Telegram."       chip="cookie · 30d" />
+          <JourneyStep n={3} title="Fluxo do bot processa o lead"      detail="Bot identifica o lead pelo telegram_id e mantém as UTMs no contexto da transação."             chip="bot context" />
+          <JourneyStep n={4} title="Pixel envia evento de Purchase"   detail="Quando a venda é confirmada, Meta/TikTok/Google recebem o evento com UTMs no payload CAPI."    chip="event Purchase" />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function UtmField({ label, value, onChange, placeholder, wide }: { label: string; value: string; onChange: (v: string) => void; placeholder: string; wide?: boolean }) {
+  return (
+    <div className={wide ? 'md:col-span-2' : ''}>
+      <label className="block text-[10.5px] uppercase tracking-wider font-semibold text-[var(--text-muted)] mb-1">{label}</label>
+      <input
+        type="text" value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+        className="w-full h-9 px-2.5 bg-[var(--surface)] border border-[var(--border)] rounded-md text-[12.5px] font-mono text-[var(--text)] placeholder:text-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/30 focus:border-[var(--primary)]/50"
+      />
+    </div>
+  )
+}
+
+function JourneyStep({ n, title, detail, chip }: { n: number; title: string; detail: string; chip?: string }) {
+  return (
+    <div className="flex items-start gap-3 px-3 py-2.5 bg-[var(--surface-2)]/40 border border-[var(--border)] rounded-lg">
+      <span className="w-6 h-6 rounded-md bg-[var(--primary)]/10 text-[var(--primary)] text-[10.5px] font-semibold flex items-center justify-center shrink-0">{n}</span>
+      <div className="flex-1 min-w-0">
+        <div className="text-[12.5px] font-medium text-[var(--text)]">{title}</div>
+        <div className="text-[11px] text-[var(--text-muted)] mt-0.5 leading-snug">{detail}</div>
+      </div>
+      {chip && <code className="text-[10.5px] font-mono text-[var(--text-muted)] bg-[var(--surface)] border border-[var(--border)] rounded px-1.5 py-0.5 shrink-0">{chip}</code>}
+    </div>
+  )
+}
+
+/* ============================================================
+   TrackingClient — main component
+   ============================================================ */
+
+interface Props {
+  initialPixels: RawPixelRow[]
+  initialStats:  PixelStats
+  userId:        string
+}
+
+export default function TrackingClient({ initialPixels, initialStats, userId }: Props) {
+  const { track } = useAnalytics()
+  const router     = useRouter()
+
+  const [now,       setNow]       = useState(Date.now())
+  const [stats,     setStats]     = useState<PixelStats>(initialStats)
+  const [pixels,    setPixels]    = useState<PixelItem[]>(() => mergePixels(initialPixels, initialStats, Date.now()))
+  const [editing,   setEditing]   = useState<PixelItem | null>(null)
+  const [verifying, setVerifying] = useState<PixelItem | null>(null)
+  const [toast,     setToast]     = useState<ToastState | null>(null)
+
+  const statsRef = useRef(stats)
+  useEffect(() => { statsRef.current = stats }, [stats])
+
+  // Tick — timestamps relativos corretos
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 30_000)
+    return () => clearInterval(t)
+  }, [])
+
+  // Toast auto-close
+  useEffect(() => {
+    if (!toast) return
+    const t = setTimeout(() => setToast(null), 3_500)
+    return () => clearTimeout(t)
+  }, [toast])
+
+  // Realtime — atualiza pixel ao salvar de outra aba ou após Server Action
+  useEffect(() => {
+    const sb  = createClient()
+    const ch  = sb.channel('pixels-realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'pixels', filter: `user_id=eq.${userId}` },
+        payload => {
+          const lastEventMs = statsRef.current.last_event
+            ? new Date(statsRef.current.last_event).getTime()
+            : null
+          const nowTs = Date.now()
+
+          if (payload.eventType === 'DELETE') {
+            const deletedProvider = (payload.old as { provider: string }).provider
+            setPixels(prev => prev.map(p =>
+              p.provider === deletedProvider
+                ? { ...p, id: null, pixelId: null, hasToken: false, capi: false, events: defaultEvents(p.provider), status: 'inactive' as const }
+                : p
+            ))
+          } else {
+            const row = payload.new as RawPixelRow
+            setPixels(prev => prev.map(p =>
+              p.provider === row.provider
+                ? {
+                    ...p,
+                    id:       row.id,
+                    pixelId:  row.pixel_id,
+                    hasToken: !!row.access_token,
+                    events:   (row.events as Record<string, boolean>) || p.events,
+                    capi:     row.capi,
+                    status:   computeStatus(row.pixel_id, lastEventMs, nowTs),
+                  }
+                : p
+            ))
+          }
+        }
+      )
+      .subscribe()
+    return () => { sb.removeChannel(ch) }
+  }, [userId])
+
+  // ---- Handlers ----
+
+  async function handleSavePixel(provider: string, patch: PixelPatch) {
+    try {
+      await savePixelAction(provider, patch)
+      // Refresh server-side para garantir dados frescos
+      router.refresh()
+      const enabledCount = Object.values(patch.events).filter(Boolean).length
+      track('pixel_configured', {
+        provider,
+        has_capi:            patch.capi && !!(patch.newToken || (!patch.clearToken)),
+        events_enabled_count: enabledCount,
+      })
+      setToast({ msg: 'Pixel salvo com sucesso.', type: 'success' })
+    } catch (err) {
+      setToast({ msg: err instanceof Error ? err.message : 'Erro ao salvar pixel.', type: 'error' })
+      throw err // Re-throw para o modal não fechar
+    }
+  }
+
+  function handleVerifyTrack(ok: boolean) {
+    if (!verifying) return
+    track('pixel_verified', { provider: verifying.provider, status: ok ? 'ok' : 'error' })
+  }
+
+  function handleUtmCopy(hasUtm: boolean) {
+    track('utm_link_copied', { has_utm: hasUtm })
+  }
+
+  // ---- Totals ----
+
+  const totals = useMemo(() => {
+    const configured = pixels.filter(p => p.pixelId)
+    const healthy    = pixels.filter(p => p.status === 'healthy').length
+    const sent       = stats.events_sent_today
+    const matched    = stats.events_matched
+    const matchRate  = sent > 0 ? (matched / sent) * 100 : 0
+    return { configured: configured.length, total: pixels.length, healthy, sent, matched, matchRate }
+  }, [pixels, stats])
+
+  const hasAnyPixelConfigured = totals.configured > 0
+
+  // ---- Render ----
+
+  return (
+    <>
+      <PageHeader
+        title="Trackeamento"
+        subtitle="Pixels, UTMs e atribuição multi-canal — Meta, TikTok e Google."
+        actions={
+          <a
+            href="/dashboard/docs/01-comecando/introducao"
+            className="inline-flex items-center gap-2 h-9 px-4 text-[13px] font-medium rounded-lg border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--surface-2)] transition-colors"
+          >
+            <BookOpen size={14} />Documentação
+          </a>
+        }
+      />
+
+      {/* Toast */}
+      {toast && (
+        <div className={`mb-4 flex items-center gap-2.5 border rounded-lg px-3.5 py-2 ${toast.type === 'success' ? 'bg-green-500/10 border-green-500/30' : 'bg-red-500/10 border-red-500/30'}`}>
+          {toast.type === 'success'
+            ? <CheckCircle2 size={15} className="text-green-500" />
+            : <XCircle      size={15} className="text-red-500" />}
+          <div className={`text-[12.5px] ${toast.type === 'success' ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>{toast.msg}</div>
+        </div>
+      )}
+
+      {/* KPI Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
+        <KpiTr
+          label="Pixels ativos"
+          value={`${totals.configured} / ${totals.total}`}
+          sub={totals.healthy > 0 ? `${totals.healthy} saudáve${totals.healthy === 1 ? 'l' : 'is'}` : 'nenhum saudável'}
+          icon={Zap} tone="primary"
+        />
+        <KpiTr
+          label="Eventos enviados (24h)"
+          value={fmtNum(totals.sent)}
+          sub="checkout_events do banco"
+          icon={Send}
+        />
+        <KpiTr
+          label="Eventos com match"
+          value={fmtNum(totals.matched)}
+          sub="contato com e-mail ou telefone"
+          icon={CheckCircle2}
+        />
+        <KpiTr
+          label="Match rate"
+          value={totals.sent > 0 ? fmtPct(totals.matchRate, 1) : '—'}
+          sub="eventos atribuíveis"
+          icon={Target}
+          highlight={totals.matchRate >= 85}
+        />
+      </div>
+
+      {/* Pixels section */}
+      <section className="mb-6">
+        <div className="flex items-center gap-3 mb-3">
+          <h2 className="text-[11px] uppercase tracking-wider font-semibold text-[var(--text-muted)]">Pixels & APIs de conversão</h2>
+          <span className="text-[10.5px] text-[var(--text-muted)]">{pixels.length} plataformas</span>
+          <div className="flex-1 h-px bg-[var(--border)]" />
+        </div>
+
+        {!hasAnyPixelConfigured ? (
+          <NoDataState onConfigure={() => setEditing(pixels[0] ?? null)} />
+        ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+            {pixels.map(p => (
+              <PixelCard key={p.provider} pixel={p} now={now} onEdit={setEditing} onCheck={setVerifying} />
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* UTM section */}
+      <section>
+        <div className="flex items-center gap-3 mb-3">
+          <h2 className="text-[11px] uppercase tracking-wider font-semibold text-[var(--text-muted)]">UTM & atribuição</h2>
+          <div className="flex-1 h-px bg-[var(--border)]" />
+        </div>
+        <UTMSection onCopy={handleUtmCopy} />
+      </section>
+
+      {/* Modals */}
+      <EditPixelModal
+        open={!!editing}
+        onClose={() => setEditing(null)}
+        pixel={editing}
+        onSave={handleSavePixel}
+      />
+      <VerifyPixelModal
+        open={!!verifying}
+        onClose={() => setVerifying(null)}
+        pixel={verifying}
+        onTrack={handleVerifyTrack}
+      />
+    </>
+  )
+}

@@ -67,6 +67,11 @@ type EventMap = {
   campaign_activated:        { trigger: string; step_count: number }
   campaign_paused:           { trigger: string }
   campaign_deleted:          Record<string, never>
+  // Aba Trackeamento
+  pixel_configured:          { provider: string; has_capi: boolean; events_enabled_count: number }
+  pixel_verified:            { provider: string; status: 'ok' | 'error' }
+  pixel_test_sent:           { provider: string }
+  utm_link_copied:           { has_utm: boolean }
   // Aba Ferramentas
   tool_opened:               { tool_id: string }
   test_message_sent:         { bot_id: string; success: boolean; time_ms: number; format: string }
