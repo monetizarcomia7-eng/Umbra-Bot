@@ -1,11 +1,13 @@
 'use client'
 
-import { useState, useEffect, useMemo, useRef, useCallback, useTransition } from 'react'
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { DashboardLayout } from '@/components/dashboard/Layout'
 import { PageHeader } from '@/components/dashboard/PageHeader'
 import { createClient } from '@/lib/supabase/client'
-import { savePixelAction, testPixelAction, type PixelPatch, type TestResult } from '@/app/actions/pixels'
+import {
+  savePixelAction, testPixelAction, sendTestPixelEvent,
+  fetchPixelStats, type PixelPatch, type TestResult,
+} from '@/app/actions/pixels'
 import { useAnalytics } from '@/hooks/use-analytics'
 import type { RawPixelRow, PixelStats } from './page'
 import {
@@ -13,28 +15,32 @@ import {
   Eye, EyeOff, AlertCircle, RefreshCw, ArrowUpRight, ArrowDownRight,
   Link2, Instagram, MessageSquare, ShoppingBag, ChevronRight,
   Check, X, Circle, BookOpen, Copy, Activity, Pencil, Plug, XCircle,
-  ShieldCheck, Info,
+  ShieldCheck, Info, FlaskConical, TrendingUp, Wifi,
 } from 'lucide-react'
 
 /* ============================================================
-   Static catalog — dados que não mudam por provider
+   Static catalog
    ============================================================ */
 
 interface EventDef { id: string; label: string; desc: string }
 
 interface CatalogEntry {
-  name:         string
-  fullName:     string
-  description:  string
-  initial:      string
-  color:        string
-  externalUrl:  string
-  externalLabel:string
-  docsHint:     string
-  idPlaceholder:string
-  idHint:       string
+  name:             string
+  fullName:         string
+  description:      string
+  initial:          string
+  color:            string
+  externalUrl:      string
+  externalLabel:    string
+  docsHint:         string
+  idPlaceholder:    string
+  idLabel:          string
+  idHint:           string
+  tokenLabel:       string
   tokenPlaceholder: string
-  eventDefs:    EventDef[]
+  capiLabel:        string   // label para o toggle server-side (varia por provider)
+  capiDesc:         string
+  eventDefs:        EventDef[]
 }
 
 const PIXEL_CATALOG: Record<string, CatalogEntry> = {
@@ -47,9 +53,13 @@ const PIXEL_CATALOG: Record<string, CatalogEntry> = {
     externalUrl:   'https://business.facebook.com/events_manager',
     externalLabel: 'Gerenciador de Eventos',
     docsHint:      'Encontre no Gerenciador de Eventos do Meta → Configurações do pixel.',
+    idLabel:       'Meta Pixel ID',
     idPlaceholder: '123456789012345',
     idHint:        'Número de 15 dígitos — aba "Pixels" no Gerenciador de Eventos.',
+    tokenLabel:    'Access Token da Conversions API',
     tokenPlaceholder: 'EAAxxxxxxxx…',
+    capiLabel:     'Envio server-side (CAPI)',
+    capiDesc:      'Envia eventos pela Conversions API além do pixel client. Aumenta o match rate e burla bloqueadores de anúncios.',
     eventDefs: [
       { id: 'PageView',         label: 'PageView',         desc: 'Usuário entra no fluxo / página.' },
       { id: 'ViewContent',      label: 'ViewContent',      desc: 'Visualização de produto ou oferta.' },
@@ -68,9 +78,13 @@ const PIXEL_CATALOG: Record<string, CatalogEntry> = {
     externalUrl:   'https://business.tiktok.com/portal/events-manager',
     externalLabel: 'TikTok Events Manager',
     docsHint:      'Encontre em TikTok Ads Manager → Ativos → Eventos.',
-    idPlaceholder: 'CDABCDEFG12345',
-    idHint:        'ID do pixel no TikTok Events Manager → Gerenciar → Detalhes.',
+    idLabel:       'TikTok Advertiser ID',
+    idPlaceholder: '7123456789012345',
+    idHint:        'ID numérico do anunciante (Advertiser ID) — TikTok Ads Manager → Configurações da conta. Usado para verificar a conexão. Para enviar eventos, use o Pixel Code.',
+    tokenLabel:    'Access Token da Events API',
     tokenPlaceholder: 'ttk_xxxxxx…',
+    capiLabel:     'Envio server-side (Events API)',
+    capiDesc:      'Envia eventos pela TikTok Events API além do pixel client. Melhora a atribuição e contorna bloqueadores.',
     eventDefs: [
       { id: 'PageView',         label: 'PageView',         desc: 'Visualização inicial do fluxo.' },
       { id: 'ViewContent',      label: 'ViewContent',      desc: 'Visualizou produto / oferta.' },
@@ -89,9 +103,13 @@ const PIXEL_CATALOG: Record<string, CatalogEntry> = {
     externalUrl:   'https://analytics.google.com',
     externalLabel: 'Google Analytics',
     docsHint:      'Formato: G-XXXXXXXXXX — não confundir com o ID de stream.',
+    idLabel:       'ID de Medição (Measurement ID)',
     idPlaceholder: 'G-XXXXXXXXXX',
-    idHint:        'Admin → Fluxos de dados → selecione o fluxo → ID de medição.',
-    tokenPlaceholder: 'API_SECRET_xxx…',
+    idHint:        'Admin → Fluxos de dados → selecione o fluxo → ID de medição. Formato: G-XXXXXXXXXX.',
+    tokenLabel:    'API Secret do Measurement Protocol',
+    tokenPlaceholder: 'xxxxxxxxxxxxxxx…',
+    capiLabel:     'Envio server-side (Measurement Protocol)',
+    capiDesc:      'Envia eventos pelo Google Measurement Protocol além da tag client. Requer API Secret — crie em Admin → Fluxos de dados → Measurement Protocol.',
     eventDefs: [
       { id: 'page_view',      label: 'page_view',      desc: 'Visualização de página / fluxo.' },
       { id: 'view_item',      label: 'view_item',      desc: 'Visualizou produto / oferta.' },
@@ -110,19 +128,16 @@ const CATALOG_PROVIDERS = ['meta', 'tiktok', 'google'] as const
    ============================================================ */
 
 interface PixelItem {
-  // Do banco (null = ainda não salvo para este provider)
   id:       string | null
   provider: string
   pixelId:  string | null
-  hasToken: boolean  // !!access_token — token nunca exposto ao cliente
+  hasToken: boolean
   events:   Record<string, boolean>
   capi:     boolean
-  // Computados
   status:   'healthy' | 'warning' | 'error' | 'inactive'
   eventsSentToday: number
   eventsMatched:   number
-  lastEvent:       number | null  // timestamp ms
-  // Do catálogo estático
+  lastEvent:       number | null
   name:             string
   fullName:         string
   description:      string
@@ -131,9 +146,13 @@ interface PixelItem {
   externalUrl:      string
   externalLabel:    string
   docsHint:         string
+  idLabel:          string
   idPlaceholder:    string
   idHint:           string
+  tokenLabel:       string
   tokenPlaceholder: string
+  capiLabel:        string
+  capiDesc:         string
   eventDefs:        EventDef[]
 }
 
@@ -185,6 +204,15 @@ function mergePixels(rows: RawPixelRow[], stats: PixelStats, now: number): Pixel
   })
 }
 
+function isValidUrl(s: string): boolean {
+  try {
+    const u = new URL(s)
+    return u.protocol === 'http:' || u.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
 const fmtNum = (n: number) => new Intl.NumberFormat('pt-BR').format(n)
 const fmtPct = (n: number, d = 0) => n.toFixed(d).replace('.', ',') + '%'
 
@@ -200,10 +228,10 @@ function relTime(ms: number | null, now: number): string {
 }
 
 const statusMap: Record<string, StatusInfo> = {
-  healthy:  { label: 'Saudável',        tone: 'success', dot: 'bg-green-500',            pulse: true,  desc: 'Eventos chegando em tempo real.' },
-  warning:  { label: 'Volume baixo',    tone: 'warning', dot: 'bg-yellow-500',            pulse: false, desc: 'Nenhum evento recebido nos últimos 30 min.' },
-  error:    { label: 'Sem eventos',     tone: 'danger',  dot: 'bg-red-500',               pulse: false, desc: 'Nenhum evento recebido há mais de 1h.' },
-  inactive: { label: 'Não configurado', tone: 'muted',   dot: 'bg-[var(--text-muted)]',   pulse: false, desc: 'Aguardando ID do pixel.' },
+  healthy:  { label: 'Saudável',        tone: 'success', dot: 'bg-green-500',          pulse: true,  desc: 'Eventos chegando há menos de 30 min.' },
+  warning:  { label: 'Volume baixo',    tone: 'warning', dot: 'bg-yellow-500',          pulse: false, desc: 'Nenhum evento nos últimos 30–60 min.' },
+  error:    { label: 'Sem eventos',     tone: 'danger',  dot: 'bg-red-500',             pulse: false, desc: 'Sem eventos há mais de 1 hora.' },
+  inactive: { label: 'Não configurado', tone: 'muted',   dot: 'bg-[var(--text-muted)]', pulse: false, desc: 'Configure o ID do pixel para ativar.' },
 }
 
 /* ============================================================
@@ -232,7 +260,7 @@ function CheckboxInline({ checked, onChange }: { checked: boolean; onChange: () 
   )
 }
 
-function Bdg({ tone, children }: { tone: string; children: React.ReactNode }) {
+function Bdg({ tone, children, title }: { tone: string; children: React.ReactNode; title?: string }) {
   const cls: Record<string, string> = {
     success: 'bg-green-500/10 text-green-600 dark:text-green-400',
     warning: 'bg-yellow-500/10 text-yellow-600 dark:text-yellow-400',
@@ -240,7 +268,14 @@ function Bdg({ tone, children }: { tone: string; children: React.ReactNode }) {
     primary: 'bg-[var(--primary)]/10 text-[var(--primary)]',
     muted:   'bg-[var(--surface-2)] text-[var(--text-muted)]',
   }
-  return <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10.5px] font-medium ${cls[tone] ?? cls.muted}`}>{children}</span>
+  return (
+    <span
+      title={title}
+      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10.5px] font-medium ${cls[tone] ?? cls.muted} ${title ? 'cursor-help' : ''}`}
+    >
+      {children}
+    </span>
+  )
 }
 
 function PixelLogo({ initial, color, size = 44 }: { initial: string; color: string; size?: number }) {
@@ -252,11 +287,12 @@ function PixelLogo({ initial, color, size = 44 }: { initial: string; color: stri
   )
 }
 
-function StatT({ label, value, tone }: { label: string; value: string; tone?: string }) {
+function StatT({ label, value, tone, note }: { label: string; value: string; tone?: string; note?: string }) {
   return (
     <div>
       <div className="text-[10px] uppercase tracking-wider font-semibold text-[var(--text-muted)]">{label}</div>
       <div className={['text-[13px] font-semibold tracking-tight mt-0.5', tone === 'success' ? 'text-green-500' : tone === 'warning' ? 'text-yellow-500' : tone === 'muted' ? 'text-[var(--text-muted)]' : 'text-[var(--text)]'].join(' ')}>{value}</div>
+      {note && <div className="text-[9.5px] text-[var(--text-muted)] mt-0.5">{note}</div>}
     </div>
   )
 }
@@ -342,6 +378,7 @@ function PixelCard({
   const enabledCount = Object.values(pixel.events).filter(Boolean).length
   const total = pixel.eventDefs.length
   const matchRate = pixel.eventsSentToday > 0 ? (pixel.eventsMatched / pixel.eventsSentToday) * 100 : 0
+  const showMatchTip = pixel.pixelId && pixel.eventsSentToday > 0 && matchRate < 70 && !pixel.hasToken
 
   return (
     <div className="bg-[var(--surface)] border border-[var(--border)] rounded-xl p-5 hover:border-[var(--text-muted)]/40 transition-colors flex flex-col">
@@ -350,7 +387,8 @@ function PixelCard({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
             <h3 className="text-[14.5px] font-semibold text-[var(--text)]">{pixel.name}</h3>
-            <Bdg tone={st.tone}>
+            {/* Status badge com tooltip */}
+            <Bdg tone={st.tone} title={st.desc}>
               {st.pulse && (
                 <span className={`relative w-1.5 h-1.5 rounded-full ${st.dot}`}>
                   <span className={`absolute inset-0 rounded-full ${st.dot} animate-ping opacity-60`} />
@@ -381,13 +419,28 @@ function PixelCard({
 
       <div className="grid grid-cols-3 gap-2 mt-3.5 pt-3.5 border-t border-[var(--border)]">
         <StatT label="Eventos ativos" value={`${enabledCount}/${total}`} />
-        <StatT label="Enviados (24h)"  value={pixel.pixelId && pixel.eventsSentToday > 0 ? fmtNum(pixel.eventsSentToday) : '—'} />
+        <StatT
+          label="Enviados (24h)"
+          value={pixel.pixelId && pixel.eventsSentToday > 0 ? fmtNum(pixel.eventsSentToday) : '—'}
+          note={pixel.pixelId ? 'global' : undefined}
+        />
         <StatT
           label="Match rate"
           value={pixel.pixelId && pixel.eventsSentToday > 0 ? fmtPct(matchRate, 1) : '—'}
           tone={matchRate >= 85 ? 'success' : matchRate > 0 ? 'warning' : 'muted'}
+          note={pixel.pixelId && pixel.eventsSentToday > 0 ? 'global' : undefined}
         />
       </div>
+
+      {/* Tip de match rate baixo */}
+      {showMatchTip && (
+        <div className="mt-3 flex items-start gap-2 bg-yellow-500/8 border border-yellow-500/20 rounded-lg px-2.5 py-2">
+          <TrendingUp size={11} className="text-yellow-500 mt-0.5 shrink-0" />
+          <span className="text-[11px] text-yellow-600 dark:text-yellow-400 leading-snug">
+            Match rate abaixo de 70%. Configure o access token para ativar o envio server-side e melhorar a atribuição.
+          </span>
+        </div>
+      )}
 
       <div className="text-[11px] text-[var(--text-muted)] mt-3 flex items-center gap-1.5">
         <Clock size={11} />
@@ -438,10 +491,11 @@ function PixelCard({
 function EditPixelModal({
   open, onClose, pixel, onSave,
 }: {
-  open: boolean; onClose: () => void; pixel: PixelItem | null; onSave: (provider: string, patch: PixelPatch) => Promise<void>
+  open: boolean; onClose: () => void; pixel: PixelItem | null
+  onSave: (provider: string, patch: PixelPatch) => Promise<void>
 }) {
   const [pixelId,   setPixelId]   = useState('')
-  const [tokenVal,  setTokenVal]  = useState('')  // '' = não digitou nada
+  const [tokenVal,  setTokenVal]  = useState('')
   const [clearTok,  setClearTok]  = useState(false)
   const [events,    setEvents]    = useState<Record<string, boolean>>({})
   const [capi,      setCapi]      = useState(true)
@@ -492,7 +546,7 @@ function EditPixelModal({
               {pixel.pixelId ? `Editar ${pixel.fullName}` : `Configurar ${pixel.fullName}`}
             </h2>
             <p className="text-[12px] text-[var(--text-muted)] mt-0.5">
-              {pixel.pixelId ? 'Atualize o ID do pixel e os eventos disparados.' : 'Cole o ID e ative os eventos que devem ser enviados.'}
+              {pixel.pixelId ? 'Atualize o ID e os eventos disparados.' : 'Cole o ID e ative os eventos que devem ser enviados.'}
             </p>
           </div>
           <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-[var(--surface-2)] text-[var(--text-muted)]">
@@ -515,7 +569,7 @@ function EditPixelModal({
           </div>
 
           {/* Pixel ID */}
-          <FieldT label={`${pixel.name} Pixel ID`} hint={pixel.idHint}>
+          <FieldT label={pixel.idLabel} hint={pixel.idHint}>
             <input
               type="text" value={pixelId} onChange={e => setPixelId(e.target.value)}
               placeholder={pixel.idPlaceholder} autoFocus
@@ -525,10 +579,10 @@ function EditPixelModal({
 
           {/* Access Token */}
           <FieldT
-            label="Token de acesso da API (opcional, mas recomendado)"
+            label={`${pixel.tokenLabel} (opcional, mas recomendado)`}
             hint={pixel.hasToken && !clearTok && !tokenVal
               ? 'Token configurado. Digite para substituir ou marque "Remover token" para apagar.'
-              : 'Necessário para envio server-side (CAPI). Não trafega no navegador — salvo criptografado.'}
+              : 'Necessário para envio server-side. Salvo criptografado — nunca exposto ao navegador.'}
           >
             {pixel.hasToken && !clearTok && !tokenVal ? (
               <div className="flex items-center gap-2">
@@ -537,7 +591,7 @@ function EditPixelModal({
                 </div>
                 <button
                   type="button"
-                  onClick={() => setTokenVal(' ')} // abre o campo
+                  onClick={() => setTokenVal(' ')}
                   className="shrink-0 h-10 px-3 text-[12px] font-medium rounded-lg border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--surface-2)]"
                 >
                   Substituir
@@ -568,11 +622,11 @@ function EditPixelModal({
             )}
           </FieldT>
 
-          {/* CAPI toggle */}
+          {/* Server-side toggle — label dinâmico por provider */}
           <div className="flex items-start justify-between gap-3 bg-[var(--surface-2)]/40 border border-[var(--border)] rounded-lg p-3">
             <div className="min-w-0">
-              <div className="text-[12.5px] font-semibold text-[var(--text)]">Envio server-side (CAPI)</div>
-              <div className="text-[11.5px] text-[var(--text-muted)] mt-0.5 leading-snug">Envia eventos pela API server-side além do pixel client. Aumenta o match rate e burla bloqueadores.</div>
+              <div className="text-[12.5px] font-semibold text-[var(--text)]">{pixel.capiLabel}</div>
+              <div className="text-[11.5px] text-[var(--text-muted)] mt-0.5 leading-snug">{pixel.capiDesc}</div>
             </div>
             <Toggle checked={capi} onChange={setCapi} />
           </div>
@@ -647,20 +701,22 @@ function LogLine({ log }: { log: LogEntry }) {
 }
 
 function VerifyPixelModal({
-  open, onClose, pixel, onTrack,
+  open, onClose, pixel, onVerifyTrack, onTestSent,
 }: {
-  open: boolean; onClose: () => void; pixel: PixelItem | null; onTrack: (ok: boolean) => void
+  open: boolean; onClose: () => void; pixel: PixelItem | null
+  onVerifyTrack: (ok: boolean) => void
+  onTestSent: (provider: string) => void
 }) {
-  const [running,   setRunning]   = useState(false)
-  const [logs,      setLogs]      = useState<LogEntry[]>([])
-  const [verdict,   setVerdict]   = useState<TestResult | null>(null)
+  const [running,     setRunning]     = useState(false)
+  const [sendingTest, setSendingTest] = useState(false)
+  const [logs,        setLogs]        = useState<LogEntry[]>([])
+  const [verdict,     setVerdict]     = useState<TestResult | null>(null)
 
   const appendLog = useCallback((log: LogEntry) => setLogs(l => [...l, log]), [])
 
   useEffect(() => {
     if (open && pixel?.id) {
-      setRunning(false); setLogs([]); setVerdict(null)
-      // Auto-inicia a verificação se o pixel tem ID
+      setRunning(false); setSendingTest(false); setLogs([]); setVerdict(null)
       if (pixel.pixelId) runVerify()
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -672,11 +728,10 @@ function VerifyPixelModal({
     setLogs([])
     setVerdict(null)
 
-    // Logs de progresso
     appendLog({ type: 'system', text: `Conectando ao endpoint do ${pixel.name}…`, status: 'info' })
-    appendLog({ type: 'system', text: `Pixel ID: ${pixel.pixelId}`, status: 'ok' })
+    appendLog({ type: 'system', text: `ID: ${pixel.pixelId}`, status: 'ok' })
     if (pixel.capi && pixel.hasToken) {
-      appendLog({ type: 'system', text: 'CAPI ativo — verificando via API server-side', status: 'info' })
+      appendLog({ type: 'system', text: `${pixel.capiLabel} ativo — verificando credenciais`, status: 'info' })
     } else if (!pixel.hasToken) {
       appendLog({ type: 'system', text: 'Sem access token — verificação limitada ao formato do ID', status: 'info' })
     }
@@ -692,17 +747,43 @@ function VerifyPixelModal({
         appendLog({ type: 'recv', label: 'verification_ping', time: `${result.latency} ms`, valid: true })
       }
       setVerdict(result)
-      onTrack(result.ok)
+      onVerifyTrack(result.ok)
     } catch {
       appendLog({ type: 'system', text: 'Erro inesperado ao verificar o pixel.', status: 'error' })
       setVerdict({ ok: false, message: 'Erro interno. Tente novamente.', latency: null })
-      onTrack(false)
+      onVerifyTrack(false)
     } finally {
       setRunning(false)
     }
   }
 
+  async function runTestEvent() {
+    if (!pixel?.id || !pixel.pixelId || sendingTest) return
+    setSendingTest(true)
+    appendLog({ type: 'system', text: `Enviando evento de teste Purchase para ${pixel.name}…`, status: 'info' })
+
+    try {
+      const result = await sendTestPixelEvent(pixel.id)
+      appendLog({
+        type: 'system',
+        text: result.ok ? result.message : `Erro: ${result.message}`,
+        status: result.ok ? 'ok' : 'error',
+      })
+      if (result.ok) {
+        appendLog({ type: 'recv', label: 'test_event · Purchase', time: result.latency ? `${result.latency} ms` : '', valid: true, isTest: true })
+        onTestSent(pixel.provider)
+      }
+      setVerdict(result)
+    } catch {
+      appendLog({ type: 'system', text: 'Erro inesperado ao enviar evento de teste.', status: 'error' })
+    } finally {
+      setSendingTest(false)
+    }
+  }
+
   if (!pixel) return null
+
+  const canSendTest = !!pixel.pixelId && !!pixel.id && pixel.hasToken && !running && !sendingTest
 
   return (
     <div className={`fixed inset-0 z-50 flex items-center justify-center p-4 ${open ? '' : 'hidden'}`}>
@@ -727,7 +808,9 @@ function VerifyPixelModal({
               <div className="text-[12.5px] font-semibold text-[var(--text)]">{pixel.fullName}</div>
               <code className="text-[11px] font-mono text-[var(--text-muted)]">{pixel.pixelId || 'sem ID'}</code>
             </div>
-            <Bdg tone={statusMap[pixel.status].tone}>{statusMap[pixel.status].label}</Bdg>
+            <Bdg tone={statusMap[pixel.status].tone} title={statusMap[pixel.status].desc}>
+              {statusMap[pixel.status].label}
+            </Bdg>
           </div>
 
           {!pixel.pixelId && (
@@ -740,16 +823,16 @@ function VerifyPixelModal({
           {!pixel.hasToken && pixel.pixelId && pixel.provider !== 'google' && (
             <div className="flex items-start gap-2 bg-[var(--surface-2)]/60 border border-[var(--border)] rounded-lg p-3 text-[12px] leading-relaxed">
               <Info size={13} className="text-[var(--text-muted)] mt-0.5 shrink-0" />
-              <span className="text-[var(--text-muted)]">Sem access token: apenas o formato do ID pode ser validado. Para verificar via CAPI, adicione o token na edição do pixel.</span>
+              <span className="text-[var(--text-muted)]">Sem access token: apenas o formato do ID pode ser validado. Para verificar e enviar eventos de teste, adicione o token na edição do pixel.</span>
             </div>
           )}
 
           <div className="bg-[var(--surface)] border border-[var(--border)] rounded-lg overflow-hidden">
             <div className="px-3 py-2 border-b border-[var(--border)] bg-[var(--surface-2)]/50 flex items-center justify-between">
               <div className="text-[10.5px] uppercase tracking-wider font-semibold text-[var(--text-muted)]">Logs de verificação</div>
-              {running && <div className="w-3 h-3 rounded-full border-2 border-[var(--primary)] border-t-transparent animate-spin" />}
+              {(running || sendingTest) && <div className="w-3 h-3 rounded-full border-2 border-[var(--primary)] border-t-transparent animate-spin" />}
             </div>
-            <div className="font-mono divide-y divide-[var(--border)] max-h-[240px] overflow-y-auto">
+            <div className="font-mono divide-y divide-[var(--border)] max-h-[220px] overflow-y-auto">
               {logs.length === 0 && (
                 <div className="px-3 py-4 text-[var(--text-muted)] text-center italic text-[11px]">
                   {pixel.pixelId ? 'Iniciando verificação…' : 'Configure o pixel para iniciar.'}
@@ -766,7 +849,7 @@ function VerifyPixelModal({
                 : <XCircle      size={16} className="text-red-500 mt-0.5" />}
               <div className="text-[12px] flex-1">
                 <div className={`font-semibold ${verdict.ok ? 'text-green-500' : 'text-red-500'}`}>
-                  {verdict.ok ? 'Pixel verificado com sucesso' : 'Falha na verificação'}
+                  {verdict.ok ? 'Verificação bem-sucedida' : 'Falha na verificação'}
                 </div>
                 <div className="text-[var(--text-muted)] mt-0.5">{verdict.message}</div>
                 {verdict.ok && verdict.latency !== null && verdict.latency > 0 && (
@@ -777,7 +860,17 @@ function VerifyPixelModal({
           )}
         </div>
 
-        <div className="px-5 py-4 border-t border-[var(--border)] flex items-center justify-end gap-2">
+        <div className="px-5 py-4 border-t border-[var(--border)] flex items-center gap-2">
+          <button
+            onClick={runTestEvent}
+            disabled={!canSendTest}
+            title={!pixel.hasToken ? 'Configure o access token para enviar evento de teste' : 'Envia um evento Purchase de teste ao provider'}
+            className="h-9 px-3 text-[12px] font-medium rounded-lg border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--surface-2)] disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
+          >
+            <FlaskConical size={13} className={sendingTest ? 'animate-pulse' : ''} />
+            {sendingTest ? 'Enviando…' : 'Enviar evento de teste'}
+          </button>
+          <div className="flex-1" />
           <button onClick={onClose} className="h-9 px-4 text-[13px] font-medium rounded-lg border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--surface-2)]">
             Fechar
           </button>
@@ -800,15 +893,9 @@ function VerifyPixelModal({
    ============================================================ */
 
 function UTMSection({ onCopy }: { onCopy: (hasUtm: boolean) => void }) {
-  const [utm, setUtm] = useState({
-    base:     '',
-    source:   '',
-    medium:   '',
-    campaign: '',
-    term:     '',
-    content:  '',
-  })
+  const [utm, setUtm] = useState({ base: '', source: '', medium: '', campaign: '', term: '', content: '' })
   const [copied, setCopied] = useState(false)
+  const [urlError, setUrlError] = useState(false)
 
   const fullUrl = useMemo(() => {
     const b = utm.base.trim()
@@ -822,8 +909,15 @@ function UTMSection({ onCopy }: { onCopy: (hasUtm: boolean) => void }) {
 
   const hasUtm = !!(utm.source.trim() || utm.medium.trim() || utm.campaign.trim())
 
+  function handleBaseChange(v: string) {
+    setUtm(u => ({ ...u, base: v }))
+    setUrlError(false)
+  }
+
   function copy() {
     if (!fullUrl) return
+    const baseOk = isValidUrl(utm.base.trim())
+    if (!baseOk) { setUrlError(true); return }
     try { navigator.clipboard?.writeText(fullUrl) } catch {}
     setCopied(true)
     onCopy(hasUtm)
@@ -875,7 +969,19 @@ function UTMSection({ onCopy }: { onCopy: (hasUtm: boolean) => void }) {
       <div className="border-t border-[var(--border)] pt-4">
         <div className="text-[11px] uppercase tracking-wider font-semibold text-[var(--text-muted)] mb-3">Construtor de link com UTM</div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <UtmField label="URL base *"            value={utm.base}     onChange={v => setUtm(u => ({ ...u, base: v }))}     placeholder="https://umbra.bot/r/meu-link" wide />
+          <div className="md:col-span-2">
+            <label className="block text-[10.5px] uppercase tracking-wider font-semibold text-[var(--text-muted)] mb-1">URL base *</label>
+            <input
+              type="text" value={utm.base} onChange={e => handleBaseChange(e.target.value)}
+              placeholder="https://umbra.bot/r/meu-link"
+              className={`w-full h-9 px-2.5 bg-[var(--surface)] border rounded-md text-[12.5px] font-mono text-[var(--text)] placeholder:text-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/30 transition-colors ${urlError ? 'border-red-500 focus:border-red-500' : 'border-[var(--border)] focus:border-[var(--primary)]/50'}`}
+            />
+            {urlError && (
+              <div className="text-[11px] text-red-500 mt-1 flex items-center gap-1">
+                <AlertCircle size={10} />URL inválida. Deve começar com http:// ou https://
+              </div>
+            )}
+          </div>
           <UtmField label="utm_source"            value={utm.source}   onChange={v => setUtm(u => ({ ...u, source: v }))}   placeholder="instagram" />
           <UtmField label="utm_medium"            value={utm.medium}   onChange={v => setUtm(u => ({ ...u, medium: v }))}   placeholder="cpc" />
           <UtmField label="utm_campaign"          value={utm.campaign} onChange={v => setUtm(u => ({ ...u, campaign: v }))} placeholder="black-2026" />
@@ -913,17 +1019,17 @@ function UTMSection({ onCopy }: { onCopy: (hasUtm: boolean) => void }) {
         <div className="space-y-2">
           <JourneyStep n={1} title="Clique no anúncio do Instagram"   detail="Lead acessa o link com UTMs anexadas no parâmetro da URL."                                     chip="utm_source=instagram" />
           <JourneyStep n={2} title="Redirect captura e propaga"       detail="O Umbra Bot lê os parâmetros, salva no cookie e anexa ao lead recém-criado no Telegram."       chip="cookie · 30d" />
-          <JourneyStep n={3} title="Fluxo do bot processa o lead"      detail="Bot identifica o lead pelo telegram_id e mantém as UTMs no contexto da transação."             chip="bot context" />
-          <JourneyStep n={4} title="Pixel envia evento de Purchase"   detail="Quando a venda é confirmada, Meta/TikTok/Google recebem o evento com UTMs no payload CAPI."    chip="event Purchase" />
+          <JourneyStep n={3} title="Fluxo do bot processa o lead"     detail="Bot identifica o lead pelo telegram_id e mantém as UTMs no contexto da transação."             chip="bot context" />
+          <JourneyStep n={4} title="Pixel envia evento de Purchase"   detail="Quando a venda é confirmada, Meta/TikTok/Google recebem o evento com UTMs no payload."          chip="event Purchase" />
         </div>
       </div>
     </div>
   )
 }
 
-function UtmField({ label, value, onChange, placeholder, wide }: { label: string; value: string; onChange: (v: string) => void; placeholder: string; wide?: boolean }) {
+function UtmField({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (v: string) => void; placeholder: string }) {
   return (
-    <div className={wide ? 'md:col-span-2' : ''}>
+    <div>
       <label className="block text-[10.5px] uppercase tracking-wider font-semibold text-[var(--text-muted)] mb-1">{label}</label>
       <input
         type="text" value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
@@ -983,7 +1089,27 @@ export default function TrackingClient({ initialPixels, initialStats, userId }: 
     return () => clearTimeout(t)
   }, [toast])
 
-  // Realtime — atualiza pixel ao salvar de outra aba ou após Server Action
+  // Auto-refresh de stats a cada 5 minutos
+  useEffect(() => {
+    const t = setInterval(async () => {
+      try {
+        const fresh = await fetchPixelStats()
+        setStats(fresh)
+        const lastEventMs = fresh.last_event ? new Date(fresh.last_event).getTime() : null
+        const nowTs = Date.now()
+        setPixels(prev => prev.map(p => ({
+          ...p,
+          eventsSentToday: fresh.events_sent_today,
+          eventsMatched:   fresh.events_matched,
+          lastEvent:       lastEventMs,
+          status:          computeStatus(p.pixelId, lastEventMs, nowTs),
+        })))
+      } catch { /* silencioso — não quebra a UI */ }
+    }, 5 * 60_000)
+    return () => clearInterval(t)
+  }, [])
+
+  // Realtime — pixels (INSERT/UPDATE/DELETE)
   useEffect(() => {
     const sb  = createClient()
     const ch  = sb.channel('pixels-realtime')
@@ -1022,7 +1148,23 @@ export default function TrackingClient({ initialPixels, initialStats, userId }: 
         }
       )
       .subscribe()
-    return () => { sb.removeChannel(ch) }
+
+    // Realtime — checkout_events: incrementa contador ao vivo
+    const ch2 = sb.channel('checkout-events-tracking')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'checkout_events', filter: `user_id=eq.${userId}` },
+        () => {
+          setStats(s => ({ ...s, events_sent_today: s.events_sent_today + 1 }))
+          setPixels(prev => prev.map(p => ({ ...p, eventsSentToday: p.eventsSentToday + 1 })))
+        }
+      )
+      .subscribe()
+
+    return () => {
+      sb.removeChannel(ch)
+      sb.removeChannel(ch2)
+    }
   }, [userId])
 
   // ---- Handlers ----
@@ -1030,24 +1172,27 @@ export default function TrackingClient({ initialPixels, initialStats, userId }: 
   async function handleSavePixel(provider: string, patch: PixelPatch) {
     try {
       await savePixelAction(provider, patch)
-      // Refresh server-side para garantir dados frescos
       router.refresh()
       const enabledCount = Object.values(patch.events).filter(Boolean).length
       track('pixel_configured', {
         provider,
-        has_capi:            patch.capi && !!(patch.newToken || (!patch.clearToken)),
+        has_capi:             patch.capi && !patch.clearToken,
         events_enabled_count: enabledCount,
       })
       setToast({ msg: 'Pixel salvo com sucesso.', type: 'success' })
     } catch (err) {
       setToast({ msg: err instanceof Error ? err.message : 'Erro ao salvar pixel.', type: 'error' })
-      throw err // Re-throw para o modal não fechar
+      throw err
     }
   }
 
   function handleVerifyTrack(ok: boolean) {
     if (!verifying) return
     track('pixel_verified', { provider: verifying.provider, status: ok ? 'ok' : 'error' })
+  }
+
+  function handleTestSent(provider: string) {
+    track('pixel_test_sent', { provider })
   }
 
   function handleUtmCopy(hasUtm: boolean) {
@@ -1076,7 +1221,7 @@ export default function TrackingClient({ initialPixels, initialStats, userId }: 
         subtitle="Pixels, UTMs e atribuição multi-canal — Meta, TikTok e Google."
         actions={
           <a
-            href="/dashboard/docs/01-comecando/introducao"
+            href="/dashboard/docs/07-analytics/visao-geral-analytics"
             className="inline-flex items-center gap-2 h-9 px-4 text-[13px] font-medium rounded-lg border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--surface-2)] transition-colors"
           >
             <BookOpen size={14} />Documentação
@@ -1105,23 +1250,34 @@ export default function TrackingClient({ initialPixels, initialStats, userId }: 
         <KpiTr
           label="Eventos enviados (24h)"
           value={fmtNum(totals.sent)}
-          sub="checkout_events do banco"
+          sub="checkout_events · ao vivo"
           icon={Send}
         />
         <KpiTr
           label="Eventos com match"
           value={fmtNum(totals.matched)}
-          sub="contato com e-mail ou telefone"
+          sub="e-mail ou telefone"
           icon={CheckCircle2}
         />
         <KpiTr
           label="Match rate"
           value={totals.sent > 0 ? fmtPct(totals.matchRate, 1) : '—'}
-          sub="eventos atribuíveis"
+          sub={totals.matchRate >= 85 ? 'excelente atribuição' : totals.sent > 0 ? 'configure CAPI para melhorar' : 'aguardando eventos'}
           icon={Target}
           highlight={totals.matchRate >= 85}
         />
       </div>
+
+      {/* Banner: stats globais */}
+      {hasAnyPixelConfigured && (
+        <div className="mb-5 flex items-center gap-2.5 bg-[var(--surface-2)]/50 border border-[var(--border)] rounded-lg px-3.5 py-2.5">
+          <Wifi size={13} className="text-[var(--text-muted)] shrink-0" />
+          <span className="text-[12px] text-[var(--text-muted)]">
+            Estatísticas compartilhadas entre todos os pixels — os mesmos eventos de checkout são enviados para cada provider ativo.
+            Contadores atualizam em tempo real via Supabase Realtime e a cada 5 minutos automaticamente.
+          </span>
+        </div>
+      )}
 
       {/* Pixels section */}
       <section className="mb-6">
@@ -1162,7 +1318,8 @@ export default function TrackingClient({ initialPixels, initialStats, userId }: 
         open={!!verifying}
         onClose={() => setVerifying(null)}
         pixel={verifying}
-        onTrack={handleVerifyTrack}
+        onVerifyTrack={handleVerifyTrack}
+        onTestSent={handleTestSent}
       />
     </>
   )
