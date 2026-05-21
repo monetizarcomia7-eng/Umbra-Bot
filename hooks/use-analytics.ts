@@ -8,6 +8,9 @@ type EventMap = {
   flow_published:            { flow_name: string; node_count: number }
   flow_deleted:              Record<string, never>
   gateway_connected:         { gateway: string }
+  gateway_disconnected:      { gateway: string }
+  gateway_configured:        { gateway: string }
+  gateway_connection_tested: { gateway: string; success: boolean }
   broadcast_sent:            { contacts_count: number; delivered: number; failed: number; audience?: string }
   onboarding_completed:      Record<string, never>
   onboarding_step_completed: { step: string }
