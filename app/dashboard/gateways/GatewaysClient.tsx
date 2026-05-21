@@ -1,11 +1,12 @@
 'use client'
 
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useMemo, useRef } from 'react'
+import { useRouter } from 'next/navigation'
 import {
   Plug, TrendingUp, ArrowLeftRight, Percent, Landmark, RefreshCw,
   Zap, CreditCard, FileText, Settings, Unplug, Check, X, Eye, EyeOff,
   Info, AlertCircle, ChevronRight, Loader2, Scissors, CheckCircle2, XCircle,
-  ExternalLink,
+  ExternalLink, Globe,
 } from 'lucide-react'
 import { PageHeader } from '@/components/dashboard/PageHeader'
 import { useAnalytics } from '@/hooks/use-analytics'
@@ -283,28 +284,50 @@ function AccountPicker({ value, onChange, bankAccounts }: {
 
 // ─── ConnectModal ─────────────────────────────────────────────────────────────
 
-function ConnectModal({ open, onClose, g, bankAccounts, onConnected }: {
+const MP_OAUTH_ERRORS: Record<string, string> = {
+  authorization_denied: 'Autorização negada pelo Mercado Pago.',
+  invalid_state:        'Sessão inválida. Tente novamente.',
+  token_exchange_failed:'Falha ao obter token. Tente novamente.',
+  token_timeout:        'Tempo de resposta esgotado. Tente novamente.',
+  db_save_failed:       'Erro ao salvar configuração. Tente novamente.',
+  missing_bank_account: 'Selecione uma conta bancária.',
+  invalid_bank_account: 'Conta bancária inválida.',
+  oauth_not_configured: 'OAuth não configurado pelo administrador.',
+}
+
+function ConnectModal({ open, onClose, g, bankAccounts, hasMpOAuth, onConnected }: {
   open: boolean; onClose: () => void; g: GatewayItem; bankAccounts: RawBankAccount[]
+  hasMpOAuth: boolean
   onConnected: (provider: string, bankAccountId: string, apiKey: string) => Promise<boolean>
 }) {
+  const showOAuth = hasMpOAuth && g.provider === 'mercadopago'
   const [step,       setStep]       = useState<'credentials' | 'split' | 'done'>('credentials')
+  const [mode,       setMode]       = useState<'oauth' | 'manual'>(showOAuth ? 'oauth' : 'manual')
   const [apiKey,     setApiKey]     = useState('')
   const [showKey,    setShowKey]    = useState(false)
   const [accountId,  setAccountId]  = useState(bankAccounts[0]?.id ?? '')
   const [validating, setValidating] = useState(false)
   const [connecting, setConnecting] = useState(false)
+  const [redirecting,setRedirecting]= useState(false)
   const [error,      setError]      = useState('')
 
   useEffect(() => {
     if (open) {
       setStep('credentials'); setApiKey(''); setShowKey(false)
       setAccountId(bankAccounts[0]?.id ?? ''); setValidating(false)
-      setConnecting(false); setError('')
+      setConnecting(false); setError(''); setRedirecting(false)
+      setMode(showOAuth ? 'oauth' : 'manual')
     }
-  }, [open, bankAccounts])
+  }, [open, bankAccounts, showOAuth])
 
   const schema = CREDENTIAL_SCHEMA[g.provider] ?? { label: 'API Key', placeholder: '', hint: '' }
   const selectedAccount = bankAccounts.find(a => a.id === accountId)
+
+  function handleOAuthRedirect() {
+    if (!accountId) { setError('Selecione uma conta de recebimento.'); return }
+    setRedirecting(true)
+    window.location.href = `/api/payments/mercadopago-oauth?bank_account_id=${accountId}`
+  }
 
   async function handleValidate() {
     setError('')
@@ -325,12 +348,16 @@ function ConnectModal({ open, onClose, g, bankAccounts, onConnected }: {
   }
 
   const footer = step === 'credentials' ? (
-    <>
+    mode === 'oauth' ? (
       <Btn variant="secondary" onClick={onClose}>Cancelar</Btn>
-      <Btn variant="primary" disabled={validating || !apiKey || !accountId || bankAccounts.length === 0} onClick={handleValidate}>
-        {validating ? <><Loader2 size={13} className="animate-spin" />Validando…</> : 'Validar credenciais'}
-      </Btn>
-    </>
+    ) : (
+      <>
+        <Btn variant="secondary" onClick={onClose}>Cancelar</Btn>
+        <Btn variant="primary" disabled={validating || !apiKey || !accountId || bankAccounts.length === 0} onClick={handleValidate}>
+          {validating ? <><Loader2 size={13} className="animate-spin" />Validando…</> : 'Validar credenciais'}
+        </Btn>
+      </>
+    )
   ) : step === 'split' ? (
     <>
       <Btn variant="secondary" onClick={() => setStep('credentials')}><ChevronRight size={13} className="rotate-180" />Voltar</Btn>
@@ -345,42 +372,88 @@ function ConnectModal({ open, onClose, g, bankAccounts, onConnected }: {
   return (
     <Modal open={open} onClose={onClose}
       title={step === 'done' ? undefined : `Conectar ${g.name}`}
-      subtitle={step === 'credentials' ? 'Cole as credenciais da API do gateway.' : step === 'split' ? 'Confirme como o valor será dividido.' : undefined}
+      subtitle={step === 'credentials' ? (mode === 'oauth' ? 'Autorize o Umbra Bot a acessar sua conta.' : 'Cole as credenciais da API do gateway.') : step === 'split' ? 'Confirme como o valor será dividido.' : undefined}
       size="md" footer={footer}>
       {step === 'credentials' && (
         <div className="space-y-3.5">
+          {/* Gateway info row */}
           <div className="flex items-center gap-3 p-3 bg-surface-2/40 border border-border rounded-lg">
             <GatewayLogo g={g} size={36} />
             <div className="min-w-0 flex-1">
               <div className="text-[13px] font-semibold text-text">{g.name}</div>
               <div className="text-[11px] text-text-muted">{g.feeText}</div>
             </div>
-            <a href={`https://${g.provider === 'mercadopago' ? 'mercadopago.com.br' : g.provider === 'pagarme' ? 'pagar.me' : g.provider === 'stripe' ? 'stripe.com' : g.provider === 'pagseguro' ? 'pagseguro.uol.com.br' : g.provider === 'pushinpay' ? 'pushinpay.com.br' : 'asaas.com'}`} target="_blank" rel="noopener noreferrer"
+            <a href="https://mercadopago.com.br" target="_blank" rel="noopener noreferrer"
               className="text-[11.5px] text-primary inline-flex items-center gap-1 shrink-0 hover:underline">
               <ExternalLink size={11} />Painel {g.name}
             </a>
           </div>
 
-          <Field label={schema.label} hint={schema.hint}>
-            <div className="relative">
-              <input
-                type={showKey ? 'text' : 'password'}
-                value={apiKey}
-                onChange={e => { setApiKey(e.target.value); setError('') }}
-                placeholder={schema.placeholder}
-                autoFocus
-                className={inputCls + ' font-mono pr-10'}
-              />
-              <button onClick={() => setShowKey(s => !s)} type="button" tabIndex={-1}
-                className="absolute right-1 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center rounded-md text-text-muted hover:bg-surface-2">
-                {showKey ? <EyeOff size={14} /> : <Eye size={14} />}
-              </button>
-            </div>
+          {/* Account picker (always visible) */}
+          <Field label="Conta de recebimento" hint="Para onde o gateway depositará o valor líquido das vendas.">
+            <AccountPicker value={accountId} onChange={v => { setAccountId(v); setError('') }} bankAccounts={bankAccounts} />
           </Field>
 
-          <Field label="Conta de recebimento" hint="Para onde o gateway transferirá o valor líquido das vendas.">
-            <AccountPicker value={accountId} onChange={setAccountId} bankAccounts={bankAccounts} />
-          </Field>
+          {/* OAuth section */}
+          {showOAuth && mode === 'oauth' && (
+            <>
+              <div className="bg-[#009EE3]/5 border border-[#009EE3]/20 rounded-xl p-4 space-y-3">
+                <div className="flex items-start gap-2.5">
+                  <Globe size={16} className="text-[#009EE3] mt-0.5 shrink-0" />
+                  <div className="text-[12.5px] text-text leading-relaxed">
+                    <strong>Conexão segura via OAuth.</strong> Você será redirecionado ao Mercado Pago para autorizar o acesso. Nenhuma senha é compartilhada.
+                  </div>
+                </div>
+                <button
+                  onClick={handleOAuthRedirect}
+                  disabled={redirecting || !accountId || bankAccounts.length === 0}
+                  className="w-full flex items-center justify-center gap-2 h-10 rounded-lg bg-[#009EE3] hover:bg-[#009EE3]/90 text-white text-[13px] font-semibold transition-colors disabled:opacity-50 disabled:pointer-events-none">
+                  {redirecting
+                    ? <><Loader2 size={14} className="animate-spin" />Redirecionando…</>
+                    : <><Globe size={14} />Conectar com Mercado Pago</>}
+                </button>
+                <div className="flex items-start gap-1.5 text-[11px] text-text-muted">
+                  <Info size={11} className="mt-0.5 shrink-0" />
+                  <span>O token tem validade de 180 dias e pode ser renovado a qualquer momento reconectando.</span>
+                </div>
+              </div>
+
+              {/* Switch to manual */}
+              <button onClick={() => { setMode('manual'); setError('') }}
+                className="w-full text-center text-[11.5px] text-text-muted hover:text-text transition-colors py-1">
+                Prefiro inserir o Access Token manualmente
+              </button>
+            </>
+          )}
+
+          {/* Manual token input */}
+          {mode === 'manual' && (
+            <>
+              <Field label={schema.label} hint={schema.hint}>
+                <div className="relative">
+                  <input
+                    type={showKey ? 'text' : 'password'}
+                    value={apiKey}
+                    onChange={e => { setApiKey(e.target.value); setError('') }}
+                    placeholder={schema.placeholder}
+                    autoFocus={!showOAuth}
+                    className={inputCls + ' font-mono pr-10'}
+                  />
+                  <button onClick={() => setShowKey(s => !s)} type="button" tabIndex={-1}
+                    className="absolute right-1 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center rounded-md text-text-muted hover:bg-surface-2">
+                    {showKey ? <EyeOff size={14} /> : <Eye size={14} />}
+                  </button>
+                </div>
+              </Field>
+
+              {showOAuth && (
+                <button onClick={() => { setMode('oauth'); setError('') }}
+                  className="w-full text-center text-[11.5px] text-text-muted hover:text-text transition-colors py-1">
+                  Usar OAuth (recomendado)
+                </button>
+              )}
+            </>
+          )}
 
           {error && (
             <div className="flex items-start gap-2 bg-[color:var(--danger)]/5 border border-[color:var(--danger)]/30 rounded-lg p-3 text-[12px] text-[color:var(--danger)]">
@@ -668,10 +741,14 @@ interface GatewaysClientProps {
   bankAccounts:    RawBankAccount[]
   gatewayStats:    GatewayStats
   userId:          string
+  hasMpOAuth:      boolean
+  mpConnected:     boolean
+  mpError:         string | null
 }
 
-export function GatewaysClient({ initialGateways, bankAccounts, gatewayStats }: GatewaysClientProps) {
+export function GatewaysClient({ initialGateways, bankAccounts, gatewayStats, hasMpOAuth, mpConnected, mpError }: GatewaysClientProps) {
   const { track } = useAnalytics()
+  const router    = useRouter()
 
   const [gateways,      setGateways]      = useState<GatewayItem[]>(() => mergeGateways(initialGateways, gatewayStats))
   const [now,           setNow]           = useState(Date.now())
@@ -680,6 +757,22 @@ export function GatewaysClient({ initialGateways, bankAccounts, gatewayStats }: 
   const [disconnecting, setDisconnecting] = useState<GatewayItem | null>(null)
   const [configuring,   setConfiguring]   = useState<GatewayItem | null>(null)
   const [toast,         setToast]         = useState<{ msg: string; type: 'success' | 'error' } | null>(null)
+  const oauthHandledRef = useRef(false)
+
+  // Mostra toast de resultado OAuth e limpa URL
+  useEffect(() => {
+    if (oauthHandledRef.current) return
+    if (mpConnected) {
+      oauthHandledRef.current = true
+      setToast({ msg: 'Mercado Pago conectado com sucesso via OAuth.', type: 'success' })
+      router.replace('/dashboard/gateways')
+    } else if (mpError) {
+      oauthHandledRef.current = true
+      const msg = MP_OAUTH_ERRORS[mpError] ?? 'Erro ao conectar via OAuth.'
+      setToast({ msg, type: 'error' })
+      router.replace('/dashboard/gateways')
+    }
+  }, [mpConnected, mpError, router])
 
   // Tick para relTime (a cada 60s)
   useEffect(() => {
@@ -690,7 +783,7 @@ export function GatewaysClient({ initialGateways, bankAccounts, gatewayStats }: 
   // Auto-fecha toast
   useEffect(() => {
     if (!toast) return
-    const t = setTimeout(() => setToast(null), 3500)
+    const t = setTimeout(() => setToast(null), 4000)
     return () => clearTimeout(t)
   }, [toast])
 
@@ -854,6 +947,7 @@ export function GatewaysClient({ initialGateways, bankAccounts, gatewayStats }: 
           onClose={() => setConnecting(null)}
           g={connecting}
           bankAccounts={bankAccounts}
+          hasMpOAuth={hasMpOAuth}
           onConnected={handleConnected}
         />
       )}

@@ -28,10 +28,16 @@ export type GatewayStats = Record<string, {
   avg_fee_pct:number
 }>
 
-export default async function GatewaysPage() {
+export default async function GatewaysPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ mp_connected?: string; mp_error?: string }>
+}) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
+
+  const params = await searchParams
 
   const [gatewaysRes, bankAccountsRes, statsRes] = await Promise.all([
     supabase
@@ -56,6 +62,9 @@ export default async function GatewaysPage() {
         bankAccounts={(bankAccountsRes.data ?? []) as RawBankAccount[]}
         gatewayStats={((statsRes.data ?? {}) as GatewayStats)}
         userId={user.id}
+        hasMpOAuth={!!process.env.MERCADOPAGO_CLIENT_ID}
+        mpConnected={params.mp_connected === '1'}
+        mpError={params.mp_error ?? null}
       />
     </DashboardLayout>
   )
