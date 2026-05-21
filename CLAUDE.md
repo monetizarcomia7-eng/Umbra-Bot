@@ -105,10 +105,14 @@ umbra-bot/
 │   │   │   ├── track/route.ts    # POST: registra eventos de funil (visited/cart_added/payment_initiated)
 │   │   │   │                     # Público (sem auth), CORS *, rate-limit 60/min por IP
 │   │   │   │                     # Usa RPC track_checkout_event (security definer, migração 041)
-│   │   │   └── pay/route.ts      # POST: cria pagamento PIX via checkout público (sem auth do comprador)
-│   │   │                         # Público, rate-limit 20/min por IP; usa createAdminClient para buscar
-│   │   │                         # credenciais do dono do checkout; valida checkout published + método habilitado
-│   │   │                         # Retorna pix_qr_code + pix_copy_paste + expires_at; registra transaction
+│   │   │   ├── pay/route.ts      # POST: cria pagamento PIX via checkout público (sem auth do comprador)
+│   │   │   │                     # Público, rate-limit 20/min por IP; usa createAdminClient para buscar
+│   │   │   │                     # credenciais do dono do checkout; valida checkout published + método habilitado
+│   │   │   │                     # Aceita coupon_code (chama validate_and_apply_coupon RPC) + order_bump boolean
+│   │   │   │                     # totalPrice = (price − desconto) + bumpPrice; retorna pix_qr_code + amount
+│   │   │   └── validate-coupon/route.ts  # GET: valida cupom sem incrementar uso (preview para o comprador)
+│   │   │                                 # Público, rate-limit 30/min por IP; usa admin client
+│   │   │                                 # Retorna { valid, coupon_id, type, value, discount, final }
 │   │   ├── affiliates/
 │   │   │   └── apply/route.ts    # POST: candidatura pública ao programa de afiliados
 │   │   │                         # Público (sem auth), rate-limit 10/h por IP
@@ -125,11 +129,18 @@ umbra-bot/
 │   │   └── [slug]/
 │   │       ├── page.tsx          # Página pública do checkout (Server Component, admin client)
 │   │       │                     # Busca checkout por slug + pixels do dono (sem access_token)
-│   │       │                     # PublicCheckout inclui: success_url, guarantee_days, countdown_end
+│   │       │                     # PublicCheckout inclui: success_url, guarantee_days, countdown_end,
+│   │       │                     # order_bump, logo_image, two_step, upsell, visitor_tracking
 │   │       ├── CheckoutPageClient.tsx # Client Component: formulário com CPF/CNPJ mask,
 │   │       │                          # timer PIX 30 min, polling checkout_tx_status (4s),
-│   │       │                          # success_url redirect, guarantee badge, countdown_end timer
+│   │       │                          # success_url redirect, guarantee badge, countdown_end timer,
+│   │       │                          # logo_image sobrescreve logo texto, contador de visitantes ao vivo
+│   │       │                          # (Supabase Realtime Presence quando visitor_tracking=true),
+│   │       │                          # formulário 2 etapas (two_step), cupom de desconto (preview via
+│   │       │                          # GET /api/checkout/validate-coupon), order bump checkbox,
+│   │       │                          # upsell step pós-pagamento (modal antes do redirect)
 │   │       └── PixelScripts.tsx  # Snippets de pixel (Meta/TikTok/Google) injetados no head
+│   │                              # step inclui 'upsell' — Purchase dispara em success + upsell
 │   ├── r/
 │   │   └── [slug]/
 │   │       └── route.ts          # GET: rota pública — tenta afiliado primeiro, depois redirecionador
@@ -596,6 +607,14 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Checkout — botão Copiar link no menu do CheckoutCard (copia umbra.bot/c/slug) | ✅ Implementado |
 | Checkout — validação de protocolo em success_url (http/https) no handleSave e handlePublish | ✅ Implementado |
 | Checkout — fmtCountdown suporta dias (ex: "1d 02:30:15") no checkout público | ✅ Corrigido |
+| Checkout — order_bump: produto adicional (JSONB) oferecido antes do botão de pagamento — migração 085 | ✅ Implementado |
+| Checkout — logo_image: campo URL para logo por imagem (sobrescreve logo texto) — migração 085 | ✅ Implementado |
+| Checkout — two_step: formulário em 2 etapas (dados pessoais → pagamento) — migração 085 | ✅ Implementado |
+| Checkout — upsell: oferta pós-compra (modal após pagamento confirmado, redireciona para link) — migração 085 | ✅ Implementado |
+| Checkout — visitor_tracking: contador de visitantes ao vivo via Supabase Realtime Presence — migração 085 | ✅ Implementado |
+| Checkout — checkout_coupons: tabela com RLS + UNIQUE(user_id, code) + validate_and_apply_coupon RPC — migração 086 | ✅ Implementado |
+| Checkout — /api/checkout/validate-coupon: preview sem incremento de uso (rate-limit 30/min) | ✅ Implementado |
+| Checkout — /api/checkout/pay: coupon_code + order_bump; totalPrice = (price − desconto) + bumpPrice | ✅ Implementado |
 | Sistema de planos/billing | ❌ Não iniciado |
 | Remarketing — Server Component SSR + RemarketingClient (dados reais, sem mock) | ✅ Funcional |
 | Remarketing — createCampaign: INSERT real com user_id + UUID real retornado | ✅ Implementado |
@@ -3867,23 +3886,36 @@ O JSON inclui apenas campos educativos — tokens e dados reais nunca expostos n
 
 ```
 app/dashboard/checkout/
-  ├── page.tsx          # Server Component — SSR checkouts + gateways + pixels em paralelo
-  │                     # exporta RawCheckout (inclui success_url, guarantee_days, countdown_end)
-  │                     # exporta RawGateway e RawPixel
+  ├── page.tsx          # Server Component — SSR checkouts + gateways + pixels + coupons em paralelo
+  │                     # exporta RawCheckout (inclui success_url, guarantee_days, countdown_end,
+  │                     # order_bump, logo_image, two_step, upsell, visitor_tracking)
+  │                     # exporta RawGateway, RawPixel, RawCoupon
   └── CheckoutClient.tsx # Client Component — editor completo + lista com analytics drill-down
+                         # OrderBumpSection, UpsellSection, CouponSection wired no editor
+                         # logo_image field na aba Identidade; two_step + visitor_tracking na aba Layout
 
 app/c/[slug]/
   ├── page.tsx          # Server Component público (admin client, sem auth do comprador)
   │                     # Busca checkout por slug (status='published') + pixels do dono
-  │                     # PublicCheckout: success_url, guarantee_days, countdown_end
+  │                     # PublicCheckout: success_url, guarantee_days, countdown_end,
+  │                     # order_bump, logo_image, two_step, upsell, visitor_tracking
   │                     # Pixels: provider, pixelId, pixelCode (sem access_token)
   ├── CheckoutPageClient.tsx # Client Component público — formulário de compra completo
+  │                          # logo_image, contador visitantes (Realtime Presence), 2 etapas,
+  │                          # cupom de desconto (preview via /validate-coupon), order bump, upsell
   └── PixelScripts.tsx  # Snippets de pixel injetados no <head> da página pública
+                         # step: 'form'|'payment'|'success'|'upsell'|'error'
+                         # Purchase dispara em step==='success' || step==='upsell'
 
 app/api/checkout/
   ├── pay/route.ts      # POST: cria pagamento PIX (sem auth) — admin client
   │                     # Suporte a CPF (11 dígitos) e CNPJ (14 dígitos)
+  │                     # Aceita coupon_code (validate_and_apply_coupon RPC, incremento atômico)
+  │                     # Aceita order_bump boolean; totalPrice = (price−desconto) + bumpPrice
   │                     # Persiste checkout_id + customer_phone na transaction (mig 079)
+  ├── validate-coupon/route.ts  # GET: preview de cupom SEM incrementar uses
+  │                              # Público, rate-limit 30/min por IP; admin client
+  │                              # Retorna { valid, coupon_id, type, value, discount, final }
   └── track/route.ts    # POST: registra eventos de funil (visited/cart_added/payment_initiated)
                         # Usa RPC track_checkout_event (security definer, mig 041)
 ```
@@ -3963,6 +3995,10 @@ CheckoutPageClient (Client Component)
   ├── Registra visita ao montar: fetch POST /api/checkout/track { checkout_id, event_type:'visited' }
   │     (ou RPC track_checkout_visit se disponível)
   │
+  ├── Header: logo_image sobrescreve logo texto quando c.logo_image definido
+  │     contador "🔴 N pessoas vendo agora" quando visitor_tracking=true e visitCount > 1
+  │     (Supabase Realtime Presence: canal por checkout_id, sync a cada join/leave)
+  │
   ├── countdown_end: timer de urgência no topo (formato DD:HH:MM:SS)
   │     Oculto quando countdown_end é null ou já expirou
   │     useEffect com setInterval 1s; clearInterval no unmount
@@ -3971,14 +4007,29 @@ CheckoutPageClient (Client Component)
   │     <Shield> icon + "Garantia de N dias"
   │     Oculto quando guarantee_days é null ou 0
   │
-  ├── Formulário de compra:
+  ├── Formulário de compra (two_step=false: 1 página | two_step=true: 2 etapas):
+  │     Etapa 1 (personal): nome, email, CPF/CNPJ, telefone, etc.
+  │     Etapa 2 (payment):  método + cupom + order bump
+  │     Indicador de progresso (Etapa 1 de 2 / 2 de 2) quando two_step=true
   │     CPF/CNPJ: sempre exibido (campo always: true) — label 'CPF / CNPJ'
   │       Máscara automática: 000.000.000-00 (CPF) ↔ 00.000.000/0000-00 (CNPJ)
   │       Troca de máscara ao atingir 11 dígitos numéricos
   │     Demais campos: renderizados conforme checkout.fields (name, email, phone, cep, address)
   │
+  ├── Cupom de desconto (quando checkout tem coupons ativos):
+  │     Input + botão "Aplicar" → GET /api/checkout/validate-coupon (sem incremento)
+  │     Exibe desconto ao vivo no resumo de preço se válido
+  │     handleApplyCoupon: setCouponResult({ valid, discount, final, type, value })
+  │     coupon_code enviado no POST /api/checkout/pay (incremento acontece na API)
+  │
+  ├── Order Bump (quando c.order_bump definido):
+  │     Checkbox acima do botão de pagamento
+  │     orderBumpSelected boolean → soma c.order_bump.price ao efectivePrice
+  │     efectivePrice = max(0, price − discount) + bumpAmount
+  │
   ├── Após submit:
-  │     POST /api/checkout/pay → { transaction_id, pix_qr_code, pix_copy_paste, expires_at, amount }
+  │     POST /api/checkout/pay { ...campos, coupon_code, order_bump } →
+  │       { transaction_id, pix_qr_code, pix_copy_paste, expires_at, amount }
   │     Exibe tela PIX com QR code + copia-e-cola + countdown 30 min
   │
   ├── Countdown PIX 30 min:
@@ -3987,9 +4038,15 @@ CheckoutPageClient (Client Component)
   │
   ├── Polling de status PIX (4s via setInterval):
   │     GET ou RPC checkout_tx_status({ tx_id, checkout_id }) → { status }
-  │     'approved' → redireciona para success_url (se configurado) ou exibe sucesso inline
+  │     'approved' → verifica c.upsell → se definido: step='upsell'; senão: redireciona/confirma
   │     'expired' / 'cancelled' → exibe mensagem de expiração
   │     AbortController: limpa ao desmontar ou ao confirmar pagamento
+  │
+  ├── Upsell pós-pagamento (step='upsell', quando c.upsell definido):
+  │     Modal com título, descrição, preço e CTA do upsell
+  │     Botão CTA: window.open(c.upsell.link) → navega para oferta
+  │     Botão "Não, obrigado": avança para success_url ou confirmação inline
+  │     PixelScripts: Purchase dispara em step==='upsell' também
   │
   └── Sucesso:
         Se success_url configurado: window.location.href = success_url (comprador sai do checkout)
@@ -4013,6 +4070,24 @@ export interface RawCheckout {
   success_url: string | null     // migração 081
   guarantee_days: number | null  // migração 081
   countdown_end: string | null   // migração 081
+  /* migração 085 */
+  order_bump:       { title: string; desc: string; price: number; image: string | null } | null
+  logo_image:       string | null
+  two_step:         boolean
+  upsell:           { title: string; desc: string; price: number; cta: string; link: string } | null
+  visitor_tracking: boolean
+}
+
+// RawCoupon — exportada de page.tsx do dashboard
+export interface RawCoupon {
+  id: string
+  code: string
+  type: 'percent' | 'fixed'
+  value: number
+  max_uses: number | null
+  uses: number
+  valid_until: string | null
+  active: boolean
 }
 
 // Checkout — interface interna (camelCase)
@@ -4049,6 +4124,12 @@ export interface PublicCheckout {
   success_url: string | null
   guarantee_days: number | null
   countdown_end: string | null
+  /* migração 085 */
+  order_bump:       { title: string; desc: string; price: number; image: string | null } | null
+  logo_image:       string | null
+  two_step:         boolean
+  upsell:           { title: string; desc: string; price: number; cta: string; link: string } | null
+  visitor_tracking: boolean
 }
 ```
 
@@ -4065,18 +4146,29 @@ customer_cpf: z.string()
 
 const docType = customer_cpf.length === 14 ? 'CNPJ' : 'CPF'
 
+// Cupom + order bump (migração 086 / 085)
+coupon_code: z.string().max(50).nullish()
+order_bump:  z.boolean().nullish()
+
+// 1. valida e aplica cupom (incrementa uses atomicamente)
+if (couponCodeClean) {
+  const { data } = await admin.rpc('validate_and_apply_coupon', {
+    p_user_id: checkout.user_id, p_code: couponCodeClean, p_price: Number(checkout.price),
+  })
+  if (data?.valid) discountAmount = Number(data.discount ?? 0)
+}
+// 2. calcula totalPrice
+const basePrice  = Math.max(0, Number(checkout.price) - discountAmount)
+const bumpPrice  = order_bump ? Number((checkout.order_bump as {price:number}|null)?.price ?? 0) : 0
+const totalPrice = basePrice + bumpPrice
+
 // Persiste checkout_id na transaction (migração 079)
 await admin.from('transactions').insert({
   // ... campos existentes ...
   checkout_id: checkout_id,        // string UUID do checkout
   customer_phone: customerPhone,   // número de telefone (opcional)
+  amount: totalPrice,              // preço efetivo (com desconto e bump)
 })
-
-// Cartão/boleto retornam 400 clara (não implementados)
-if (method !== 'pix') return NextResponse.json(
-  { error: 'Pagamento por cartão e boleto ainda não disponível. Use o Pix.' },
-  { status: 400 }
-)
 ```
 
 ### Migrações do módulo
@@ -4087,6 +4179,9 @@ if (method !== 'pix') return NextResponse.json(
 | 079 | Adicionou `checkout_id text FK → checkouts(id)` e `customer_phone text` em `transactions`; RPC `checkout_tx_status(p_tx_id, p_checkout_id)` — retorna apenas `{ status }`, grant to anon |
 | 080 | Adicionou `product_image text` em `checkouts`; bucket `checkout-images` (público, 2 MB, jpg/png/webp/gif, RLS por pasta user_id) |
 | 081 | Adicionou `success_url text`, `guarantee_days integer`, `countdown_end timestamptz` em `checkouts` |
+| 082 | RLS `checkouts_owner` (`auth.uid() = user_id`) — substituiu `checkouts_open` (IDOR crítico resolvido) |
+| 085 | Adicionou 5 colunas em `checkouts`: `order_bump jsonb`, `logo_image text`, `two_step boolean default false`, `upsell jsonb`, `visitor_tracking boolean default false` |
+| 086 | Criou tabela `checkout_coupons` (RLS owner, `UNIQUE(user_id, code)`); RPC `validate_and_apply_coupon(p_user_id, p_code, p_price)` — security definer, incremento atômico de `uses`, grant to authenticated/anon |
 
 ### Segurança
 

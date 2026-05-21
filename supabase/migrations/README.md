@@ -1,7 +1,7 @@
 # Umbra Bot — Schema do Banco de Dados
 
 Schema extraído diretamente do banco Supabase (projeto: `aoycxcepjvpmeptdafxn`).
-**31 tabelas** no schema `public`.
+**32 tabelas** no schema `public`.
 
 ---
 
@@ -276,14 +276,20 @@ conversion:     numeric     NOT NULL  default 0
 created_at:     timestamptz NOT NULL  default now()
 updated_at:     timestamptz NOT NULL  default now()
 user_id:        uuid        FK → auth.users(id)
-success_url:    text                  (URL de redirecionamento após pagamento confirmado) [migração 081]
-guarantee_days: integer               (dias de garantia — exibidos como badge no checkout público) [migração 081]
-countdown_end:  timestamptz           (fim do contador de urgência no checkout público) [migração 081]
+success_url:       text                  (URL de redirecionamento após pagamento confirmado) [migração 081]
+guarantee_days:    integer               (dias de garantia — exibidos como badge no checkout público) [migração 081]
+countdown_end:     timestamptz           (fim do contador de urgência no checkout público) [migração 081]
+order_bump:        jsonb                 ({ title, desc, price, image }) — produto complementar exibido antes do pagamento [migração 085]
+logo_image:        text                  (URL da logo do negócio exibida no checkout público) [migração 085]
+two_step:          boolean     NOT NULL  default false  (divide formulário em 2 etapas: dados → pagamento) [migração 085]
+upsell:            jsonb                 ({ title, desc, price, cta, link }) — oferta exibida após pagamento aprovado [migração 085]
+visitor_tracking:  boolean     NOT NULL  default false  (habilita contador de visitantes ao vivo via Supabase Realtime Presence) [migração 085]
 ```
 
 **Colunas adicionadas por migração:**
 - Migração 080: `product_image text` — URL pública da imagem do produto no Supabase Storage
 - Migração 081: `success_url text`, `guarantee_days integer`, `countdown_end timestamptz`
+- Migração 085: `order_bump jsonb`, `logo_image text`, `two_step boolean`, `upsell jsonb`, `visitor_tracking boolean`
 
 **RLS — migração 082:**
 - Política `checkouts_open` (`using(true)`) substituída por `checkouts_owner` (`auth.uid() = user_id`)
@@ -300,6 +306,44 @@ countdown_end:  timestamptz           (fim do contador de urgência no checkout 
 - Retorna `{ status: string }` apenas — sem dados sensíveis
 - Usado pelo CheckoutPageClient para polling do status PIX (intervalo 4s, sem auth necessária)
 - Valida que `tx_id` pertence ao `checkout_id` informado (sem cross-checkout leak)
+
+---
+
+## public.checkout_coupons
+
+```
+id:          uuid        NOT NULL  default gen_random_uuid()
+user_id:     uuid        NOT NULL  FK → auth.users(id)  ON DELETE CASCADE
+checkout_id: text                  FK → checkouts(id)   ON DELETE CASCADE  (null = cupom global do vendedor)
+code:        text        NOT NULL  (código do cupom — case-insensitive na validação)
+type:        text        NOT NULL  default 'percent'  check in ('percent', 'fixed')
+value:       numeric     NOT NULL  default 0          check >= 0
+max_uses:    integer               (null = uso ilimitado; valor > 0 quando definido)
+uses:        integer     NOT NULL  default 0          (incrementado atomicamente pela RPC)
+valid_until: timestamptz           (null = sem data de expiração)
+active:      boolean     NOT NULL  default true
+created_at:  timestamptz NOT NULL  default now()
+```
+
+CONSTRAINT: `checkout_coupons_user_code_key UNIQUE (user_id, code)` — mesmo vendedor não pode ter 2 cupons com o mesmo código
+RLS: `coupons_owner` → `auth.uid() = user_id` (for all)
+Índices: `checkout_coupons_user_id_idx (user_id)`, `checkout_coupons_checkout_id_idx (checkout_id)`
+
+**RPC `validate_and_apply_coupon(p_user_id uuid, p_code text, p_price numeric)`** → `json`:
+- Security definer, grant to `authenticated, anon` — chamada pelo `/api/checkout/pay` via admin client
+- Busca cupom por `user_id + code` (case-insensitive via `lower()`)
+- Valida: `active = true`, `valid_until` não expirado, `uses < max_uses` (se definido)
+- Calcula desconto: `percent` → `round(price * value/100, 2)`; `fixed` → `least(value, price)`
+- Aplica `greatest(0, price - discount)` para garantir preço nunca negativo
+- Incrementa `uses = uses + 1` atomicamente (UPDATE WHERE id — sem race condition)
+- Retorna sucesso: `{ valid: true, coupon_id, type, value, discount, final }`
+- Retorna falha: `{ valid: false, error: "Cupom inválido ou expirado." | "Cupom expirado." | "Cupom atingiu o limite de usos." }`
+
+**GET `/api/checkout/validate-coupon`** (preview sem incremento):
+- Rate limit 30/min por IP; busca checkout (user_id + price) via `checkout_id` + `slug`
+- Calcula desconto manualmente sem chamar a RPC (sem side-effects)
+- Usado pelo formulário público antes do submit para exibir o desconto ao comprador
+- Chamado pelo `CheckoutPageClient` ao clicar "Aplicar"
 
 ---
 
@@ -785,6 +829,7 @@ auth.users
   ├── notification_prefs (user_id)
   ├── biolinks           (user_id)
   ├── checkouts          (user_id)
+  │     └── checkout_coupons (user_id)  checkout_id → checkouts(id)  [mig 086]
   ├── pixels             (user_id)
   └── webhooks           (user_id)
 ```
