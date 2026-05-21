@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 import crypto from 'crypto'
 import { decryptToken } from '@/lib/crypto'
 import { sendTelegramMessage } from '@/lib/telegram'
+import { fireCapiPurchase } from '@/lib/capi'
 
 // Verifies Mercado Pago webhook signature.
 // MP sends: x-signature: ts=<ts>,v1=<hmac>
@@ -66,7 +67,7 @@ export async function POST(request: NextRequest) {
   // Find our transaction by gateway_payment_id
   const { data: tx } = await supabase
     .from('transactions')
-    .select('id, user_id, bot_id, flow_id, customer_telegram_id, customer_name, amount, net, product_name, status, affiliate_id')
+    .select('id, user_id, bot_id, flow_id, customer_telegram_id, customer_name, customer_email, amount, net, product_name, status, affiliate_id')
     .eq('gateway_payment_id', String(paymentId))
     .eq('gateway', 'mercadopago')
     .single()
@@ -125,6 +126,18 @@ export async function POST(request: NextRequest) {
         })
       }
     }
+
+    // 3. Dispara eventos CAPI para todos os pixels configurados (fire-and-forget)
+    fireCapiPurchase({
+      txId:          tx.id,
+      userId:        tx.user_id,
+      amount:        Number(tx.amount),
+      productName:   tx.product_name ?? null,
+      customerEmail: (tx as { customer_email?: string | null }).customer_email ?? null,
+      customerName:  tx.customer_name ?? null,
+    }).catch((err) => {
+      Sentry.captureException(err, { extra: { txId: tx.id, context: 'capi_purchase_fire' } })
+    })
 
     // 4. Log de atividade
     const { error: activityError } = await supabase.from('activity_events').insert({

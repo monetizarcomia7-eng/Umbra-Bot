@@ -197,6 +197,7 @@ interface PixelItem {
   hasToken:  boolean
   events:    Record<string, boolean>
   capi:      boolean
+  dbStatus:  string   // status persistido no banco — 'healthy' após verificação
   status:    'healthy' | 'waiting' | 'warning' | 'error' | 'inactive'
   eventsSentToday: number
   eventsMatched:   number
@@ -236,11 +237,16 @@ function defaultEvents(provider: string): Record<string, boolean> {
 
 function computeStatus(
   pixelId: string | null,
+  dbStatus: string,
   lastEventMs: number | null,
   now: number,
 ): PixelItem['status'] {
   if (!pixelId) return 'inactive'
-  if (!lastEventMs) return 'waiting'
+  if (!lastEventMs) {
+    // Pixel verificado manualmente retorna 'healthy' mesmo sem eventos de checkout ainda
+    if (dbStatus === 'healthy') return 'healthy'
+    return 'waiting'
+  }
   const diff = now - lastEventMs
   if (diff < 30 * 60_000) return 'healthy'
   if (diff < 60 * 60_000) return 'warning'
@@ -260,7 +266,8 @@ function mergePixels(rows: RawPixelRow[], stats: PixelStats, now: number): Pixel
       hasToken:    !!row?.access_token,
       events:      (row?.events as Record<string, boolean>) ?? defaultEvents(provider),
       capi:        row?.capi ?? false,
-      status:      computeStatus(row?.pixel_id ?? null, lastEventMs, now),
+      dbStatus:    row?.status ?? 'inactive',
+      status:      computeStatus(row?.pixel_id ?? null, row?.status ?? 'inactive', lastEventMs, now),
       eventsSentToday: stats.events_sent_today,
       eventsMatched:   stats.events_matched,
       lastEvent:       lastEventMs,
@@ -1218,6 +1225,119 @@ function JourneyStep({ n, title, detail, chip }: { n: number; title: string; det
 }
 
 /* ============================================================
+   SnippetCard — snippets browser-side por provider
+   ============================================================ */
+
+function buildBrowserSnippet(provider: string, pixelId: string | null, pixelCode?: string | null): string {
+  if (!pixelId) return ''
+  if (provider === 'meta') {
+    return `<!-- Meta Pixel Code -->
+<script>
+!function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?
+n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;
+n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;
+t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,
+document,'script','https://connect.facebook.net/en_US/fbevents.js');
+fbq('init', '${pixelId}');
+fbq('track', 'PageView');
+</script>
+<noscript><img height="1" width="1" style="display:none"
+src="https://www.facebook.com/tr?id=${pixelId}&ev=PageView&noscript=1"
+/></noscript>
+<!-- End Meta Pixel Code -->`
+  }
+  if (provider === 'tiktok') {
+    const code = pixelCode || pixelId
+    return `<!-- TikTok Pixel Code -->
+<script>
+!function(w,d,t){w.TiktokAnalyticsObject=t;var ttq=w[t]=w[t]||[];
+ttq.methods=["page","track","identify","instances","debug","on","off","once",
+"ready","alias","group","enableCookie","disableCookie"],ttq.setAndDefer=function(t,e){
+t[e]=function(){t.push([e].concat(Array.prototype.slice.call(arguments,0)))}};
+for(var i=0;i<ttq.methods.length;i++)ttq.setAndDefer(ttq,ttq.methods[i]);
+ttq.instance=function(t){for(var e=ttq._i[t]||[],n=0;n<ttq.methods.length;n++)
+ttq.setAndDefer(e,ttq.methods[n]);return e},ttq.load=function(e,n){var i="https://analytics.tiktok.com/i18n/pixel/events.js";
+ttq._i=ttq._i||{},ttq._i[e]=[],ttq._i[e]._u=i,ttq._t=ttq._t||{},ttq._t[e]=+new Date,
+ttq._o=ttq._o||{},ttq._o[e]=n||{};var o=document.createElement("script");
+o.type="text/javascript",o.async=!0,o.src=i+"?sdkid="+e+"&lib="+t;
+var a=document.getElementsByTagName("script")[0];a.parentNode.insertBefore(o,a)};
+ttq.load('${code}');
+ttq.page();
+}(window,document,'ttq');
+</script>
+<!-- End TikTok Pixel Code -->`
+  }
+  if (provider === 'google') {
+    return `<!-- Google Tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=${pixelId}"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', '${pixelId}');
+</script>
+<!-- End Google Tag -->`
+  }
+  return ''
+}
+
+function SnippetCard({ pixels }: { pixels: PixelItem[] }) {
+  const [copiedProvider, setCopiedProvider] = useState<string | null>(null)
+
+  const configured = pixels.filter(p => p.pixelId)
+  if (configured.length === 0) return null
+
+  function handleCopy(provider: string, code: string) {
+    navigator.clipboard.writeText(code).catch(() => {})
+    setCopiedProvider(provider)
+    setTimeout(() => setCopiedProvider(null), 2000)
+  }
+
+  return (
+    <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] overflow-hidden">
+      <div className="flex items-center gap-3 px-4 py-3 border-b border-[var(--border)]">
+        <div className="w-8 h-8 rounded-lg bg-[var(--primary)]/10 flex items-center justify-center shrink-0">
+          <Code2 size={16} className="text-[var(--primary)]" />
+        </div>
+        <div>
+          <h2 className="text-[15px] font-semibold text-[var(--text)]">Snippet de instalação</h2>
+          <p className="text-[12px] text-[var(--text-muted)] mt-0.5">
+            Cole o código abaixo no <code className="font-mono text-[11px] bg-[var(--surface-2)] px-1 rounded">&lt;head&gt;</code> de cada página de checkout para ativar o rastreamento browser-side.
+          </p>
+        </div>
+      </div>
+      <div className="divide-y divide-[var(--border)]">
+        {configured.map(p => {
+          const snippet = buildBrowserSnippet(p.provider, p.pixelId, p.pixelCode)
+          if (!snippet) return null
+          const isCopied = copiedProvider === p.provider
+          return (
+            <div key={p.provider} className="px-4 py-3">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <div className="w-5 h-5 rounded flex items-center justify-center text-[10px] font-bold text-white" style={{ background: p.color }}>{p.initial.toUpperCase()}</div>
+                  <span className="text-[13px] font-medium text-[var(--text)]">{p.name}</span>
+                  <code className="text-[10.5px] font-mono text-[var(--text-muted)] bg-[var(--surface-2)] border border-[var(--border)] rounded px-1.5 py-0.5">{p.pixelId}</code>
+                </div>
+                <button
+                  onClick={() => handleCopy(p.provider, snippet)}
+                  className="inline-flex items-center gap-1.5 h-7 px-2.5 text-[12px] font-medium rounded-md border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--surface-2)] transition-colors"
+                >
+                  {isCopied ? <><Check size={12} className="text-green-500" />Copiado!</> : <><Copy size={12} />Copiar</>}
+                </button>
+              </div>
+              <pre className="text-[10.5px] font-mono leading-relaxed text-[var(--text-muted)] bg-[var(--surface-2)] border border-[var(--border)] rounded-lg p-3 overflow-x-auto max-h-40 whitespace-pre-wrap break-all">
+                {snippet}
+              </pre>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+/* ============================================================
    TrackingClient — main component
    ============================================================ */
 
@@ -1278,7 +1398,7 @@ export default function TrackingClient({ initialPixels, initialStats, userId }: 
           eventsSentToday: fresh.events_sent_today,
           eventsMatched:   fresh.events_matched,
           lastEvent:       lastEventMs,
-          status:          computeStatus(p.pixelId, lastEventMs, nowTs),
+          status:          computeStatus(p.pixelId, p.dbStatus, lastEventMs, nowTs),
         })))
       } catch { /* silencioso — não quebra a UI */ }
     }, 5 * 60_000)
@@ -1318,7 +1438,8 @@ export default function TrackingClient({ initialPixels, initialStats, userId }: 
                     events:     (row.events as Record<string, boolean>) || p.events,
                     capi:       row.capi,
                     lastTestAt: row.last_test_at ? new Date(row.last_test_at).getTime() : p.lastTestAt,
-                    status:     computeStatus(row.pixel_id, lastEventMs, nowTs),
+                    dbStatus:   row.status,
+                    status:     computeStatus(row.pixel_id, row.status, lastEventMs, nowTs),
                   }
                 : p
             ))
@@ -1537,6 +1658,17 @@ export default function TrackingClient({ initialPixels, initialStats, userId }: 
         </div>
         <UTMSection onCopy={handleUtmCopy} />
       </section>
+
+      {/* Snippets section */}
+      {hasAnyPixelConfigured && (
+        <section>
+          <div className="flex items-center gap-3 mb-3">
+            <h2 className="text-[11px] uppercase tracking-wider font-semibold text-[var(--text-muted)]">Instalação browser-side</h2>
+            <div className="flex-1 h-px bg-[var(--border)]" />
+          </div>
+          <SnippetCard pixels={pixels} />
+        </section>
+      )}
 
       {/* Modals */}
       <EditPixelModal

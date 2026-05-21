@@ -282,21 +282,35 @@ export async function testPixelAction(pixelDbId: string): Promise<TestResult> {
 
   const plainToken = pixel.access_token ? decryptToken(pixel.access_token) : null
 
+  let result: TestResult
   switch (pixel.provider) {
     case 'meta':
       if (!plainToken) return { ok: false, message: 'Access token não configurado. Necessário para verificar via CAPI.', latency: null }
-      return testMetaPixel(pixel.pixel_id, plainToken)
+      result = await testMetaPixel(pixel.pixel_id, plainToken)
+      break
 
     case 'tiktok':
       if (!plainToken) return { ok: false, message: 'Access token não configurado. Necessário para verificar via Events API.', latency: null }
-      return testTikTokPixel(pixel.pixel_id, plainToken)
+      result = await testTikTokPixel(pixel.pixel_id, plainToken)
+      break
 
     case 'google':
-      return validateGoogleId(pixel.pixel_id)
+      result = validateGoogleId(pixel.pixel_id)
+      break
 
     default:
       return { ok: false, message: 'Provider não suportado.', latency: null }
   }
+
+  // Persiste status verificado no banco (fire-and-forget)
+  supabase
+    .from('pixels')
+    .update({ status: result.ok ? 'healthy' : 'warning' })
+    .eq('id', pixelDbId)
+    .eq('user_id', user.id)
+    .then(() => {/* silencioso */})
+
+  return result
 }
 
 /**
