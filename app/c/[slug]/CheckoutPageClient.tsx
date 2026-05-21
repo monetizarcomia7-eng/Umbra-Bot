@@ -257,12 +257,19 @@ export default function CheckoutPageClient({
                 {c.badge}
               </span>
             )}
-            <div
-              className="aspect-[4/3] rounded-xl mb-4 flex items-center justify-center text-[13px]"
-              style={{ background: `linear-gradient(135deg, ${c.primary_color}18, ${palette.bg})`, border: `1px dashed ${palette.border}`, color: palette.muted }}
-            >
-              imagem do produto
-            </div>
+            {c.product_image ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={c.product_image}
+                alt={c.product_name}
+                className="w-full aspect-[4/3] object-cover rounded-xl mb-4"
+              />
+            ) : (
+              <div
+                className="aspect-[4/3] rounded-xl mb-4 flex items-center justify-center text-[13px]"
+                style={{ background: `linear-gradient(135deg, ${c.primary_color}18, ${palette.bg})`, border: `1px dashed ${palette.border}`, color: palette.muted }}
+              />
+            )}
             <h1 className="text-[22px] font-bold tracking-tight leading-snug">{c.product_name}</h1>
             <p className="text-[14px] mt-2 leading-relaxed" style={{ color: palette.muted }}>{c.product_desc}</p>
 

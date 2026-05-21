@@ -11,6 +11,7 @@ export interface PublicCheckout {
   name:          string
   product_name:  string
   product_desc:  string
+  product_image: string | null
   price:         number
   installments:  number
   gateway:       string
@@ -46,7 +47,7 @@ export default async function PublicCheckoutPage({
   const { data: checkout } = await admin
     .from('checkouts')
     .select(`
-      id, slug, name, product_name, product_desc, price,
+      id, slug, name, product_name, product_desc, product_image, price,
       installments, gateway, primary_color, bg_variant, font,
       logo, badge, fields, methods, layout, user_id
     `)

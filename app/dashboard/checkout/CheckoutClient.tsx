@@ -7,7 +7,7 @@ import {
   Search, Plus, ChevronLeft, Eye, Save, Rocket, ExternalLink,
   Lock, Zap, CreditCard, FileText, Check, X, User, Mail,
   BadgeCheck, Phone, MapPin, Type, Copy, Trash2, MoreHorizontal,
-  Layers, Clock, AlertTriangle, Loader2, Archive,
+  Layers, Clock, AlertTriangle, Loader2, Archive, Upload,
 } from 'lucide-react'
 import { DashboardLayout }  from '@/components/dashboard/Layout'
 import { PageHeader }       from '@/components/dashboard/PageHeader'
@@ -151,7 +151,7 @@ function mapRaw(row: RawCheckout): Checkout {
     slug:         row.slug,
     productName:  row.product_name,
     productDesc:  row.product_desc,
-    productImage: '',
+    productImage: row.product_image ?? '',
     price:        Number(row.price),
     installments: row.installments,
     gateway:      row.gateway,
@@ -463,9 +463,14 @@ function CheckoutPreview({ checkout, gatewayChoices }: { checkout: Checkout; gat
               {c.badge}
             </span>
           )}
-          <div className="aspect-[4/3] rounded-lg mb-3 flex items-center justify-center text-[10px] font-mono" style={{ background: `linear-gradient(135deg, ${c.primaryColor}22, ${palette.surface})`, border: `1px dashed ${palette.border}`, color: palette.muted }}>
-            imagem do produto
-          </div>
+          {c.productImage ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={c.productImage} alt={c.productName} className="w-full aspect-[4/3] object-cover rounded-lg mb-3" />
+          ) : (
+            <div className="aspect-[4/3] rounded-lg mb-3 flex items-center justify-center text-[10px] font-mono" style={{ background: `linear-gradient(135deg, ${c.primaryColor}22, ${palette.surface})`, border: `1px dashed ${palette.border}`, color: palette.muted }}>
+              imagem do produto
+            </div>
+          )}
           <h2 className="text-[15px] font-semibold tracking-tight leading-tight">{c.productName}</h2>
           <p className="text-[11.5px] mt-1.5 leading-relaxed" style={{ color: palette.muted }}>{c.productDesc}</p>
           <div className="mt-4 pt-4" style={{ borderTop: `1px solid ${palette.border}` }}>
@@ -723,11 +728,12 @@ function CheckoutCard({ checkout, gatewayChoices, onOpen, onDuplicate, onDelete,
    Checkout Editor
    ============================================================ */
 
-function CheckoutEditor({ checkout, gatewayChoices, pixelChoices, appUrl, onBack, onSave, onPublish, onDelete, showToast }: {
+function CheckoutEditor({ checkout, gatewayChoices, pixelChoices, appUrl, userId, onBack, onSave, onPublish, onDelete, showToast }: {
   checkout:       Checkout
   gatewayChoices: GatewayChoice[]
   pixelChoices:   PixelChoice[]
   appUrl:         string
+  userId:         string
   onBack:         () => void
   onSave:         (c: Checkout) => Promise<boolean>
   onPublish:      (c: Checkout) => Promise<boolean>
@@ -736,8 +742,10 @@ function CheckoutEditor({ checkout, gatewayChoices, pixelChoices, appUrl, onBack
 }) {
   const [draft, setDraft]             = useState<Checkout>(checkout)
   const [saving, setSaving]           = useState(false)
+  const [uploadingImage, setUploadingImage] = useState(false)
   const [backConfirmOpen, setBackConfirmOpen] = useState(false)
   const [autoSaveLabel, setAutoSaveLabel] = useState<string | null>(null)
+  const sbEditor = createClient()
 
   const draftRef     = useRef(draft)
   const onSaveRef    = useRef(onSave)
@@ -752,6 +760,33 @@ function CheckoutEditor({ checkout, gatewayChoices, pixelChoices, appUrl, onBack
   function set(patch: Partial<Checkout>) { setDraft((d) => ({ ...d, ...patch })) }
   function setFields(patch: Partial<CheckoutFields>) { setDraft((d) => ({ ...d, fields: { ...d.fields, ...patch } })) }
   function setMethods(patch: Partial<CheckoutMethods>) { setDraft((d) => ({ ...d, methods: { ...d.methods, ...patch } })) }
+
+  async function handleImageUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (file.size > 2 * 1024 * 1024) {
+      showToast('Imagem muito grande. Máximo 2 MB.', 'error')
+      e.target.value = ''
+      return
+    }
+    setUploadingImage(true)
+    try {
+      const ext  = file.name.split('.').pop()?.toLowerCase() ?? 'jpg'
+      const path = `${userId}/${draft.id}.${ext}`
+      const { error: uploadError } = await sbEditor.storage
+        .from('checkout-images')
+        .upload(path, file, { upsert: true, contentType: file.type })
+      if (uploadError) { showToast('Erro ao enviar imagem.', 'error'); return }
+      const { data: { publicUrl } } = sbEditor.storage
+        .from('checkout-images')
+        .getPublicUrl(path)
+      set({ productImage: publicUrl })
+      showToast('Imagem enviada!', 'success')
+    } finally {
+      setUploadingImage(false)
+      e.target.value = ''
+    }
+  }
 
   // Auto-save 30s
   useEffect(() => {
@@ -960,6 +995,46 @@ function CheckoutEditor({ checkout, gatewayChoices, pixelChoices, appUrl, onBack
                   <FieldC label="Descrição curta">
                     <textarea value={draft.productDesc} onChange={(e) => set({ productDesc: e.target.value })} rows={3} className={textareaCls} />
                   </FieldC>
+
+                  <FieldC label="Imagem do produto">
+                    {draft.productImage ? (
+                      <div className="relative rounded-lg overflow-hidden border border-[var(--border)]">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={draft.productImage} alt="Produto" className="w-full aspect-video object-cover" />
+                        <button
+                          type="button"
+                          onClick={() => set({ productImage: '' })}
+                          className="absolute top-2 right-2 w-7 h-7 flex items-center justify-center rounded-full bg-black/60 text-white hover:bg-black/80 transition-colors"
+                          title="Remover imagem"
+                        >
+                          <X size={12} />
+                        </button>
+                      </div>
+                    ) : (
+                      <label className={`flex flex-col items-center justify-center w-full aspect-video rounded-lg border-2 border-dashed cursor-pointer transition-colors group ${uploadingImage ? 'border-[var(--primary)] bg-[var(--primary)]/5' : 'border-[var(--border)] hover:border-[var(--primary)] hover:bg-[var(--primary)]/5'}`}>
+                        <input
+                          type="file"
+                          accept="image/jpeg,image/png,image/webp,image/gif"
+                          className="sr-only"
+                          onChange={handleImageUpload}
+                          disabled={uploadingImage}
+                        />
+                        {uploadingImage ? (
+                          <div className="flex flex-col items-center gap-2 text-[var(--primary)]">
+                            <Loader2 size={20} className="animate-spin" />
+                            <span className="text-[11.5px] font-medium">Enviando…</span>
+                          </div>
+                        ) : (
+                          <div className="flex flex-col items-center gap-2 text-[var(--text-muted)] group-hover:text-[var(--primary)] transition-colors">
+                            <Upload size={20} />
+                            <span className="text-[12px] font-medium">Clique para enviar imagem</span>
+                            <span className="text-[11px]">JPG, PNG, WebP · até 2 MB</span>
+                          </div>
+                        )}
+                      </label>
+                    )}
+                  </FieldC>
+
                   <div className="grid grid-cols-2 gap-3">
                     <FieldC label="Preço (R$)">
                       <input type="number" step="0.01" min="0" value={draft.price}
@@ -1298,6 +1373,7 @@ export default function CheckoutClient({
         fields:        template?.fields        ?? { name: true, email: true, cpf: false, phone: false, address: false, cep: false },
         methods:       template?.methods       ?? { pix: true, card: true, boleto: false },
         layout:        template?.layout        ?? 'two_col',
+        product_image: null,
         status:        'draft',
         visits:        0,
         conversions:   0,
@@ -1332,6 +1408,7 @@ export default function CheckoutClient({
         slug:          updated.slug,
         product_name:  updated.productName,
         product_desc:  updated.productDesc,
+        product_image: updated.productImage || null,
         price:         updated.price,
         installments:  updated.installments,
         gateway:       updated.gateway,
@@ -1423,6 +1500,7 @@ export default function CheckoutClient({
         fields:        original.fields,
         methods:       original.methods,
         layout:        original.layout,
+        product_image: original.productImage || null,
         status:        'draft',
         visits:        0,
         conversions:   0,
@@ -1451,6 +1529,7 @@ export default function CheckoutClient({
           gatewayChoices={gatewayChoices}
           pixelChoices={pixelChoices}
           appUrl={appUrl}
+          userId={userId}
           onBack={() => setEditingId(null)}
           onSave={saveCheckout}
           onPublish={publishCheckout}

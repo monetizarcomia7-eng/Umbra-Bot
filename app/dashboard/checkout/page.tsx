@@ -10,6 +10,7 @@ export interface RawCheckout {
   slug:          string
   product_name:  string
   product_desc:  string
+  product_image: string | null
   price:         number
   installments:  number
   gateway:       string
@@ -57,7 +58,7 @@ export default async function CheckoutPage() {
   ] = await Promise.all([
     supabase
       .from('checkouts')
-      .select('id, name, slug, product_name, product_desc, price, installments, gateway, pixel, primary_color, bg_variant, font, logo, badge, fields, methods, layout, status, visits, conversions, conversion, created_at, updated_at')
+      .select('id, name, slug, product_name, product_desc, product_image, price, installments, gateway, pixel, primary_color, bg_variant, font, logo, badge, fields, methods, layout, status, visits, conversions, conversion, created_at, updated_at')
       .eq('user_id', user.id)
       .order('updated_at', { ascending: false })
       .limit(50),
