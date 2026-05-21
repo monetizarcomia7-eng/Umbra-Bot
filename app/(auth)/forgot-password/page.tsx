@@ -4,17 +4,34 @@ import React, { useState } from 'react'
 import Link from 'next/link'
 import { AlertCircle, CheckCircle2, ArrowLeft, Mail } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
+import { ReCaptchaWidget } from '@/components/ReCaptchaWidget'
+import { verifyRecaptchaAction } from '@/app/actions/recaptcha'
 
 export default function ForgotPasswordPage() {
   const [email,   setEmail]   = useState('')
-  const [loading, setLoading] = useState(false)
-  const [sent,    setSent]    = useState(false)
-  const [error,   setError]   = useState<string | null>(null)
+  const [loading,        setLoading]        = useState(false)
+  const [sent,           setSent]           = useState(false)
+  const [error,          setError]          = useState<string | null>(null)
+  const [recaptchaToken, setRecaptchaToken] = useState<string | null>(null)
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError(null)
+
+    if (!recaptchaToken) {
+      setError('Por favor, confirme que você não é um robô.')
+      return
+    }
+
     setLoading(true)
+
+    const captchaOk = await verifyRecaptchaAction(recaptchaToken)
+    if (!captchaOk) {
+      setError('Verificação de segurança falhou. Tente novamente.')
+      setRecaptchaToken(null)
+      setLoading(false)
+      return
+    }
 
     const supabase = createClient()
     const { error: authError } = await supabase.auth.resetPasswordForEmail(email, {
@@ -116,9 +133,13 @@ export default function ForgotPasswordPage() {
                   />
                 </div>
 
+                <div className="flex justify-center">
+                  <ReCaptchaWidget onChange={setRecaptchaToken} />
+                </div>
+
                 <button
                   type="submit"
-                  disabled={loading || !email}
+                  disabled={loading || !email || !recaptchaToken}
                   className="w-full h-11 rounded-xl text-white text-sm font-semibold transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                   style={{ background: 'var(--primary, #7c3aed)' }}
                 >

@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { CheckCircle2, Loader2, UserPlus } from 'lucide-react'
+import { ReCaptchaWidget } from '@/components/ReCaptchaWidget'
 
 interface Props {
   userId: string
@@ -10,8 +11,9 @@ interface Props {
 export function ApplicationForm({ userId }: Props) {
   const [name,    setName]    = useState('')
   const [email,   setEmail]   = useState('')
-  const [status,  setStatus]  = useState<'idle' | 'loading' | 'success' | 'error' | 'duplicate'>('idle')
-  const [errMsg,  setErrMsg]  = useState('')
+  const [status,         setStatus]         = useState<'idle' | 'loading' | 'success' | 'error' | 'duplicate'>('idle')
+  const [errMsg,         setErrMsg]         = useState('')
+  const [recaptchaToken, setRecaptchaToken] = useState<string | null>(null)
 
   const valid =
     name.trim().length >= 2 &&
@@ -20,6 +22,7 @@ export function ApplicationForm({ userId }: Props) {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!valid || status === 'loading') return
+    if (!recaptchaToken) { setErrMsg('Por favor, confirme que você não é um robô.'); setStatus('error'); return }
     setStatus('loading')
     setErrMsg('')
 
@@ -27,7 +30,7 @@ export function ApplicationForm({ userId }: Props) {
       const res = await fetch('/api/affiliates/apply', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, name: name.trim(), email: email.trim().toLowerCase() }),
+        body: JSON.stringify({ userId, name: name.trim(), email: email.trim().toLowerCase(), recaptcha_token: recaptchaToken }),
       })
       const json = await res.json()
 
@@ -116,9 +119,13 @@ export function ApplicationForm({ userId }: Props) {
         />
       </div>
 
+      <div className="flex justify-center">
+        <ReCaptchaWidget onChange={setRecaptchaToken} />
+      </div>
+
       <button
         type="submit"
-        disabled={!valid || status === 'loading'}
+        disabled={!valid || !recaptchaToken || status === 'loading'}
         className="w-full h-10 bg-primary text-primary-fg text-[13.5px] font-semibold rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50 disabled:pointer-events-none flex items-center justify-center gap-2"
       >
         {status === 'loading' ? (

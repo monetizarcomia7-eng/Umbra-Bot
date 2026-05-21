@@ -11,6 +11,7 @@ import { createClient }          from '@/lib/supabase/client'
 import type { PublicCheckout }   from './page'
 import PixelScripts              from './PixelScripts'
 import type { PublicPixelConfig } from './PixelScripts'
+import { ReCaptchaWidget }       from '@/components/ReCaptchaWidget'
 
 /* ─── Types ──────────────────────────────────────────────── */
 
@@ -129,6 +130,7 @@ export default function CheckoutPageClient({
   const [couponCode,       setCouponCode]       = useState('')
   const [couponResult,     setCouponResult]     = useState<CouponResult | null>(null)
   const [couponChecking,   setCouponChecking]   = useState(false)
+  const [recaptchaToken,   setRecaptchaToken]   = useState<string | null>(null)
   const visitTracked   = useRef(false)
   const presenceRef    = useRef<ReturnType<typeof createClient> | null>(null)
   const [exitPopup, setExitPopup] = useState(false)
@@ -335,6 +337,12 @@ export default function CheckoutPageClient({
   async function handleSubmit() {
     if (!validate()) return
 
+    if (!recaptchaToken) {
+      setErrMsg('Por favor, confirme que você não é um robô.')
+      setStep('error')
+      return
+    }
+
     // Cartão e boleto ainda não implementados
     if (method !== 'pix') {
       setErrMsg('Pagamento por cartão e boleto ainda não disponível. Use o Pix.')
@@ -358,6 +366,7 @@ export default function CheckoutPageClient({
           method,
           coupon_code:       couponResult?.valid ? couponCode.trim() : undefined,
           order_bump:        orderBumpSelected && c.order_bump ? true : undefined,
+          recaptcha_token:   recaptchaToken,
           utm_source:        utmSource   ?? null,
           utm_medium:        utmMedium   ?? null,
           utm_campaign:      utmCampaign ?? null,
@@ -735,9 +744,13 @@ export default function CheckoutPageClient({
                       </button>
                     )}
 
+                    <div className="flex justify-center mt-4">
+                      <ReCaptchaWidget onChange={setRecaptchaToken} />
+                    </div>
+
                     <button
                       onClick={handleSubmit}
-                      disabled={submitting || method !== 'pix'}
+                      disabled={submitting || method !== 'pix' || !recaptchaToken}
                       className="w-full mt-5 h-12 rounded-xl text-[15px] font-bold text-white flex items-center justify-center gap-2 transition-opacity disabled:opacity-60"
                       style={{ background: c.primary_color }}
                     >

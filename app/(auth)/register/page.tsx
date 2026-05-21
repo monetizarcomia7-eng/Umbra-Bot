@@ -5,6 +5,8 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { Eye, EyeOff, AlertCircle, CheckCircle2 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
+import { ReCaptchaWidget } from '@/components/ReCaptchaWidget'
+import { verifyRecaptchaAction } from '@/app/actions/recaptcha'
 
 // ─── Dashboard preview (right panel mockup) ───────────────────────────────────
 
@@ -90,9 +92,10 @@ export default function RegisterPage() {
   const [confirm,  setConfirm]  = useState('')
   const [showPwd,  setShowPwd]  = useState(false)
   const [terms,    setTerms]    = useState(false)
-  const [loading,  setLoading]  = useState(false)
-  const [error,    setError]    = useState<string | null>(null)
-  const [success,  setSuccess]  = useState(false)
+  const [loading,        setLoading]        = useState(false)
+  const [error,          setError]          = useState<string | null>(null)
+  const [success,        setSuccess]        = useState(false)
+  const [recaptchaToken, setRecaptchaToken] = useState<string | null>(null)
 
   const pwdStrength = password.length === 0 ? 0
     : password.length < 6 ? 1
@@ -109,8 +112,17 @@ export default function RegisterPage() {
     if (password !== confirm) { setError('As senhas não coincidem.'); return }
     if (password.length < 8)  { setError('A senha deve ter pelo menos 8 caracteres.'); return }
     if (!terms)                { setError('Você precisa aceitar os termos para criar uma conta.'); return }
+    if (!recaptchaToken)       { setError('Por favor, confirme que você não é um robô.'); return }
 
     setLoading(true)
+
+    const captchaOk = await verifyRecaptchaAction(recaptchaToken)
+    if (!captchaOk) {
+      setError('Verificação de segurança falhou. Tente novamente.')
+      setRecaptchaToken(null)
+      setLoading(false)
+      return
+    }
 
     const supabase = createClient()
     const { error: authError } = await supabase.auth.signUp({
@@ -343,9 +355,13 @@ export default function RegisterPage() {
                 </span>
               </label>
 
+              <div className="flex justify-center">
+                <ReCaptchaWidget onChange={setRecaptchaToken} />
+              </div>
+
               <button
                 type="submit"
-                disabled={loading || !email || !password || !name || !terms}
+                disabled={loading || !email || !password || !name || !terms || !recaptchaToken}
                 className="w-full h-11 rounded-xl text-white text-sm font-semibold transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 style={{ background: 'var(--primary, #7c3aed)' }}
               >

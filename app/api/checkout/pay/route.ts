@@ -4,6 +4,7 @@ import { createAdminClient }  from '@/lib/supabase/admin'
 import { decryptToken }       from '@/lib/crypto'
 import { rateLimit }          from '@/lib/rate-limit'
 import { fireCapiPurchase }   from '@/lib/capi'
+import { verifyRecaptchaToken } from '@/lib/recaptcha'
 import * as Sentry            from '@sentry/nextjs'
 
 /* ─── Validation ─────────────────────────────────────────── */
@@ -57,6 +58,7 @@ const paySchema = z.object({
   utm_campaign:   z.string().max(100).nullish(),
   coupon_code:    z.string().max(50).nullish(),
   order_bump:     z.boolean().nullish(),
+  recaptcha_token: z.string().nullish(),
 })
 
 /* ─── POST /api/checkout/pay ─────────────────────────────── */
@@ -88,8 +90,19 @@ export async function POST(request: NextRequest) {
   const {
     checkout_id, customer_name, customer_email, customer_cpf,
     customer_phone, method, utm_source, utm_medium, utm_campaign,
-    coupon_code, order_bump,
+    coupon_code, order_bump, recaptcha_token,
   } = parsed.data
+
+  /* ── 0. Verifica reCAPTCHA ─────────────────────────────── */
+  if (recaptcha_token) {
+    const captchaOk = await verifyRecaptchaToken(recaptcha_token)
+    if (!captchaOk) {
+      return NextResponse.json(
+        { error: 'Verificação de segurança falhou. Recarregue a página e tente novamente.' },
+        { status: 400 },
+      )
+    }
+  }
 
   // Apenas PIX está implementado; cartão e boleto requerem integração adicional
   if (method !== 'pix') {

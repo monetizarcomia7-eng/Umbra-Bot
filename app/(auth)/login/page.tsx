@@ -5,6 +5,8 @@ import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Eye, EyeOff, AlertCircle } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
+import { ReCaptchaWidget } from '@/components/ReCaptchaWidget'
+import { verifyRecaptchaAction } from '@/app/actions/recaptcha'
 
 // ─── Dashboard preview (right panel mockup) ───────────────────────────────────
 
@@ -92,13 +94,28 @@ function LoginForm() {
   const [password, setPassword] = useState('')
   const [remember, setRemember] = useState(false)
   const [showPwd,  setShowPwd]  = useState(false)
-  const [loading,  setLoading]  = useState(false)
-  const [error,    setError]    = useState<string | null>(null)
+  const [loading,        setLoading]        = useState(false)
+  const [error,          setError]          = useState<string | null>(null)
+  const [recaptchaToken, setRecaptchaToken] = useState<string | null>(null)
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError(null)
+
+    if (!recaptchaToken) {
+      setError('Por favor, confirme que você não é um robô.')
+      return
+    }
+
     setLoading(true)
+
+    const captchaOk = await verifyRecaptchaAction(recaptchaToken)
+    if (!captchaOk) {
+      setError('Verificação de segurança falhou. Tente novamente.')
+      setRecaptchaToken(null)
+      setLoading(false)
+      return
+    }
 
     const supabase = createClient()
     const { error: authError } = await supabase.auth.signInWithPassword({ email, password })
@@ -252,9 +269,13 @@ function LoginForm() {
           <span className="text-sm" style={{ color: 'var(--text-muted, #64748b)' }}>Lembrar-me</span>
         </label>
 
+        <div className="flex justify-center">
+          <ReCaptchaWidget onChange={setRecaptchaToken} />
+        </div>
+
         <button
           type="submit"
-          disabled={loading || !email || !password}
+          disabled={loading || !email || !password || !recaptchaToken}
           className="w-full h-11 rounded-xl text-white text-sm font-semibold transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           style={{ background: 'var(--primary, #7c3aed)' }}
         >

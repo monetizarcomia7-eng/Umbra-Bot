@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { rateLimit } from '@/lib/rate-limit'
+import { verifyRecaptchaToken } from '@/lib/recaptcha'
 import { NextRequest, NextResponse } from 'next/server'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -16,7 +17,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'invalid_json' }, { status: 400 })
   }
 
-  const { userId, name, email } = body as { userId?: string; name?: string; email?: string }
+  const { userId, name, email, recaptcha_token } = body as {
+    userId?: string; name?: string; email?: string; recaptcha_token?: string
+  }
+
+  if (recaptcha_token) {
+    const captchaOk = await verifyRecaptchaToken(recaptcha_token)
+    if (!captchaOk) {
+      return NextResponse.json({ error: 'captcha_failed' }, { status: 400 })
+    }
+  }
 
   if (!userId || !name || !email) {
     return NextResponse.json({ error: 'missing_fields' }, { status: 400 })
