@@ -85,7 +85,7 @@ Ambos usam `Authorization: Bearer CRON_SECRET`.
   - `lib/supabase/server.ts` — `createClient()` com anon key + cookies (Server Components, API Routes autenticadas)
   - `lib/supabase/client.ts` — `createClient()` browser (Client Components)
   - `lib/supabase/admin.ts` — `createAdminClient()` com service role key (webhooks externos, cron jobs — bypassa RLS)
-- **Total de arquivos de migração:** 87 arquivos `.sql` (numerados 000–086 + timestamps)
+- **Total de arquivos de migração:** 88 arquivos `.sql` (numerados 000–087 + timestamps)
 - **Migrações auxiliares (não executáveis diretamente):** `_combined.sql`, `_pending_analytics_037_to_041.sql`, `_pending_run_now.sql`
 
 ### Supabase Auth
@@ -377,6 +377,17 @@ Ambos usam `Authorization: Bearer CRON_SECRET`.
 | `checkout_published` | CheckoutClient |
 | `checkout_deleted` | CheckoutClient |
 | `checkout_duplicated` | CheckoutClient |
+| `checkout_link_copied` | CheckoutClient (botão Copiar link no menu do card) |
+| `checkout_pay_started` | CheckoutPageClient — ao clicar em Pagar |
+| `checkout_pay_success` | CheckoutPageClient — pagamento confirmado via polling |
+| `checkout_pay_failed` | CheckoutPageClient — erro de servidor ou rede |
+| `checkout_pay_timeout` | CheckoutPageClient — (EventMap — não disparado ainda) |
+| `coupon_applied` | CheckoutPageClient — ao aplicar cupom válido |
+| `coupon_rejected` | CheckoutPageClient — cupom inválido/expirado |
+| `order_bump_selected` | CheckoutPageClient — ao marcar order bump |
+| `upsell_accepted` | CheckoutPageClient — ao clicar no CTA do upsell |
+| `upsell_rejected` | CheckoutPageClient — ao clicar em "Não, obrigado" |
+| `two_step_phase_advanced` | CheckoutPageClient — ao avançar de dados pessoais para pagamento |
 | `tool_opened` | (EventMap — módulo Ferramentas, não iniciado) |
 | `test_message_sent` | (EventMap — módulo Ferramentas, não iniciado) |
 | `token_validated` | (EventMap — não iniciado) |
@@ -776,7 +787,7 @@ Total de migrações: **87 arquivos** (numeradas de 000 a 086, mais arquivos de 
 | `bots` | Bots Telegram cadastrados (token criptografado, webhook_secret, status) |
 | `flows` | Fluxos de automação (nodes, edges, trigger_type, keywords) |
 | `contacts` | Leads/compradores capturados pelos bots (flow_id, flow_node_id, flow_vars) |
-| `transactions` | Transações financeiras (PIX, status, customer, UTMs, affiliate_id, checkout_id) |
+| `transactions` | Transações financeiras (PIX, status, customer, UTMs, affiliate_id, checkout_id, customer_device) |
 | `withdrawals` | Solicitações de saque (amount, status, account_id, notes, payout_tx_id) |
 | `bank_accounts` | Contas bancárias dos usuários (pix_key, kind, label) |
 | `gateways` | Gateways de pagamento conectados (credentials criptografadas, token_expires_at) |

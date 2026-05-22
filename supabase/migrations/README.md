@@ -745,11 +745,13 @@ flow_id:              uuid        FK → flows(id)
 type:                 text        NOT NULL  default 'sale'
 payment_method:       text        NOT NULL  default 'pix'
 affiliate_id:         uuid        FK → affiliates(id)
+customer_device:      text        check in ('mobile', 'desktop', 'tablet', 'unknown')  [migração 087]
 ```
 
 **Colunas adicionadas por migração:**
 - Migração 079: `checkout_id text FK → checkouts(id)` — vincula transação ao checkout público que gerou o pagamento; preenchido pelo `/api/checkout/pay` ao criar o PIX
 - Migração 079: `customer_phone text` — telefone do comprador (colhido no formulário quando campo habilitado)
+- Migração 087: `customer_device text` — dispositivo detectado via `User-Agent` do comprador (`detectDevice()` em `/api/checkout/pay`); valores: `mobile`, `desktop`, `tablet`, `unknown`
 
 ---
 

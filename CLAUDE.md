@@ -650,6 +650,7 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Checkout — 11 novos eventos PostHog no CheckoutPageClient: checkout_pay_started, checkout_pay_success, checkout_pay_failed, coupon_applied, coupon_rejected, order_bump_selected, upsell_accepted, upsell_rejected, two_step_phase_advanced | ✅ Implementado |
 | Checkout — order_bump.image: loading="lazy" + onError fallback (imagem quebrada oculta, sem crash) | ✅ Corrigido |
 | Checkout — upsell: nota de preço "Cobrado separadamente ao clicar em…" + link com target="_blank" rel="noopener" | ✅ Implementado |
+| Checkout — build fix: `paidAmountRef` captura `effectivePrice` no `handleSubmit` para uso no `useEffect` de `checkout_pay_success` (evita temporal dead zone de `const` declarada depois do efeito) | ✅ Corrigido |
 | Sistema de planos/billing | ❌ Não iniciado |
 | Remarketing — Server Component SSR + RemarketingClient (dados reais, sem mock) | ✅ Funcional |
 | Remarketing — createCampaign: INSERT real com user_id + UUID real retornado | ✅ Implementado |
@@ -4096,11 +4097,14 @@ CheckoutPageClient (Client Component)
   │     expires_at retornado pela API → calcula segundos restantes
   │     Atualiza a cada segundo; mostra "Código expirado" quando chega a zero
   │
-  ├── Polling de status PIX (4s via setInterval):
-  │     GET ou RPC checkout_tx_status({ tx_id, checkout_id }) → { status }
+  ├── Polling de status PIX (recursive setTimeout, 4s, MAX_ATTEMPTS=120):
+  │     GET /api/checkout/status?tx_id=...&checkout_id=... → { status }
+  │     Padrão recursive setTimeout (não setInterval) — evita sobreposição de requests async
+  │     flag `active` + `clearTimeout` no cleanup → seguro para unmount
   │     'approved' → verifica c.upsell → se definido: step='upsell'; senão: redireciona/confirma
-  │     'expired' / 'cancelled' → exibe mensagem de expiração
-  │     AbortController: limpa ao desmontar ou ao confirmar pagamento
+  │     'cancelled' → exibe mensagem de expiração + step='error'
+  │     `paidAmountRef.current` capturado no `handleSubmit` antes do submit → usado no
+  │     `useEffect` de `checkout_pay_success` sem depender de `effectivePrice` (temporal dead zone)
   │
   ├── Upsell pós-pagamento (step='upsell', quando c.upsell definido):
   │     Modal com título, descrição, preço e CTA do upsell
