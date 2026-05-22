@@ -77,6 +77,18 @@ type EventMap = {
   checkout_published:        { slug: string; price: number }
   checkout_deleted:          { status: string }
   checkout_duplicated:       Record<string, never>
+  // Checkout público (comprador)
+  checkout_pay_started:      { checkout_id: string; amount: number; has_coupon: boolean; has_order_bump: boolean }
+  checkout_pay_success:      { checkout_id: string; amount: number; time_to_pay_ms?: number }
+  checkout_pay_failed:       { checkout_id: string; error_type: string }
+  checkout_pay_timeout:      { checkout_id: string }
+  coupon_applied:            { checkout_id: string; coupon_type: string; discount: number }
+  coupon_rejected:           { checkout_id: string; reason: string }
+  order_bump_selected:       { checkout_id: string; bump_price: number }
+  upsell_accepted:           { checkout_id: string }
+  upsell_rejected:           { checkout_id: string }
+  two_step_phase_advanced:   { checkout_id: string }
+  checkout_link_copied:      { slug: string }
   // Aba Ferramentas
   tool_opened:               { tool_id: string }
   test_message_sent:         { bot_id: string; success: boolean; time_ms: number; format: string }

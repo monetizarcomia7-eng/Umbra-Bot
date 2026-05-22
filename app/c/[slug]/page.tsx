@@ -3,6 +3,9 @@ import { createAdminClient }  from '@/lib/supabase/admin'
 import CheckoutPageClient     from './CheckoutPageClient'
 import type { PublicPixelConfig } from './PixelScripts'
 
+// Revalida a cada 60s — mantém dados frescos sem sacrificar performance de edge
+export const revalidate = 60
+
 /* ─── Tipos exportados para o CheckoutPageClient ─────────── */
 
 export interface PublicCheckout {

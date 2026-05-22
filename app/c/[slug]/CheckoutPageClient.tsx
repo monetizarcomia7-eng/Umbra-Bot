@@ -12,6 +12,7 @@ import type { PublicCheckout }   from './page'
 import PixelScripts              from './PixelScripts'
 import type { PublicPixelConfig } from './PixelScripts'
 import { ReCaptchaWidget }       from '@/components/ReCaptchaWidget'
+import { useAnalytics }          from '@/hooks/use-analytics'
 
 /* ─── Types ──────────────────────────────────────────────── */
 
@@ -132,6 +133,8 @@ export default function CheckoutPageClient({
   const [couponResult,     setCouponResult]     = useState<CouponResult | null>(null)
   const [couponChecking,   setCouponChecking]   = useState(false)
   const [recaptchaToken,   setRecaptchaToken]   = useState<string | null>(null)
+  const { track }      = useAnalytics()
+  const payStartTime   = useRef<number | null>(null)
   const visitTracked   = useRef(false)
   const presenceRef    = useRef<ReturnType<typeof createClient> | null>(null)
   const [exitPopup, setExitPopup] = useState(false)
@@ -197,39 +200,43 @@ export default function CheckoutPageClient({
     return () => clearInterval(t)
   }, [step, pixData])
 
-  // Polling de confirmação PIX — a cada 4s enquanto step='payment'
+  // Polling de confirmação PIX — recursivo para evitar sobreposição de requests
   useEffect(() => {
     if (step !== 'payment' || !transactionId) return
 
+    let active = true
     let attempts = 0
+    let timeoutId: ReturnType<typeof setTimeout>
     const MAX_ATTEMPTS = 120
-    const controller = new AbortController()
 
     async function poll() {
-      if (attempts >= MAX_ATTEMPTS) return
+      if (!active || attempts >= MAX_ATTEMPTS) return
       attempts++
       try {
         const res = await fetch(
           `/api/checkout/status?tx_id=${encodeURIComponent(transactionId ?? '')}&checkout_id=${encodeURIComponent(c.id)}`,
-          { signal: controller.signal },
         )
-        if (!res.ok) return
+        if (!active) return
+        if (!res.ok) { if (active) timeoutId = setTimeout(poll, 4_000); return }
         const { status } = await res.json() as { status: string }
+        if (!active) return
         if (status === 'approved') {
           setStep('success')
         } else if (status === 'cancelled') {
           setErrMsg('O PIX expirou ou foi cancelado. Gere um novo para tentar novamente.')
           setStep('error')
+        } else {
+          if (active) timeoutId = setTimeout(poll, 4_000)
         }
       } catch {
-        /* network error ou abort — ignora silenciosamente */
+        if (active) timeoutId = setTimeout(poll, 4_000)
       }
     }
 
-    const interval = setInterval(poll, 4_000)
+    timeoutId = setTimeout(poll, 4_000)
     return () => {
-      clearInterval(interval)
-      controller.abort()
+      active = false
+      clearTimeout(timeoutId)
     }
   }, [step, transactionId, c.id])
 
@@ -267,11 +274,17 @@ export default function CheckoutPageClient({
   // Redireciona para success_url 3s após confirmação — ou mostra upsell primeiro
   useEffect(() => {
     if (step !== 'success') return
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    track('checkout_pay_success', {
+      checkout_id: c.id,
+      amount:      effectivePrice,
+      time_to_pay_ms: payStartTime.current ? Date.now() - payStartTime.current : undefined,
+    })
     if (c.upsell) { setStep('upsell'); return }
     if (!c.success_url) return
     const t = setTimeout(() => { window.location.href = c.success_url! }, 3000)
     return () => clearTimeout(t)
-  }, [step, c.success_url, c.upsell])
+  }, [step, c.success_url, c.upsell]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleApplyCoupon = useCallback(async () => {
     const code = couponCode.trim()
@@ -284,12 +297,22 @@ export default function CheckoutPageClient({
       )
       const result = await res.json() as CouponResult
       setCouponResult(result)
+      if (result.valid) {
+        track('coupon_applied', {
+          checkout_id:  c.id,
+          coupon_type:  result.type ?? 'unknown',
+          discount:     result.discount ?? 0,
+        })
+      } else {
+        track('coupon_rejected', { checkout_id: c.id, reason: result.error ?? 'invalid' })
+      }
     } catch {
       setCouponResult({ valid: false, error: 'Erro ao validar cupom.' })
+      track('coupon_rejected', { checkout_id: c.id, reason: 'network_error' })
     } finally {
       setCouponChecking(false)
     }
-  }, [couponCode, c.id])
+  }, [couponCode, c.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function handleField(id: string, raw: string) {
     const def = allFieldDefs.find((f) => f.id === id)
@@ -353,6 +376,14 @@ export default function CheckoutPageClient({
 
     setSubmitting(true)
     setErrMsg('')
+    payStartTime.current = Date.now()
+
+    track('checkout_pay_started', {
+      checkout_id:    c.id,
+      amount:         effectivePrice,
+      has_coupon:     !!(couponResult?.valid),
+      has_order_bump: orderBumpSelected && !!c.order_bump,
+    })
 
     try {
       const res = await fetch('/api/checkout/pay', {
@@ -375,12 +406,18 @@ export default function CheckoutPageClient({
       })
 
       const data = await res.json()
-      if (!res.ok) { setErrMsg(data.error ?? 'Erro ao processar pagamento.'); setStep('error'); return }
+      if (!res.ok) {
+        track('checkout_pay_failed', { checkout_id: c.id, error_type: 'server_error' })
+        setErrMsg(data.error ?? 'Erro ao processar pagamento.')
+        setStep('error')
+        return
+      }
 
       setPixData({ qr_code: data.pix_qr_code, copy_paste: data.pix_copy_paste, expires_at: data.expires_at })
       setTransactionId(data.transaction_id ?? null)
       setStep('payment')
     } catch {
+      track('checkout_pay_failed', { checkout_id: c.id, error_type: 'network_error' })
       setErrMsg('Erro de conexão. Verifique sua internet e tente novamente.')
       setStep('error')
     } finally {
@@ -595,6 +632,7 @@ export default function CheckoutPageClient({
                           }
                           if (Object.keys(errs).length) { setErrors(errs); return }
                           setErrors({})
+                          track('two_step_phase_advanced', { checkout_id: c.id })
                           setTwoStepPhase('payment')
                         }}
                         className="w-full mt-6 h-12 rounded-xl text-[15px] font-bold text-white flex items-center justify-center gap-2"
@@ -685,7 +723,11 @@ export default function CheckoutPageClient({
                       <div
                         className="mt-4 p-4 rounded-xl cursor-pointer select-none"
                         style={{ background: c.primary_color + '08', border: `2px solid ${orderBumpSelected ? c.primary_color : c.primary_color + '30'}` }}
-                        onClick={() => setOrderBumpSelected((v) => !v)}
+                        onClick={() => {
+                          const next = !orderBumpSelected
+                          setOrderBumpSelected(next)
+                          if (next && c.order_bump) track('order_bump_selected', { checkout_id: c.id, bump_price: c.order_bump.price })
+                        }}
                       >
                         <div className="flex items-start gap-3">
                           <div
@@ -697,7 +739,13 @@ export default function CheckoutPageClient({
                           <div className="flex-1 min-w-0">
                             {c.order_bump.image && (
                               // eslint-disable-next-line @next/next/no-img-element
-                              <img src={c.order_bump.image} alt={c.order_bump.title} className="w-full rounded-lg mb-2 max-h-24 object-cover" />
+                              <img
+                                src={c.order_bump.image}
+                                alt={c.order_bump.title}
+                                loading="lazy"
+                                className="w-full rounded-lg mb-2 max-h-24 object-cover"
+                                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+                              />
                             )}
                             <div className="text-[13px] font-semibold leading-tight">
                               Sim! Quero também: {c.order_bump.title}
@@ -910,8 +958,16 @@ export default function CheckoutPageClient({
                     {c.upsell.price > 0 && (
                       <div className="text-[20px] font-extrabold mb-3" style={{ color: c.primary_color }}>{fmtBRL(c.upsell.price)}</div>
                     )}
+                    {c.upsell.price > 0 && (
+                      <p className="text-[11px] mb-2 text-center" style={{ color: palette.subtle }}>
+                        Cobrado separadamente ao clicar em &quot;{c.upsell.cta || 'Aproveitar oferta'}&quot;
+                      </p>
+                    )}
                     <a
                       href={c.upsell.link}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={() => track('upsell_accepted', { checkout_id: c.id })}
                       className="flex items-center justify-center gap-2 w-full h-11 rounded-xl text-[14px] font-bold text-white"
                       style={{ background: c.primary_color }}
                     >
@@ -921,6 +977,7 @@ export default function CheckoutPageClient({
                 </div>
                 <button
                   onClick={() => {
+                    track('upsell_rejected', { checkout_id: c.id })
                     if (c.success_url) window.location.href = c.success_url
                     else setStep('success')
                   }}

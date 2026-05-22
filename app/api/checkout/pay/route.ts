@@ -9,6 +9,15 @@ import * as Sentry            from '@sentry/nextjs'
 
 /* ─── Validation ─────────────────────────────────────────── */
 
+function detectDevice(ua: string | null): 'mobile' | 'desktop' | 'tablet' | 'unknown' {
+  if (!ua) return 'unknown'
+  const u = ua.toLowerCase()
+  if (/tablet|ipad|playbook|silk/.test(u)) return 'tablet'
+  if (/mobile|android|iphone|ipod|blackberry|opera mini|iemobile|wpdesktop/.test(u)) return 'mobile'
+  if (/mozilla|chrome|safari|firefox|msie|trident/.test(u)) return 'desktop'
+  return 'unknown'
+}
+
 function validateCPF(digits: string): boolean {
   if (/^(\d)\1{10}$/.test(digits)) return false
   let sum = 0
@@ -112,8 +121,9 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  const customerPhone = customer_phone ?? null
-  const docType       = customer_cpf.length === 14 ? 'CNPJ' : 'CPF'
+  const customerPhone  = customer_phone ?? null
+  const docType        = customer_cpf.length === 14 ? 'CNPJ' : 'CPF'
+  const customerDevice = detectDevice(request.headers.get('user-agent'))
 
   const admin = createAdminClient()
 
@@ -250,6 +260,7 @@ export async function POST(request: NextRequest) {
       customer_name,
       customer_email,
       customer_phone:     customerPhone,
+      customer_device:    customerDevice,
       utm_source:         utm_source ?? null,
       utm_medium:         utm_medium ?? null,
       utm_campaign:       utm_campaign ?? null,

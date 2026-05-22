@@ -644,6 +644,12 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Checkout — /api/checkout/pay: coupon_code + order_bump; totalPrice = (price − desconto) + bumpPrice | ✅ Implementado |
 | Checkout — aviso legal no rodapé da página pública: declaração Umbra Bot + nome do vendedor dinâmico + links Termos/Privacidade + Denunciar produto + nota reCAPTCHA Google | ✅ Implementado |
 | Checkout — /c/[slug]/page.tsx: busca profiles.name do vendedor (sellerName) via admin client e passa ao CheckoutPageClient | ✅ Implementado |
+| Checkout — migração 087: customer_device (mobile/desktop/tablet/unknown) em transactions; detectDevice() em /api/checkout/pay via User-Agent | ✅ Implementado |
+| Checkout — /c/[slug]/page.tsx: export const revalidate = 60 (ISR — dados frescos sem custo de SSR puro) | ✅ Implementado |
+| Checkout — polling PIX refatorado: setInterval → recursive setTimeout com flag active (sem sobreposição de requests) | ✅ Corrigido |
+| Checkout — 11 novos eventos PostHog no CheckoutPageClient: checkout_pay_started, checkout_pay_success, checkout_pay_failed, coupon_applied, coupon_rejected, order_bump_selected, upsell_accepted, upsell_rejected, two_step_phase_advanced | ✅ Implementado |
+| Checkout — order_bump.image: loading="lazy" + onError fallback (imagem quebrada oculta, sem crash) | ✅ Corrigido |
+| Checkout — upsell: nota de preço "Cobrado separadamente ao clicar em…" + link com target="_blank" rel="noopener" | ✅ Implementado |
 | Sistema de planos/billing | ❌ Não iniciado |
 | Remarketing — Server Component SSR + RemarketingClient (dados reais, sem mock) | ✅ Funcional |
 | Remarketing — createCampaign: INSERT real com user_id + UUID real retornado | ✅ Implementado |
@@ -921,6 +927,15 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | `pixel_verified` | `TrackingClient.tsx` — ao verificar conexão do pixel (inclui provider + status: 'ok'\|'error') |
 | `pixel_test_sent` | `TrackingClient.tsx` — ao enviar evento de teste via CAPI (inclui provider) |
 | `utm_link_copied` | `TrackingClient.tsx` — ao copiar link UTM gerado (inclui has_utm: boolean) |
+| `checkout_pay_started` | `CheckoutPageClient.tsx` — ao clicar em Pagar (inclui checkout_id, amount, has_coupon, has_order_bump) |
+| `checkout_pay_success` | `CheckoutPageClient.tsx` — ao confirmar pagamento via polling (inclui checkout_id, amount, time_to_pay_ms) |
+| `checkout_pay_failed` | `CheckoutPageClient.tsx` — em erros de servidor ou rede (inclui checkout_id, error_type) |
+| `coupon_applied` | `CheckoutPageClient.tsx` — ao aplicar cupom válido (inclui checkout_id, coupon_type, discount) |
+| `coupon_rejected` | `CheckoutPageClient.tsx` — ao tentar cupom inválido/expirado (inclui checkout_id, reason) |
+| `order_bump_selected` | `CheckoutPageClient.tsx` — ao marcar order bump (inclui checkout_id, bump_price) |
+| `upsell_accepted` | `CheckoutPageClient.tsx` — ao clicar no CTA do upsell (inclui checkout_id) |
+| `upsell_rejected` | `CheckoutPageClient.tsx` — ao clicar em "Não, obrigado" no upsell (inclui checkout_id) |
+| `two_step_phase_advanced` | `CheckoutPageClient.tsx` — ao avançar de dados pessoais para pagamento (inclui checkout_id) |
 
 ---
 
