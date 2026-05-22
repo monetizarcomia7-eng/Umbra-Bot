@@ -114,27 +114,30 @@ async function _sendOne(
   const durationMs = Date.now() - start
 
   // Persiste a entrega
-  await admin.from('webhook_deliveries').insert({
-    webhook_id:      webhook.id,
-    user_id:         userId,
-    event_type:      eventType,
-    payload:         payloadObj,
-    response_status: responseStatus,
-    response_body:   responseBody.slice(0, 2000),
-    duration_ms:     durationMs,
-    success,
-    attempt:         1,
-  }).catch((err) => {
+  try {
+    await admin.from('webhook_deliveries').insert({
+      webhook_id:      webhook.id,
+      user_id:         userId,
+      event_type:      eventType,
+      payload:         payloadObj,
+      response_status: responseStatus,
+      response_body:   responseBody.slice(0, 2000),
+      duration_ms:     durationMs,
+      success,
+      attempt:         1,
+    })
+  } catch (err) {
     Sentry.captureException(err, { extra: { webhookId: webhook.id, eventType, context: 'webhooks_insert_delivery' } })
-  })
+  }
 
   // Atualiza stats e last_delivery
-  await admin.rpc('sync_webhook_stats', { p_webhook_id: webhook.id }).catch(() => {})
+  try { await admin.rpc('sync_webhook_stats', { p_webhook_id: webhook.id }) } catch { /* ignore */ }
   if (success) {
-    await admin
-      .from('webhooks')
-      .update({ last_delivery: Date.now() })
-      .eq('id', webhook.id)
-      .catch(() => {})
+    try {
+      await admin
+        .from('webhooks')
+        .update({ last_delivery: Date.now() })
+        .eq('id', webhook.id)
+    } catch { /* ignore */ }
   }
 }
