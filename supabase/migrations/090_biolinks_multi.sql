@@ -2,6 +2,10 @@
 -- Updates biolink_analytics RPC to support optional per-biolink filtering
 -- Enables the multi-biolink dashboard to load analytics per biolink
 
+-- Drop all existing overloads before recreating with new signature
+drop function if exists public.biolink_analytics(uuid, int);
+drop function if exists public.biolink_analytics(uuid, int, text);
+
 create or replace function public.biolink_analytics(
   p_user_id    uuid,
   p_days       int  default 30,

@@ -171,19 +171,14 @@ export function BioPublicClient({ biolink, slug }: Props) {
             }
           </div>
 
-          <h1
-            className="text-[20px] font-bold tracking-tight mt-4 text-center"
-            style={{ color: theme.text }}
-          >
-            {biolink.name || 'Sem nome'}
-          </h1>
-
-          <span
-            className="text-[11.5px] font-mono mt-1"
-            style={{ color: theme.muted }}
-          >
-            umbra.bot/b/{slug}
-          </span>
+          {biolink.name && (
+            <h1
+              className="text-[20px] font-bold tracking-tight mt-4 text-center"
+              style={{ color: theme.text }}
+            >
+              {biolink.name}
+            </h1>
+          )}
 
           {biolink.bio && (
             <p
