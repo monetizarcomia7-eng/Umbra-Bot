@@ -18,18 +18,10 @@ export interface RawBiolink {
   links: unknown
   views: number
   clicks: number
-  conversion: number
-  top_referrer: string
   status: 'published' | 'draft'
   user_id: string
   created_at: string
   updated_at: string
-}
-
-export interface BioAnalytics {
-  views_period: number
-  clicks_period: number
-  clicks_by_link: Record<string, number>
 }
 
 export default async function BioLinkPage() {
@@ -37,19 +29,17 @@ export default async function BioLinkPage() {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
 
-  const [biolinkRes, analyticsRes] = await Promise.all([
-    supabase.from('biolinks').select('*').eq('user_id', user.id).maybeSingle(),
-    supabase.rpc('biolink_analytics', { p_user_id: user.id, p_days: 30 }),
-  ])
-
-  const fallbackAnalytics: BioAnalytics = { views_period: 0, clicks_period: 0, clicks_by_link: {} }
+  const { data: biolinks } = await supabase
+    .from('biolinks')
+    .select('*')
+    .eq('user_id', user.id)
+    .order('created_at', { ascending: false })
 
   return (
     <DashboardLayout>
       <BioLinkClient
         userId={user.id}
-        initialBiolink={(biolinkRes.data as RawBiolink) ?? null}
-        initialAnalytics={(analyticsRes.data as BioAnalytics) ?? fallbackAnalytics}
+        initialBiolinks={(biolinks as RawBiolink[]) ?? []}
         appUrl={process.env.APP_URL ?? 'https://umbra.bot'}
       />
     </DashboardLayout>
