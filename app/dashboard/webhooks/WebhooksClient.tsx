@@ -20,8 +20,10 @@ import {
   testWebhookAction,
   generateSecretAction,
   loadDeliveriesAction,
+  loadDeliveryDetailAction,
   resendDeliveryAction,
   type RawDelivery,
+  type DeliveryDetail,
   type WebhookPayload,
 } from '@/app/actions/webhooks'
 
@@ -169,48 +171,114 @@ function KpiW({ label, value, icon: Icon_, tone, highlight }: {
 function DeliveryRow({ delivery, now, onResend, resending }: {
   delivery: RawDelivery; now: number; onResend: (id: string) => void; resending: boolean
 }) {
+  const [expanded, setExpanded] = useState(false)
+  const [detail, setDetail]     = useState<DeliveryDetail | null>(null)
+  const [loadingDetail, setLoadingDetail] = useState(false)
   const status = delivery.response_status
+
+  async function toggleExpand() {
+    if (!expanded && !detail) {
+      setLoadingDetail(true)
+      try {
+        const d = await loadDeliveryDetailAction(delivery.id)
+        setDetail(d)
+      } catch { /* ignore */ } finally {
+        setLoadingDetail(false)
+      }
+    }
+    setExpanded((v) => !v)
+  }
+
   return (
-    <tr className="border-t border-[var(--border)] hover:bg-[var(--surface-2)]/40 transition-colors">
-      <td className="pl-4 pr-2 py-2 whitespace-nowrap">
-        {delivery.success
-          ? <CheckCircle2 size={13} className="text-green-500" />
-          : <XCircle      size={13} className="text-red-500" />}
-      </td>
-      <td className="px-2 py-2 whitespace-nowrap">
-        <code className="text-[11.5px] font-mono text-[var(--text)]">{delivery.event_type}</code>
-      </td>
-      <td className="px-2 py-2 whitespace-nowrap">
-        <span className={`inline-flex items-center px-1.5 h-5 rounded font-mono text-[10.5px] font-semibold ${
-          !status                  ? 'bg-[var(--surface-2)] text-[var(--text-muted)]' :
-          status < 300             ? 'bg-green-500/10 text-green-600 dark:text-green-400' :
-          status < 400             ? 'bg-yellow-500/10 text-yellow-600' :
-          'bg-red-500/10 text-red-500'}`}>
-          {status ?? '—'}
-        </span>
-      </td>
-      <td className="px-2 py-2 text-right whitespace-nowrap">
-        <span className={`text-[11.5px] ${!delivery.duration_ms ? 'text-[var(--text-muted)]' : delivery.duration_ms > 3000 ? 'text-red-500' : delivery.duration_ms > 1000 ? 'text-yellow-500' : 'text-[var(--text-muted)]'}`}>
-          {delivery.duration_ms != null ? `${delivery.duration_ms} ms` : '—'}
-        </span>
-      </td>
-      <td className="px-2 py-2 whitespace-nowrap text-[11px] text-[var(--text-muted)]">
-        {delivery.attempt > 1 && <span className="text-yellow-500">tent. {delivery.attempt}</span>}
-      </td>
-      <td className="px-2 py-2 whitespace-nowrap text-[11px] text-[var(--text-muted)]">
-        {fmtTime(new Date(delivery.created_at).getTime())}
-      </td>
-      <td className="pl-2 pr-4 py-2 text-right">
-        <button
-          onClick={() => onResend(delivery.id)}
-          disabled={resending}
-          className="h-7 px-2 inline-flex items-center gap-1 text-[11px] font-medium text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface-2)] rounded-md disabled:opacity-50 focus:outline-none"
-        >
-          {resending ? <Loader2 size={10} className="animate-spin" /> : <RotateCw size={10} />}
-          Reenviar
-        </button>
-      </td>
-    </tr>
+    <>
+      <tr className="border-t border-[var(--border)] hover:bg-[var(--surface-2)]/40 transition-colors">
+        <td className="pl-4 pr-2 py-2 whitespace-nowrap">
+          {delivery.success
+            ? <CheckCircle2 size={13} className="text-green-500" />
+            : <XCircle      size={13} className="text-red-500" />}
+        </td>
+        <td className="px-2 py-2 whitespace-nowrap">
+          <code className="text-[11.5px] font-mono text-[var(--text)]">{delivery.event_type}</code>
+        </td>
+        <td className="px-2 py-2 whitespace-nowrap">
+          <span className={`inline-flex items-center px-1.5 h-5 rounded font-mono text-[10.5px] font-semibold ${
+            !status                  ? 'bg-[var(--surface-2)] text-[var(--text-muted)]' :
+            status < 300             ? 'bg-green-500/10 text-green-600 dark:text-green-400' :
+            status < 400             ? 'bg-yellow-500/10 text-yellow-600' :
+            'bg-red-500/10 text-red-500'}`}>
+            {status ?? '—'}
+          </span>
+        </td>
+        <td className="px-2 py-2 text-right whitespace-nowrap">
+          <span className={`text-[11.5px] ${!delivery.duration_ms ? 'text-[var(--text-muted)]' : delivery.duration_ms > 3000 ? 'text-red-500' : delivery.duration_ms > 1000 ? 'text-yellow-500' : 'text-[var(--text-muted)]'}`}>
+            {delivery.duration_ms != null ? `${delivery.duration_ms} ms` : '—'}
+          </span>
+        </td>
+        <td className="px-2 py-2 whitespace-nowrap text-[11px] text-[var(--text-muted)]">
+          {delivery.attempt > 1 && <span className="text-yellow-500">tent. {delivery.attempt}</span>}
+        </td>
+        <td className="px-2 py-2 whitespace-nowrap text-[11px] text-[var(--text-muted)]">
+          {fmtTime(new Date(delivery.created_at).getTime())}
+        </td>
+        <td className="pl-2 pr-4 py-2 text-right whitespace-nowrap">
+          <div className="flex items-center justify-end gap-1">
+            <button
+              onClick={toggleExpand}
+              disabled={loadingDetail}
+              className="h-7 px-2 inline-flex items-center gap-1 text-[11px] font-medium text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface-2)] rounded-md disabled:opacity-50 focus:outline-none"
+              title="Ver payload"
+            >
+              {loadingDetail
+                ? <Loader2 size={10} className="animate-spin" />
+                : expanded ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
+            </button>
+            <button
+              onClick={() => onResend(delivery.id)}
+              disabled={resending}
+              className="h-7 px-2 inline-flex items-center gap-1 text-[11px] font-medium text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--surface-2)] rounded-md disabled:opacity-50 focus:outline-none"
+            >
+              {resending ? <Loader2 size={10} className="animate-spin" /> : <RotateCw size={10} />}
+              Reenviar
+            </button>
+          </div>
+        </td>
+      </tr>
+
+      {/* Payload expandido */}
+      {expanded && (
+        <tr className="border-t border-[var(--border)] bg-[var(--surface-2)]/30">
+          <td colSpan={8} className="px-4 py-3">
+            {detail ? (
+              <div className="space-y-2.5">
+                <div>
+                  <div className="text-[10.5px] font-semibold text-[var(--text-muted)] uppercase tracking-wider mb-1.5">
+                    Payload enviado
+                  </div>
+                  <pre className="text-[10.5px] font-mono bg-[var(--surface)] border border-[var(--border)] rounded-lg p-3 overflow-x-auto leading-relaxed text-[var(--text)] max-h-48">
+                    {JSON.stringify(detail.payload, null, 2)}
+                  </pre>
+                </div>
+                {detail.response_body && (
+                  <div>
+                    <div className="text-[10.5px] font-semibold text-[var(--text-muted)] uppercase tracking-wider mb-1.5">
+                      Resposta recebida
+                    </div>
+                    <pre className="text-[10.5px] font-mono bg-[var(--surface)] border border-[var(--border)] rounded-lg p-3 overflow-x-auto leading-relaxed text-[var(--text)] max-h-32">
+                      {(() => {
+                        try { return JSON.stringify(JSON.parse(detail.response_body!), null, 2) }
+                        catch { return detail.response_body }
+                      })()}
+                    </pre>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="text-[11.5px] text-[var(--text-muted)]">Sem dados disponíveis.</div>
+            )}
+          </td>
+        </tr>
+      )}
+    </>
   )
 }
 

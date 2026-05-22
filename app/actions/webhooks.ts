@@ -250,6 +250,25 @@ export interface RawDelivery {
   created_at:      string
 }
 
+export interface DeliveryDetail {
+  payload:       Record<string, unknown>
+  response_body: string | null
+}
+
+export async function loadDeliveryDetailAction(deliveryId: string): Promise<DeliveryDetail> {
+  const { supabase, user } = await getAuthedUser()
+
+  const { data, error } = await supabase
+    .from('webhook_deliveries')
+    .select('payload, response_body')
+    .eq('id', deliveryId)
+    .eq('user_id', user.id)
+    .single()
+
+  if (error || !data) throw new Error('Entrega não encontrada.')
+  return data as DeliveryDetail
+}
+
 export async function loadDeliveriesAction(
   webhookId: string,
   page = 0,
