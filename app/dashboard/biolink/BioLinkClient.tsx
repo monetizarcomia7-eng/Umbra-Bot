@@ -100,6 +100,7 @@ const FALLBACK_ANALYTICS: BioAnalytics = { views_period: 0, clicks_period: 0, cl
 
 const fmtNum = (n: number) => new Intl.NumberFormat('pt-BR').format(n)
 const fmtPct = (n: number, d = 0) => n.toFixed(d).replace('.', ',') + '%'
+const stripProtocol = (url: string) => url.replace(/^https?:\/\//, '')
 
 function mapRaw(row: RawBiolink): BioPage {
   return {
@@ -538,6 +539,38 @@ function DeleteConfirmModal({ name, onCancel, onConfirm, loading }: {
 }
 
 /* ============================================================
+   Quick preview modal
+   ============================================================ */
+
+function QuickPreviewModal({ biolink, appUrl, onClose }: {
+  biolink: BioPage; appUrl: string; onClose: () => void
+}) {
+  const theme = themePresets.find((t) => t.id === biolink.themeId) ?? themePresets[0]
+  const publicUrl = biolink.status === 'published' && biolink.slug ? `${appUrl}/b/${biolink.slug}` : null
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+      onClick={onClose}
+    >
+      <div className="flex flex-col items-center gap-4" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between w-full px-1">
+          <span className="text-white font-semibold text-[14px] truncate max-w-[260px]">
+            {biolink.name || 'Sem nome'}
+          </span>
+          <button onClick={onClose} className="ml-4 text-white/70 hover:text-white transition-colors">
+            <X size={18} />
+          </button>
+        </div>
+        <PhonePreview page={biolink} theme={theme} publicUrl={publicUrl} />
+        {biolink.slug && (
+          <p className="text-white/50 text-[11px] font-mono">{stripProtocol(appUrl)}/b/{biolink.slug}</p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/* ============================================================
    Avatar upload
    ============================================================ */
 
@@ -568,20 +601,25 @@ function AvatarUpload({ avatarUrl, initials, color, onFileSelect, uploading }: {
    Bio Link Card (list view)
    ============================================================ */
 
-function BioLinkCard({ biolink, appUrl, onEdit, onDelete, onTogglePublish, toggling }: {
+function BioLinkCard({ biolink, appUrl, onEdit, onDelete, onTogglePublish, onDuplicate, onPreview, toggling, duplicating }: {
   biolink: BioPage
   appUrl: string
   onEdit: () => void
   onDelete: () => void
   onTogglePublish: () => void
+  onDuplicate: () => void
+  onPreview: () => void
   toggling: boolean
+  duplicating: boolean
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [copied, setCopied] = useState(false)
   const [qrOpen, setQrOpen] = useState(false)
   const publicUrl = `${appUrl}/b/${biolink.slug}`
+  const displayUrl = `${stripProtocol(appUrl)}/b/${biolink.slug}`
   const isPublished = biolink.status === 'published'
   const theme = themePresets.find((t) => t.id === biolink.themeId) ?? themePresets[0]
+  const conversion = biolink.views > 0 ? (biolink.clicks / biolink.views) * 100 : 0
 
   function copyUrl(e: React.MouseEvent) {
     e.stopPropagation()
@@ -618,7 +656,7 @@ function BioLinkCard({ biolink, appUrl, onEdit, onDelete, onTogglePublish, toggl
               </span>
             </div>
             {biolink.slug ? (
-              <p className="text-[11px] font-mono text-[var(--text-muted)] mt-0.5 truncate">{appUrl}/b/{biolink.slug}</p>
+              <p className="text-[11px] font-mono text-[var(--text-muted)] mt-0.5 truncate">{displayUrl}</p>
             ) : (
               <p className="text-[11px] text-[var(--text-muted)]/60 mt-0.5 italic">URL não definida</p>
             )}
@@ -640,11 +678,20 @@ function BioLinkCard({ biolink, appUrl, onEdit, onDelete, onTogglePublish, toggl
                     className="w-full text-left flex items-center gap-2.5 px-3 py-2.5 text-[12.5px] hover:bg-[var(--surface-2)] transition-colors text-[var(--text)]">
                     <Paintbrush size={13} />Editar
                   </button>
+                  <button onClick={() => { setMenuOpen(false); onPreview() }}
+                    className="w-full text-left flex items-center gap-2.5 px-3 py-2.5 text-[12.5px] hover:bg-[var(--surface-2)] transition-colors text-[var(--text)]">
+                    <Eye size={13} />Prévia rápida
+                  </button>
+                  <button onClick={() => { setMenuOpen(false); onDuplicate() }} disabled={duplicating}
+                    className="w-full text-left flex items-center gap-2.5 px-3 py-2.5 text-[12.5px] hover:bg-[var(--surface-2)] transition-colors text-[var(--text)] disabled:opacity-40">
+                    {duplicating ? <Loader2 size={13} className="animate-spin" /> : <Copy size={13} />}
+                    Duplicar
+                  </button>
                   {biolink.slug && (
                     <>
                       <button onClick={(e) => { setMenuOpen(false); copyUrl(e) }}
                         className="w-full text-left flex items-center gap-2.5 px-3 py-2.5 text-[12.5px] hover:bg-[var(--surface-2)] transition-colors text-[var(--text)]">
-                        {copied ? <Check size={13} className="text-green-500" /> : <Copy size={13} />}
+                        {copied ? <Check size={13} className="text-green-500" /> : <Link2 size={13} />}
                         {copied ? 'Copiado!' : 'Copiar link'}
                       </button>
                       <button onClick={() => { setMenuOpen(false); setQrOpen(true) }}
@@ -682,18 +729,29 @@ function BioLinkCard({ biolink, appUrl, onEdit, onDelete, onTogglePublish, toggl
         )}
 
         {/* Stats row */}
-        <div className="flex items-center gap-4 pt-2 border-t border-[var(--border)]">
-          <span className="inline-flex items-center gap-1.5 text-[11.5px] text-[var(--text-muted)]">
-            <Eye size={11} />{fmtNum(biolink.views)} visitas
+        <div className="flex items-center gap-3 pt-2 border-t border-[var(--border)]">
+          <span className="inline-flex items-center gap-1 text-[11px] text-[var(--text-muted)]">
+            <Eye size={10} />{fmtNum(biolink.views)}
           </span>
-          <span className="inline-flex items-center gap-1.5 text-[11.5px] text-[var(--text-muted)]">
-            <MousePointerClick size={11} />{fmtNum(biolink.clicks)} cliques
+          <span className="inline-flex items-center gap-1 text-[11px] text-[var(--text-muted)]">
+            <MousePointerClick size={10} />{fmtNum(biolink.clicks)}
           </span>
+          {biolink.views > 0 && (
+            <span className="inline-flex items-center gap-1 text-[11px] font-medium text-[var(--primary)]">
+              <Target size={10} />{fmtPct(conversion, 1)}
+            </span>
+          )}
           <span className="ml-auto inline-flex items-center gap-1.5 text-[11px] text-[var(--text-muted)]">
             {biolink.links.length} link{biolink.links.length !== 1 ? 's' : ''}
           </span>
-          {/* Tiny theme color swatch */}
-          <span className="w-4 h-4 rounded-full border border-[var(--border)]" style={{ background: theme.primary }} title={`Tema ${theme.label}`} />
+          <button
+            onClick={(e) => { e.stopPropagation(); onPreview() }}
+            title="Prévia rápida"
+            className="w-6 h-6 inline-flex items-center justify-center rounded-md text-[var(--text-muted)] hover:bg-[var(--surface-2)] hover:text-[var(--primary)] transition-colors"
+          >
+            <Eye size={12} />
+          </button>
+          <span className="w-3.5 h-3.5 rounded-full border border-[var(--border)]" style={{ background: theme.primary }} title={`Tema ${theme.label}`} />
         </div>
       </div>
 
@@ -713,19 +771,25 @@ interface BioLinkListProps {
   appUrl: string
   creating: boolean
   togglingId: string | null
+  duplicatingId: string | null
   deleteId: string | null
   deleting: boolean
+  previewId: string | null
   onEdit: (id: string) => void
   onCreate: () => void
   onDelete: (id: string) => void
   onDeleteConfirm: () => void
   onDeleteCancel: () => void
   onTogglePublish: (id: string) => void
+  onDuplicate: (id: string) => void
+  onPreview: (id: string) => void
+  onPreviewClose: () => void
 }
 
 function BioLinkList({
-  biolinks, appUrl, creating, togglingId, deleteId, deleting,
-  onEdit, onCreate, onDelete, onDeleteConfirm, onDeleteCancel, onTogglePublish,
+  biolinks, appUrl, creating, togglingId, duplicatingId, deleteId, deleting,
+  previewId, onEdit, onCreate, onDelete, onDeleteConfirm, onDeleteCancel,
+  onTogglePublish, onDuplicate, onPreview, onPreviewClose,
 }: BioLinkListProps) {
   const totalViews  = biolinks.reduce((s, b) => s + b.views, 0)
   const totalClicks = biolinks.reduce((s, b) => s + b.clicks, 0)
@@ -794,7 +858,10 @@ function BioLinkList({
               onEdit={() => onEdit(b.id)}
               onDelete={() => onDelete(b.id)}
               onTogglePublish={() => onTogglePublish(b.id)}
+              onDuplicate={() => onDuplicate(b.id)}
+              onPreview={() => onPreview(b.id)}
               toggling={togglingId === b.id}
+              duplicating={duplicatingId === b.id}
             />
           ))}
         </div>
@@ -809,6 +876,12 @@ function BioLinkList({
           loading={deleting}
         />
       )}
+
+      {/* Quick preview modal */}
+      {previewId && (() => {
+        const p = biolinks.find((b) => b.id === previewId)
+        return p ? <QuickPreviewModal biolink={p} appUrl={appUrl} onClose={onPreviewClose} /> : null
+      })()}
     </>
   )
 }
@@ -1385,13 +1458,15 @@ function BioLinkEditor({ userId, appUrl, initialPage, onBack, onSaved }: BioLink
    ============================================================ */
 
 export function BioLinkClient({ userId, initialBiolinks, appUrl }: BioLinkClientProps) {
-  const [biolinks, setBiolinks] = useState<BioPage[]>(() => initialBiolinks.map(mapRaw))
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const [creating, setCreating]   = useState(false)
-  const [deleteId, setDeleteId]   = useState<string | null>(null)
-  const [deleting, setDeleting]   = useState(false)
+  const [biolinks, setBiolinks]     = useState<BioPage[]>(() => initialBiolinks.map(mapRaw))
+  const [editingId, setEditingId]   = useState<string | null>(null)
+  const [creating, setCreating]     = useState(false)
+  const [deleteId, setDeleteId]     = useState<string | null>(null)
+  const [deleting, setDeleting]     = useState(false)
   const [togglingId, setTogglingId] = useState<string | null>(null)
-  const [toast, setToast]         = useState<ToastState | null>(null)
+  const [duplicatingId, setDuplicatingId] = useState<string | null>(null)
+  const [previewId, setPreviewId]   = useState<string | null>(null)
+  const [toast, setToast]           = useState<ToastState | null>(null)
 
   function showToast(msg: string, type: 'success' | 'error' = 'success') {
     setToast({ msg, type })
@@ -1456,6 +1531,50 @@ export function BioLinkClient({ userId, initialBiolinks, appUrl }: BioLinkClient
     }
   }
 
+  async function handleDuplicate(id: string) {
+    const biolink = biolinks.find((b) => b.id === id)
+    if (!biolink) return
+    setDuplicatingId(id)
+    try {
+      const sb = createClient()
+      const newId = crypto.randomUUID()
+      const newSlug = `${biolink.slug}-copia-${newId.slice(0, 4)}`
+      const { error } = await sb.from('biolinks').insert({
+        id: newId,
+        user_id: userId,
+        slug: newSlug,
+        name: biolink.name ? `${biolink.name} (cópia)` : '',
+        bio: biolink.bio,
+        avatar: biolink.avatar,
+        avatar_color: biolink.avatarColor,
+        theme_id: biolink.themeId,
+        background: biolink.background,
+        button_style: biolink.buttonStyle,
+        links: biolink.links,
+        status: 'draft',
+      })
+      if (error) throw error
+      const copy: BioPage = {
+        ...biolink,
+        id: newId,
+        slug: newSlug,
+        name: biolink.name ? `${biolink.name} (cópia)` : '',
+        status: 'draft',
+        views: 0,
+        clicks: 0,
+      }
+      setBiolinks((prev) => [copy, ...prev])
+      showToast('Bio Link duplicado como rascunho.')
+    } catch {
+      showToast('Erro ao duplicar.', 'error')
+    } finally {
+      setDuplicatingId(null)
+    }
+  }
+
+  function handlePreview(id: string) { setPreviewId(id) }
+  function handlePreviewClose()       { setPreviewId(null) }
+
   // Show editor
   if (editingId !== null) {
     const existing = editingId === '__new__'
@@ -1484,14 +1603,19 @@ export function BioLinkClient({ userId, initialBiolinks, appUrl }: BioLinkClient
         appUrl={appUrl}
         creating={creating}
         togglingId={togglingId}
+        duplicatingId={duplicatingId}
         deleteId={deleteId}
         deleting={deleting}
+        previewId={previewId}
         onEdit={handleEdit}
         onCreate={handleCreate}
         onDelete={(id) => setDeleteId(id)}
         onDeleteConfirm={handleDeleteConfirm}
         onDeleteCancel={() => setDeleteId(null)}
         onTogglePublish={handleTogglePublish}
+        onDuplicate={handleDuplicate}
+        onPreview={handlePreview}
+        onPreviewClose={handlePreviewClose}
       />
       {toast && <Toast toast={toast} onClose={() => setToast(null)} />}
     </>
