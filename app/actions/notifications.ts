@@ -219,3 +219,28 @@ export async function testTelegramNotificationAction(): Promise<{ ok: boolean; e
     return { ok: false, error: `Falha ao enviar: ${msg.slice(0, 80)}` }
   }
 }
+
+// Insere um alerta de teste no painel para verificar o canal Painel.
+export async function testPanelNotificationAction(): Promise<{ ok: boolean; error?: string }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { ok: false, error: 'Não autenticado.' }
+
+  const rl = await rateLimit(`notif_panel_test:${user.id}`, 3, 60_000)
+  if (!rl.ok) return { ok: false, error: 'Muitas tentativas. Aguarde um momento.' }
+
+  const { error } = await supabase.from('alerts').insert({
+    user_id:  user.id,
+    type:     'sale',
+    severity: 'info',
+    title:    '🔔 Teste de notificação do Painel',
+    message:  'Este é um alerta de teste do Umbra Bot. Seu canal Painel está funcionando corretamente.',
+    source:   'test',
+  })
+
+  if (error) {
+    Sentry.captureException(error, { extra: { userId: user.id, context: 'test_panel_notification' } })
+    return { ok: false, error: 'Erro ao criar notificação de teste.' }
+  }
+  return { ok: true }
+}

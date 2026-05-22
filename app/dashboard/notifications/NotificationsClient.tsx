@@ -10,6 +10,7 @@ import {
   checkTelegramLinkStatusAction,
   unlinkTelegramChannelAction,
   testTelegramNotificationAction,
+  testPanelNotificationAction,
 } from '@/app/actions/notifications'
 import {
   ShoppingBag, Clock, Undo2, XCircle, AlertTriangle, UserPlus, ShoppingCart, UserX,
@@ -163,7 +164,7 @@ const DEFAULT_PREFS: EventPrefs = {
 
 const DEFAULT_QUIET: QuietHours = { enabled: true, from: '22:00', to: '07:00', exceptCritical: true }
 
-function buildDefaultChannels(hasBots: boolean): ChannelMap {
+function buildDefaultChannels(): ChannelMap {
   return {
     email:    { linked: true },
     panel:    { linked: true },
@@ -456,66 +457,102 @@ function TelegramChannelCard({
    ============================================================ */
 
 function ChannelsCard({
-  channelState,
   tgState,
   bots,
   userEmail,
-  onUpdateLinked,
   onTgLinked,
   onTgUnlinked,
 }: {
-  channelState:  ChannelMap
-  tgState:       TelegramChannelState
-  bots:          RawBotOption[]
-  userEmail:     string
-  onUpdateLinked:(id: ChannelId, linked: boolean) => void
-  onTgLinked:    (updated: TelegramChannelState) => void
-  onTgUnlinked:  () => void
+  tgState:    TelegramChannelState
+  bots:       RawBotOption[]
+  userEmail:  string
+  onTgLinked: (updated: TelegramChannelState) => void
+  onTgUnlinked: () => void
 }) {
-  const channelDescs: Record<ChannelId, string> = {
-    email:    userEmail || 'Seu e-mail de cadastro',
-    panel:    'Sino + página de Atividade',
-    telegram: tgState.linked
-      ? (tgState.bot_name ?? 'Bot vinculado')
-      : bots.length > 0 ? 'Clique em Vincular para configurar' : 'Nenhum bot configurado',
+  const [panelTestLoading, setPanelTestLoading] = useState(false)
+  const [panelTestMsg,     setPanelTestMsg]     = useState<{ ok: boolean; msg: string } | null>(null)
+  const [emailTestMsg,     setEmailTestMsg]     = useState<{ ok: boolean; msg: string } | null>(null)
+  const panelTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const emailTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => () => {
+    if (panelTimerRef.current) clearTimeout(panelTimerRef.current)
+    if (emailTimerRef.current) clearTimeout(emailTimerRef.current)
+  }, [])
+
+  async function handlePanelTest() {
+    setPanelTestLoading(true)
+    const res = await testPanelNotificationAction()
+    setPanelTestLoading(false)
+    setPanelTestMsg({
+      ok:  res.ok,
+      msg: res.ok ? 'Notificação criada! Veja em Alertas.' : (res.error ?? 'Erro ao criar notificação.'),
+    })
+    if (panelTimerRef.current) clearTimeout(panelTimerRef.current)
+    panelTimerRef.current = setTimeout(() => setPanelTestMsg(null), 4000)
+  }
+
+  function handleEmailTest() {
+    setEmailTestMsg({ ok: false, msg: 'Envio de e-mails em breve.' })
+    if (emailTimerRef.current) clearTimeout(emailTimerRef.current)
+    emailTimerRef.current = setTimeout(() => setEmailTestMsg(null), 3000)
   }
 
   return (
     <Card title="Canais de envio" subtitle="Onde você recebe as notificações.">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+
         {/* E-mail */}
-        {(['email', 'panel'] as const).map(cid => {
-          const linked = (channelState[cid] as { linked: boolean })?.linked ?? false
-          const Icon   = CHANNELS.find(c => c.id === cid)!.icon
-          const label  = CHANNELS.find(c => c.id === cid)!.label
-          return (
-            <div key={cid} className="bg-surface border border-border rounded-lg p-3.5">
-              <div className="flex items-start gap-2.5">
-                <div className={`w-9 h-9 rounded-md flex items-center justify-center shrink-0 ${linked ? 'bg-primary/10 text-primary' : 'bg-surface-2 text-text-muted'}`}>
-                  <Icon size={15} />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="text-[13px] font-semibold text-text">{label}</div>
-                  <div className="text-[10.5px] text-text-muted truncate">{channelDescs[cid]}</div>
-                </div>
-              </div>
-              <div className="mt-3 flex items-center justify-between">
-                {linked ? (
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10.5px] font-medium border bg-success-soft text-success border-success/20">
-                    <span className="w-1.5 h-1.5 rounded-full bg-success" /> Vinculado
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10.5px] font-medium border bg-warning-soft text-warning border-warning/20">
-                    Não vinculado
-                  </span>
-                )}
-                <Btn variant={linked ? 'ghost' : 'secondary'} size="sm" onClick={() => onUpdateLinked(cid, !linked)}>
-                  {linked ? 'Desativar' : 'Ativar'}
-                </Btn>
-              </div>
+        <div className="bg-surface border border-border rounded-lg p-3.5">
+          <div className="flex items-start gap-2.5">
+            <div className="w-9 h-9 rounded-md flex items-center justify-center shrink-0 bg-primary/10 text-primary">
+              <Mail size={15} />
             </div>
-          )
-        })}
+            <div className="min-w-0 flex-1">
+              <div className="text-[13px] font-semibold text-text">E-mail</div>
+              <div className="text-[10.5px] text-text-muted truncate">{userEmail || 'Seu e-mail de cadastro'}</div>
+            </div>
+          </div>
+          <div className="mt-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10.5px] font-medium border bg-success-soft text-success border-success/20">
+                <span className="w-1.5 h-1.5 rounded-full bg-success" /> Ativo
+              </span>
+              <Btn variant="secondary" size="sm" icon={<Mail size={11} />} onClick={handleEmailTest}>Testar</Btn>
+            </div>
+            {emailTestMsg && (
+              <div className="text-[11px] px-2.5 py-1.5 rounded-md bg-surface-2 text-text-muted">
+                {emailTestMsg.msg}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Painel */}
+        <div className="bg-surface border border-border rounded-lg p-3.5">
+          <div className="flex items-start gap-2.5">
+            <div className="w-9 h-9 rounded-md flex items-center justify-center shrink-0 bg-primary/10 text-primary">
+              <Bell size={15} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-[13px] font-semibold text-text">Painel</div>
+              <div className="text-[10.5px] text-text-muted truncate">Sino + página de Alertas</div>
+            </div>
+          </div>
+          <div className="mt-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10.5px] font-medium border bg-success-soft text-success border-success/20">
+                <span className="w-1.5 h-1.5 rounded-full bg-success" /> Ativo
+              </span>
+              <Btn variant="secondary" size="sm" icon={<Bell size={11} />} loading={panelTestLoading} onClick={handlePanelTest}>Testar</Btn>
+            </div>
+            {panelTestMsg && (
+              <div className={`text-[11px] px-2.5 py-1.5 rounded-md ${panelTestMsg.ok ? 'bg-success-soft text-success' : 'bg-danger-soft text-danger'}`}>
+                {panelTestMsg.msg}
+              </div>
+            )}
+          </div>
+        </div>
 
         {/* Telegram — fluxo especial */}
         <TelegramChannelCard
@@ -758,11 +795,12 @@ export function NotificationsClient({
   const { track } = useAnalytics()
 
   const initTgState  = parseTelegramState(initialPrefs?.channel_state ?? null)
-  const defaultChans = buildDefaultChannels(bots.length > 0)
+  const defaultChans = buildDefaultChannels()
 
-  const buildChannelMap = (raw: Record<string, unknown> | null): ChannelMap => ({
-    email:    { linked: (raw?.email as { linked?: boolean } | undefined)?.linked ?? true },
-    panel:    { linked: (raw?.panel as { linked?: boolean } | undefined)?.linked ?? true },
+  // email e panel são sempre ativos — sem toggle (sem backend de envio de e-mail por ora)
+  const buildChannelMap = (_raw: Record<string, unknown> | null): ChannelMap => ({
+    email:    { linked: true },
+    panel:    { linked: true },
     telegram: { linked: false }, // telegram gerenciado pelo tgState separadamente
   })
 
@@ -778,9 +816,10 @@ export function NotificationsClient({
     quiet:    initialPrefs?.quiet    ?? DEFAULT_QUIET,
   })
 
-  const [saved,  setSaved]  = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [error,  setError]  = useState('')
+  const [saved,             setSaved]             = useState(false)
+  const [saving,            setSaving]            = useState(false)
+  const [error,             setError]             = useState('')
+  const [resetConfirmOpen,  setResetConfirmOpen]  = useState(false)
 
   const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const errorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -833,6 +872,9 @@ export function NotificationsClient({
     setSaved(true)
     if (savedTimerRef.current) clearTimeout(savedTimerRef.current)
     savedTimerRef.current = setTimeout(() => setSaved(false), 2500)
+    if (JSON.stringify(quiet) !== JSON.stringify(snapshot.quiet)) {
+      track('notifications_quiet_hours_set', {})
+    }
     track('notifications_saved', { channels_enabled: Object.values(channelState).filter(c => (c as { linked: boolean }).linked).length + (tgState.linked ? 1 : 0), telegram_linked: tgState.linked })
   }
 
@@ -846,18 +888,15 @@ export function NotificationsClient({
     track('notifications_reset_to_default', {})
   }
 
-  function updateChannel(id: ChannelId, linked: boolean) {
-    setChannelState(s => ({ ...s, [id]: { ...s[id], linked } }))
-    track('notifications_channel_toggled', { channel: id, linked })
-  }
-
   const handleTgLinked = useCallback((updated: TelegramChannelState) => {
     setTgState(updated)
+    setSnapshot(s => ({ ...s, tg: updated }))
     track('notifications_channel_toggled', { channel: 'telegram', linked: true })
   }, [track])
 
   const handleTgUnlinked = useCallback(() => {
     setTgState({ linked: false })
+    setSnapshot(s => ({ ...s, tg: { linked: false } }))
     track('notifications_channel_toggled', { channel: 'telegram', linked: false })
   }, [track])
 
@@ -884,7 +923,7 @@ export function NotificationsClient({
             {error && (
               <span className="text-[12px] text-danger flex items-center gap-1 mr-1">{error}</span>
             )}
-            <Btn variant="ghost" size="md" onClick={reset}>Restaurar padrão</Btn>
+            <Btn variant="ghost" size="md" onClick={() => setResetConfirmOpen(true)}>Restaurar padrão</Btn>
             {dirty && !saved && <Btn variant="ghost" size="md" onClick={discard}>Descartar</Btn>}
             <Btn
               variant="primary" size="md"
@@ -914,19 +953,14 @@ export function NotificationsClient({
 
       <div className="space-y-4 max-w-[1100px]">
         <ChannelsCard
-          channelState={channelState}
           tgState={tgState}
           bots={bots}
           userEmail={userEmail}
-          onUpdateLinked={updateChannel}
           onTgLinked={handleTgLinked}
           onTgUnlinked={handleTgUnlinked}
         />
         <PreferencesTable prefs={prefs} setPrefs={setPrefs} channelState={channelState} tgState={tgState} />
-        <QuietHoursCard quiet={quiet} setQuiet={(fn) => {
-          setQuiet(fn)
-          track('notifications_quiet_hours_set', {})
-        }} />
+        <QuietHoursCard quiet={quiet} setQuiet={setQuiet} />
 
         <div className="flex items-center justify-between gap-3 bg-surface border border-border rounded-xl px-4 py-3">
           <div className="text-[11.5px] text-text-muted leading-relaxed">
@@ -949,6 +983,35 @@ export function NotificationsClient({
           </div>
         </div>
       </div>
+
+      {/* Confirmação de restaurar padrão */}
+      {resetConfirmOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-surface border border-border rounded-2xl shadow-xl w-full max-w-sm mx-4 p-6 flex flex-col gap-4">
+            <div className="flex items-start gap-3">
+              <div className="flex-shrink-0 w-9 h-9 rounded-full bg-warning/15 flex items-center justify-center">
+                <AlertTriangle size={18} className="text-warning" />
+              </div>
+              <div>
+                <div className="text-[14px] font-semibold text-text">Restaurar padrão?</div>
+                <div className="text-[12.5px] text-text-muted mt-1 leading-relaxed">
+                  Todas as suas preferências de notificação serão redefinidas para os valores padrão.
+                  Essa ação não pode ser desfeita.
+                </div>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Btn variant="ghost" size="sm" onClick={() => setResetConfirmOpen(false)}>Cancelar</Btn>
+              <Btn
+                variant="primary" size="sm"
+                onClick={() => { reset(); setResetConfirmOpen(false) }}
+              >
+                Restaurar padrão
+              </Btn>
+            </div>
+          </div>
+        </div>
+      )}
     </DashboardLayout>
   )
 }
