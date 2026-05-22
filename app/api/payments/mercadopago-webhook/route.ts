@@ -5,6 +5,7 @@ import crypto from 'crypto'
 import { decryptToken } from '@/lib/crypto'
 import { sendTelegramMessage } from '@/lib/telegram'
 import { fireCapiPurchase } from '@/lib/capi'
+import { dispatchWebhookEvent } from '@/lib/webhooks'
 
 // Verifies Mercado Pago webhook signature.
 // MP sends: x-signature: ts=<ts>,v1=<hmac>
@@ -91,6 +92,16 @@ export async function POST(request: NextRequest) {
   const fmtBRL = (v: number) =>
     Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 
+  // Dispara evento de webhook para integrações externas (fire-and-forget)
+  if (newStatus === 'pending') {
+    dispatchWebhookEvent(tx.user_id, 'sale.pending', {
+      transaction_id: tx.id,
+      product_name:   tx.product_name,
+      amount:         Number(tx.amount),
+      gateway:        'mercadopago',
+    })
+  }
+
   // ── Aprovada ────────────────────────────────────────────────────────────────
   if (newStatus === 'approved') {
     const amountFmt = fmtBRL(Number(tx.amount))
@@ -169,7 +180,17 @@ export async function POST(request: NextRequest) {
       if (error) Sentry.captureException(error, { extra: { txId: tx.id, context: 'mp_webhook_alert' } })
     })
 
-    // 6. Mensagem de confirmação para o comprador via Telegram
+    // 6. Dispara evento de webhook para integrações externas (fire-and-forget)
+    dispatchWebhookEvent(tx.user_id, 'sale.approved', {
+      transaction_id: tx.id,
+      product_name:   tx.product_name,
+      amount:         Number(tx.amount),
+      customer_name:  tx.customer_name ?? null,
+      customer_email: (tx as { customer_email?: string | null }).customer_email ?? null,
+      gateway:        'mercadopago',
+    })
+
+    // 7. Mensagem de confirmação para o comprador via Telegram
     if (tx.customer_telegram_id && tx.bot_id) {
       const { data: bot } = await supabase
         .from('bots')

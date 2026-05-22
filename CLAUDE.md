@@ -288,12 +288,18 @@ umbra-bot/
 │       │                          # upload de product_image (Supabase Storage bucket checkout-images),
 │       │                          # analytics drill-down por checkout (funil visited/cart/paid lazy),
 │       │                          # 4 eventos PostHog (checkout_created/published/deleted/duplicated)
-│       ├── biolink/              # Bio Link — dados reais (SSR + Client), migrações 088–089
-│       │   ├── page.tsx          # Server Component: SSR biolink + biolink_analytics RPC em paralelo
-│       │   └── BioLinkClient.tsx # Client Component: editor visual, CRUD real, auto-save 30s,
-│       │                         # avatar upload (Storage bio-avatars), 7 temas, links UUID,
-│       │                         # publish/unpublish, analytics por link, 5 PostHog events
-│       ├── webhooks/             # Webhooks (mock)
+│       ├── biolink/              # Bio Link — dados reais (SSR + Client), migrações 088–090
+│       │   ├── page.tsx          # Server Component: SSR lista de biolinks do usuário + biolink_analytics RPC em paralelo
+│       │   └── BioLinkClient.tsx # Client Component: lista multi-biolink + editor visual, CRUD real, auto-save 30s,
+│       │                         # avatar upload (Storage bio-avatars), 7 temas, links UUID, publish/unpublish,
+│       │                         # duplicar, QuickPreviewModal (prévia rápida), taxa de conversão nos cards,
+│       │                         # URL limpa (stripProtocol), analytics por link, 5 PostHog events
+│       ├── webhooks/             # Webhooks — dados reais (SSR + Client), migração 091
+│       │   ├── page.tsx          # Server Component: SSR webhooks + RPC webhooks_stats em paralelo
+│       │   └── WebhooksClient.tsx # Client Component: CRUD real, Realtime INSERT+UPDATE, delivery log lazy,
+│       │                           # KPI cards (ativos/entregas 24h/taxa sucesso/com falhas), toggle ativo/pausado,
+│       │                           # testWebhookAction real HTTP + HMAC, resendDeliveryAction, secret show/hide/copy,
+│       │                           # SSRF protection, secret criptografado AES-256-GCM, 7 eventos PostHog
 │       ├── profile/              # Perfil + avatar upload (funcional + analytics)
 │       ├── notifications/        # Notificações — Server Component SSR + Client Component
 │       │   ├── page.tsx          # Server Component: SSR prefs + firstBot em paralelo; passa userId + userEmail
@@ -662,6 +668,16 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Checkout — order_bump.image: loading="lazy" + onError fallback (imagem quebrada oculta, sem crash) | ✅ Corrigido |
 | Checkout — upsell: nota de preço "Cobrado separadamente ao clicar em…" + link com target="_blank" rel="noopener" | ✅ Implementado |
 | Checkout — build fix: `paidAmountRef` captura `effectivePrice` no `handleSubmit` para uso no `useEffect` de `checkout_pay_success` (evita temporal dead zone de `const` declarada depois do efeito) | ✅ Corrigido |
+| Webhooks — Server Component SSR + WebhooksClient (dados reais, sem mock) | ✅ Funcional |
+| Webhooks — CRUD real: create/update/delete/toggle (8 Server Actions) com IDOR-safe (.eq user_id) | ✅ Implementado |
+| Webhooks — HMAC-SHA256 em todas as entregas (header X-Umbra-Signature-256) | ✅ Implementado |
+| Webhooks — webhook_deliveries: histórico lazy paginado (20/página via loadDeliveriesAction) | ✅ Implementado |
+| Webhooks — dispatchWebhookEvent fire-and-forget wired em MP webhook (sale.approved/pending) e Telegram (lead.created) | ✅ Implementado |
+| Webhooks — Supabase Realtime: canal 'webhooks-realtime' filtrado por user_id (INSERT/UPDATE) | ✅ Implementado |
+| Webhooks — migração 091: user_id FK + RLS owner + webhook_deliveries + RPCs webhooks_stats/sync_webhook_stats | ✅ Criada |
+| Webhooks — SSRF protection: bloqueia localhost, 169.254.x, 10.x, 192.168.x na URL do endpoint | ✅ Implementado |
+| Webhooks — secret criptografado AES-256-GCM (encryptToken) — nunca descriptografado no client | ✅ Implementado |
+| Webhooks — 7 eventos PostHog: webhook_created/tested/paused/resumed/deleted/secret_rotated/delivery_resent | ✅ Implementado |
 | Sistema de planos/billing | ❌ Não iniciado |
 | Bio Link — Server Component SSR + BioLinkClient (dados reais, sem mock, migração 088) | ✅ Funcional |
 | Bio Link — CRUD real: INSERT na primeira vez (UUID) + UPDATE com .eq('user_id') IDOR-safe | ✅ Implementado |
@@ -677,6 +693,13 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Bio Link — 5 eventos PostHog: biolink_created/saved/published/link_added/theme_changed | ✅ Implementado |
 | Bio Link — migração 088: user_id FK + RLS owner + biolink_view/click_events + 3 RPCs | ✅ Criada |
 | Bio Link — migração 089: bucket bio-avatars (público, 2 MB, jpg/png/webp/gif, RLS por pasta) | ✅ Criada |
+| Bio Link — multi-biolink: lista de bio links por usuário, CRUD múltiplo (INSERT + UPDATE por id), migração 090 | ✅ Implementado |
+| Bio Link — duplicar bio link: INSERT cópia com slug sufixo `-copia-{id}`, nome ` (cópia)`, status='draft', views/clicks=0 | ✅ Implementado |
+| Bio Link — QuickPreviewModal: prévia rápida do bio link em modal (PhonePreview, fecha ao clicar fora) | ✅ Implementado |
+| Bio Link — taxa de conversão nos cards: (clicks / views) × 100 exibida quando views > 0 | ✅ Implementado |
+| Bio Link — URL limpa nos cards: stripProtocol(appUrl) remove prefixo https:// para exibição | ✅ Implementado |
+| Bio Link — página pública /b/[slug]: removido display de URL abaixo do avatar (mantido nome) | ✅ Corrigido |
+| Bio Link — migração 090: biolink_analytics RPC atualizada com p_biolink_id text default null (filtro por biolink) | ✅ Criada |
 | Remarketing — Server Component SSR + RemarketingClient (dados reais, sem mock) | ✅ Funcional |
 | Remarketing — createCampaign: INSERT real com user_id + UUID real retornado | ✅ Implementado |
 | Remarketing — saveCampaign: UPDATE com .eq('user_id') — IDOR duplo | ✅ Implementado |

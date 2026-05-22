@@ -72,6 +72,14 @@ type EventMap = {
   pixel_verified:            { provider: string; status: 'ok' | 'error' }
   pixel_test_sent:           { provider: string }
   utm_link_copied:           { has_utm: boolean }
+  // Aba Webhooks
+  webhook_created:        { url_domain: string; events_count: number }
+  webhook_tested:         { success: boolean; status_code: number; duration_ms: number }
+  webhook_paused:         Record<string, never>
+  webhook_resumed:        Record<string, never>
+  webhook_deleted:        Record<string, never>
+  webhook_secret_rotated: Record<string, never>
+  delivery_resent:        { event_type: string; attempt: number }
   // Aba Bio Link
   biolink_created:           Record<string, never>
   biolink_saved:             Record<string, never>

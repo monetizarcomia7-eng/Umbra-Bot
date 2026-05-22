@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { decryptToken } from '@/lib/crypto'
 import { sendTelegramMessage } from '@/lib/telegram'
+import { dispatchWebhookEvent } from '@/lib/webhooks'
 
 // ─── Telegram API helpers ──────────────────────────────────────────────────────
 
@@ -460,6 +461,15 @@ export async function POST(request: NextRequest) {
       bot:         bot.username ? `@${bot.username}` : bot.name,
       title:       'Novo lead',
       description: `${firstName} iniciou conversa`,
+    })
+    // Dispara evento de webhook para integrações externas (fire-and-forget)
+    dispatchWebhookEvent(bot.user_id as string, 'lead.created', {
+      contact_id:  contactId,
+      first_name:  firstName,
+      last_name:   lastName || null,
+      username:    username,
+      bot_id:      bot.id,
+      bot_name:    bot.username ? `@${bot.username as string}` : bot.name as string,
     })
   }
 

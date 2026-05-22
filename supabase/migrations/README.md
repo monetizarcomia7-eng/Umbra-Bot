@@ -1,7 +1,7 @@
 # Umbra Bot — Schema do Banco de Dados
 
 Schema extraído diretamente do banco Supabase (projeto: `aoycxcepjvpmeptdafxn`).
-**32 tabelas** no schema `public`.
+**34 tabelas** no schema `public`.
 
 ---
 
@@ -142,7 +142,7 @@ created_at: timestamptz NOT NULL  default now()
 
 ```
 id:           text        NOT NULL
-slug:         text        NOT NULL
+slug:         text        NOT NULL  UNIQUE
 name:         text        NOT NULL  default ''
 bio:          text        NOT NULL  default ''
 avatar:       text        NOT NULL  default ''
@@ -158,8 +158,65 @@ top_referrer: text        NOT NULL  default ''
 status:       text        NOT NULL  default 'draft'
 created_at:   timestamptz NOT NULL  default now()
 updated_at:   timestamptz NOT NULL  default now()
-user_id:      uuid        FK → auth.users(id)
+user_id:      uuid        FK → auth.users(id)  (migração 088)
 ```
+
+RLS: `biolinks_owner` → `auth.uid() = user_id` (migração 088 — um usuário pode ter múltiplos biolinks)
+
+**Supabase Storage — bucket `bio-avatars`** (migração 089):
+- Bucket público, max 2 MB por arquivo, tipos aceitos: `image/jpeg`, `image/png`, `image/webp`, `image/gif`
+- Organização por pasta: `{user_id}/{biolink_id}.{ext}`
+- RLS de storage valida `auth.uid()` no path — sem IDOR entre usuários
+
+**RPCs do módulo (migração 088 + 090):**
+
+`record_biolink_visit(p_slug, p_ip_hash, p_referrer, p_device_type)` → void
+- Security definer, grant to `anon, authenticated`
+- Incrementa `biolinks.views`, insere em `biolink_view_events`
+- Chamado pelo `BioPublicClient` no mount (fire-and-forget)
+
+`record_biolink_link_click(p_slug, p_link_id, p_link_url, p_ip_hash, p_referrer, p_device_type)` → void
+- Security definer, grant to `anon, authenticated`
+- Incrementa `biolinks.clicks`, insere em `biolink_click_events`
+- Chamado pelo `BioPublicClient` ao clicar em link (fire-and-forget)
+
+`biolink_analytics(p_user_id uuid, p_days int default 30, p_biolink_id text default null)` → json
+- Security invoker, grant to `authenticated`
+- Retorna `{ views_period, clicks_period, clicks_by_link }`
+- `p_biolink_id = null` → agrega todos os biolinks do usuário; preenchido → filtra por biolink específico
+- Migração 090: adicionou `p_biolink_id` e dropp overloads antigos (fix PostgreSQL error 42725)
+
+---
+
+## public.biolink_view_events
+
+```
+id:          uuid        NOT NULL  default gen_random_uuid()
+biolink_id:  text        NOT NULL  FK → biolinks(id)  ON DELETE CASCADE
+ip_hash:     text                  (SHA-256 truncado — sem IP real)
+referrer:    text
+device_type: text                  check in ('mobile','desktop','tablet','bot','unknown')
+viewed_at:   timestamptz NOT NULL  default now()
+```
+
+RLS: sem leitura direta pelo usuário (somente RPCs security definer acessam esta tabela)
+
+---
+
+## public.biolink_click_events
+
+```
+id:          uuid        NOT NULL  default gen_random_uuid()
+biolink_id:  text        NOT NULL  FK → biolinks(id)  ON DELETE CASCADE
+link_id:     text        NOT NULL  (UUID do item de link clicado)
+link_url:    text        NOT NULL
+ip_hash:     text                  (SHA-256 truncado — sem IP real)
+referrer:    text
+device_type: text                  check in ('mobile','desktop','tablet','bot','unknown')
+clicked_at:  timestamptz NOT NULL  default now()
+```
+
+RLS: sem leitura direta pelo usuário (somente RPCs security definer acessam esta tabela)
 
 ---
 
@@ -830,6 +887,8 @@ auth.users
   ├── push_subscriptions (user_id)
   ├── notification_prefs (user_id)
   ├── biolinks           (user_id)
+  │     ├── biolink_view_events  (biolink_id)
+  │     └── biolink_click_events (biolink_id)
   ├── checkouts          (user_id)
   │     └── checkout_coupons (user_id)  checkout_id → checkouts(id)  [mig 086]
   ├── pixels             (user_id)

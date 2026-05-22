@@ -13,7 +13,7 @@
 | Vercel | Hospedagem / Deploy | ✅ Em uso | `vercel.json`, `next.config.ts` |
 | Supabase Postgres | Banco de dados | ✅ Em uso | `lib/supabase/`, todas as pages/actions |
 | Supabase Auth | Autenticação | ✅ Em uso | `app/(auth)/`, `middleware.ts`, `app/auth/callback/` |
-| Supabase Storage | Armazenamento de arquivos | ✅ Em uso | bucket `avatars` (perfis), bucket `checkout-images` |
+| Supabase Storage | Armazenamento de arquivos | ✅ Em uso | bucket `avatars` (perfis), bucket `checkout-images`, bucket `bio-avatars` |
 | Supabase Realtime | Eventos em tempo real | ✅ Em uso | BotsClient, BroadcastsClient, AlertsClient, etc. |
 | Telegram Bot API | Bots / Mensageria | ✅ Em uso | `lib/telegram.ts`, `app/api/telegram/`, `app/actions/bots.ts` |
 | Mercado Pago (PIX) | Gateway de pagamento | ✅ Em uso | `app/api/payments/pix/`, `app/api/checkout/pay/` |
@@ -85,7 +85,7 @@ Ambos usam `Authorization: Bearer CRON_SECRET`.
   - `lib/supabase/server.ts` — `createClient()` com anon key + cookies (Server Components, API Routes autenticadas)
   - `lib/supabase/client.ts` — `createClient()` browser (Client Components)
   - `lib/supabase/admin.ts` — `createAdminClient()` com service role key (webhooks externos, cron jobs — bypassa RLS)
-- **Total de arquivos de migração:** 88 arquivos `.sql` (numerados 000–087 + timestamps)
+- **Total de arquivos de migração:** 91 arquivos `.sql` (numerados 000–090 + timestamps)
 - **Migrações auxiliares (não executáveis diretamente):** `_combined.sql`, `_pending_analytics_037_to_041.sql`, `_pending_run_now.sql`
 
 ### Supabase Auth
@@ -106,6 +106,7 @@ Ambos usam `Authorization: Bearer CRON_SECRET`.
 |---|---|---|
 | `avatars` | Foto de perfil do usuário (upload em `/dashboard/profile`) | Por usuário (pasta `{user_id}/`) |
 | `checkout-images` | Imagem do produto no editor de checkout | Por usuário (pasta `{user_id}/`) |
+| `bio-avatars` | Avatar do Bio Link (upload no editor `/dashboard/biolink`) | Por usuário (pasta `{user_id}/`) |
 | `push_subscriptions` | Armazenado na tabela, não no Storage | N/A |
 
 ### RLS (Row Level Security)
@@ -113,7 +114,7 @@ Ambos usam `Authorization: Bearer CRON_SECRET`.
 - **Estado geral:** habilitado em todas as tabelas com dados de usuário
 - **Política padrão:** `auth.uid() = user_id` para leitura e escrita
 - **Exceção documentada:** tabelas acessadas por `createAdminClient()` (service role bypassa RLS) — usado em webhook Telegram, cron check-bots, cron process-remarketing, cron process-broadcasts, checkout pay (busca dados do dono do checkout), route `/r/[slug]`
-- **Funções com `security definer`:** `track_checkout_event`, `track_affiliate_click`, `submit_affiliate_application`, `get_public_affiliate_program`, `credit_affiliate_sale`, `record_redirect_click`, `redirect_analytics`, `validate_and_apply_coupon`, `checkout_tx_status`
+- **Funções com `security definer`:** `track_checkout_event`, `track_affiliate_click`, `submit_affiliate_application`, `get_public_affiliate_program`, `credit_affiliate_sale`, `record_redirect_click`, `redirect_analytics`, `validate_and_apply_coupon`, `checkout_tx_status`, `record_biolink_visit`, `record_biolink_link_click`
 
 ---
 
@@ -590,10 +591,105 @@ Ambos usam `Authorization: Bearer CRON_SECRET`.
 
 ### Disparados (dashboard/webhooks)
 
-A tela `/dashboard/webhooks` existe no código como rota mock (sem dados reais).
-A tabela `webhooks` foi criada pela migração `20260518000015_webhooks.sql`.
-**Não há rota de API implementada para criar ou disparar webhooks de saída.**
-**Status: ❌ Não iniciado**
+**Status: ✅ Funcional** — Implementado com Server Component + Client Component real, Server Actions CRUD, HMAC-SHA256 e tabela `webhook_deliveries`.
+
+**Arquivos:**
+- `app/dashboard/webhooks/page.tsx` — Server Component: SSR webhooks do usuário + auth guard
+- `app/dashboard/webhooks/WebhooksClient.tsx` — Client Component: KPI cards, tabela, delivery log lazy, Realtime
+- `app/actions/webhooks.ts` — 8 Server Actions autenticadas com rate limit e IDOR protection
+- `lib/webhooks.ts` — `dispatchWebhookEvent()` fire-and-forget, usado pelos route handlers de eventos
+- `supabase/migrations/091_webhooks_real.sql` — schema real: `user_id`, RLS owner, `webhook_deliveries`, RPCs
+
+**Server Actions (`app/actions/webhooks.ts`):**
+
+| Action | Função | Rate limit |
+|---|---|---|
+| `generateSecretAction()` | Gera `whsec_` + 36 bytes hex via `crypto.randomBytes` | Nenhum |
+| `createWebhookAction(payload)` | INSERT com `encryptToken(secret)` + SSRF validation | 10/hora por usuário |
+| `updateWebhookAction(id, patch)` | UPDATE com `.eq('user_id')` + IDOR duplo | 20/hora por usuário |
+| `deleteWebhookAction(id)` | DELETE com `.eq('user_id')` | Nenhum |
+| `toggleWebhookAction(id, active)` | UPDATE active + status (healthy/paused) | Nenhum |
+| `testWebhookAction(id)` | HTTP POST real + HMAC + persiste em `webhook_deliveries` + `sync_webhook_stats` RPC | 10/min por usuário |
+| `loadDeliveriesAction(webhookId, page)` | SELECT paginado de `webhook_deliveries` (20/página) | Nenhum |
+| `resendDeliveryAction(deliveryId)` | HTTP POST real com payload original + nova assinatura HMAC | 10/min por usuário |
+
+**Dispatcher (`lib/webhooks.ts`):**
+
+```typescript
+export function dispatchWebhookEvent(
+  userId: string,
+  eventType: WebhookEventType,
+  data: Record<string, unknown>,
+): void {
+  void _dispatchAsync(userId, eventType, data)  // fire-and-forget — nunca lança
+}
+```
+
+- Usa `createAdminClient()` para buscar webhooks (route handlers não têm sessão de usuário)
+- Filtra por `active = true` e `events @> [eventType]`
+- Assina com HMAC-SHA256: `'sha256=' + createHmac('sha256', plainSecret).update(payload).digest('hex')`
+- Headers: `X-Umbra-Signature-256`, `X-Umbra-Event`, `X-Umbra-Delivery`, `X-Umbra-Timestamp`, `User-Agent: Umbra-Bot-Webhook/1.0`
+- AbortSignal.timeout(8000) — nunca trava o thread
+- Persiste resultado em `webhook_deliveries` (success, response_status, response_body, duration_ms)
+- Chama RPC `sync_webhook_stats` após cada entrega (atualiza deliveries_24h, success_rate, status)
+
+**Eventos disponíveis (`WebhookEventType`):**
+
+| Evento | Disparado por |
+|---|---|
+| `sale.approved` | `app/api/payments/mercadopago-webhook/route.ts` — quando MP confirma pagamento |
+| `sale.pending` | `app/api/payments/mercadopago-webhook/route.ts` — quando PIX é criado e aguarda pagamento |
+| `sale.refunded` | (disponível — não disparado automaticamente ainda) |
+| `sale.chargeback` | (disponível — não disparado automaticamente ainda) |
+| `lead.created` | `app/api/telegram/webhook/route.ts` — quando novo contato inicia conversa (`/start`) |
+| `lead.tagged` | (disponível — não disparado automaticamente ainda) |
+| `lead.unsubscribed` | (disponível — não disparado automaticamente ainda) |
+| `subscription.created` | (disponível — não disparado automaticamente ainda) |
+| `subscription.canceled` | (disponível — não disparado automaticamente ainda) |
+| `subscription.renewed` | (disponível — não disparado automaticamente ainda) |
+| `bot.disconnected` | (disponível — não disparado automaticamente ainda) |
+| `flow.completed` | (disponível — não disparado automaticamente ainda) |
+| `test.ping` | `testWebhookAction` — evento de teste disparado pelo dashboard |
+
+**Tabelas do banco:**
+
+```sql
+-- webhooks — webhooks de saída por usuário
+-- Migração 091 adicionou: user_id, RLS owner, sync_webhook_stats RPC, webhooks_stats RPC
+
+-- webhook_deliveries — histórico de entregas
+create table public.webhook_deliveries (
+  id              uuid        primary key default gen_random_uuid(),
+  webhook_id      text        not null references public.webhooks(id) on delete cascade,
+  user_id         uuid        not null references auth.users(id) on delete cascade,
+  event_type      text        not null,
+  payload         jsonb       not null default '{}',
+  response_status integer,
+  response_body   text,
+  duration_ms     integer,
+  success         boolean     not null default false,
+  attempt         integer     not null default 1,
+  created_at      timestamptz not null default now()
+);
+```
+
+**RPC `sync_webhook_stats(p_webhook_id text)`:**
+- `security definer` — atualiza `deliveries_24h`, `success_rate` e `status` (failing se <80%, healthy se ≥80%)
+- Chamada após cada entrega em `lib/webhooks.ts` e `testWebhookAction` / `resendDeliveryAction`
+
+**RPC `webhooks_stats(p_user_id uuid)`:**
+- Retorna `{ total, active, failing, deliveries_24h, success_rate }` — usado nos KPI cards do dashboard
+
+**Segurança:**
+- Secrets criptografados AES-256-GCM via `encryptToken()` antes de salvar — nunca expostos ao client
+- SSRF protection na URL: bloqueia `localhost`, `127.0.0.1`, `169.254.x.x`, `10.x`, `192.168.x`
+- RLS `webhooks_owner`: `auth.uid() = user_id` — sem cross-user leak
+- `webhook_deliveries`: RLS SELECT only (`wd_owner`), INSERT via `security definer` functions
+- `dispatchWebhookEvent` usa `createAdminClient()` — webhooks de route handlers não têm sessão
+
+**PostHog events:** `webhook_created`, `webhook_tested`, `webhook_paused`, `webhook_resumed`, `webhook_deleted`, `webhook_secret_rotated`, `delivery_resent`
+
+**Supabase Realtime:** canal `webhooks-realtime`, event `*`, filtro `user_id=eq.${userId}` — atualiza status/active/deliveries_24h/success_rate em tempo real no dashboard
 
 ---
 
@@ -779,7 +875,7 @@ Fonte: `.env.example` na raiz do repositório.
 
 ## 11. TABELAS DO BANCO
 
-Total de migrações: **87 arquivos** (numeradas de 000 a 086, mais arquivos de timestamp).
+Total de migrações: **91 arquivos** (numeradas de 000 a 090, mais arquivos de timestamp).
 
 | Tabela | Função |
 |---|---|
@@ -809,7 +905,9 @@ Total de migrações: **87 arquivos** (numeradas de 000 a 086, mais arquivos de 
 | `push_subscriptions` | Subscriptions WebPush por usuário |
 | `invoices` | Faturas de billing (period, value, due_date, status) |
 | `bank_accounts` | Contas bancárias (duplicado acima para clareza) |
-| `biolinks` | Páginas de bio link (mock — tabela criada, sem UI funcional) |
+| `biolinks` | Páginas de bio link públicas (múltiplos por usuário, slug único, status published/draft) |
+| `biolink_view_events` | Eventos de visita ao bio link (ip_hash, device_type, referrer) |
+| `biolink_click_events` | Eventos de clique em links do bio link (link_id, link_url, ip_hash, device_type) |
 | `webhooks` | Webhooks de saída (mock — tabela criada, sem UI funcional) |
 | `team_members` | Membros de equipe (mock — tabela criada, sem UI funcional) |
 | `guide_articles` | Artigos de guia (busca global — sem CRUD) |
