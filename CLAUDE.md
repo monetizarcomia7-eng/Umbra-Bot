@@ -161,6 +161,13 @@ umbra-bot/
 │   │       │                          # declaração Umbra Bot + Termos + Denunciar produto + nota reCAPTCHA
 │   │       └── PixelScripts.tsx  # Snippets de pixel (Meta/TikTok/Google) injetados no head
 │   │                              # step inclui 'upsell' — Purchase dispara em success + upsell
+│   ├── b/
+│   │   └── [slug]/
+│   │       ├── page.tsx          # Server Component público (admin client, ISR revalidate=60)
+│   │       │                     # Busca biolink por slug WHERE status='published'; notFound() se não existe
+│   │       │                     # generateMetadata: title/description/openGraph com avatar como imagem
+│   │       └── BioPublicClient.tsx # Client Component: page temática completa, rastreamento de visita
+│   │                               # e de cliques via RPCs anon (fire-and-forget, não bloqueia navegação)
 │   ├── r/
 │   │   └── [slug]/
 │   │       └── route.ts          # GET: rota pública — tenta afiliado primeiro, depois redirecionador
@@ -281,7 +288,11 @@ umbra-bot/
 │       │                          # upload de product_image (Supabase Storage bucket checkout-images),
 │       │                          # analytics drill-down por checkout (funil visited/cart/paid lazy),
 │       │                          # 4 eventos PostHog (checkout_created/published/deleted/duplicated)
-│       ├── biolink/              # Bio Link (mock)
+│       ├── biolink/              # Bio Link — dados reais (SSR + Client), migrações 088–089
+│       │   ├── page.tsx          # Server Component: SSR biolink + biolink_analytics RPC em paralelo
+│       │   └── BioLinkClient.tsx # Client Component: editor visual, CRUD real, auto-save 30s,
+│       │                         # avatar upload (Storage bio-avatars), 7 temas, links UUID,
+│       │                         # publish/unpublish, analytics por link, 5 PostHog events
 │       ├── webhooks/             # Webhooks (mock)
 │       ├── profile/              # Perfil + avatar upload (funcional + analytics)
 │       ├── notifications/        # Notificações — Server Component SSR + Client Component
@@ -652,6 +663,20 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Checkout — upsell: nota de preço "Cobrado separadamente ao clicar em…" + link com target="_blank" rel="noopener" | ✅ Implementado |
 | Checkout — build fix: `paidAmountRef` captura `effectivePrice` no `handleSubmit` para uso no `useEffect` de `checkout_pay_success` (evita temporal dead zone de `const` declarada depois do efeito) | ✅ Corrigido |
 | Sistema de planos/billing | ❌ Não iniciado |
+| Bio Link — Server Component SSR + BioLinkClient (dados reais, sem mock, migração 088) | ✅ Funcional |
+| Bio Link — CRUD real: INSERT na primeira vez (UUID) + UPDATE com .eq('user_id') IDOR-safe | ✅ Implementado |
+| Bio Link — auto-save 30s (só após first save quando page.id existe), dirty check, DiscardModal | ✅ Implementado |
+| Bio Link — avatar upload (Supabase Storage bucket bio-avatars, 2 MB, RLS por pasta user_id/) | ✅ Implementado |
+| Bio Link — 7 temas de cor (violet/mint/sunset/ocean/rose/mono/cream), 3 fundos, 3 estilos de botão | ✅ Implementado |
+| Bio Link — links: CRUD com reordenação, tipos (bot/product/custom/social/video), destaque, UUID | ✅ Implementado |
+| Bio Link — analytics: views_period + clicks_period + clicks_by_link via RPC biolink_analytics | ✅ Implementado |
+| Bio Link — publish/unpublish: toggle status published↔draft com saveImpl | ✅ Implementado |
+| Bio Link — página pública /b/[slug] (ISR revalidate=60, generateMetadata para SEO) | ✅ Implementado |
+| Bio Link — rastreamento de visita: RPC record_biolink_visit (security definer, grant to anon) | ✅ Implementado |
+| Bio Link — rastreamento de clique: RPC record_biolink_link_click (fire-and-forget no client) | ✅ Implementado |
+| Bio Link — 5 eventos PostHog: biolink_created/saved/published/link_added/theme_changed | ✅ Implementado |
+| Bio Link — migração 088: user_id FK + RLS owner + biolink_view/click_events + 3 RPCs | ✅ Criada |
+| Bio Link — migração 089: bucket bio-avatars (público, 2 MB, jpg/png/webp/gif, RLS por pasta) | ✅ Criada |
 | Remarketing — Server Component SSR + RemarketingClient (dados reais, sem mock) | ✅ Funcional |
 | Remarketing — createCampaign: INSERT real com user_id + UUID real retornado | ✅ Implementado |
 | Remarketing — saveCampaign: UPDATE com .eq('user_id') — IDOR duplo | ✅ Implementado |

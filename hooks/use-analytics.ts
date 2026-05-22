@@ -72,6 +72,12 @@ type EventMap = {
   pixel_verified:            { provider: string; status: 'ok' | 'error' }
   pixel_test_sent:           { provider: string }
   utm_link_copied:           { has_utm: boolean }
+  // Aba Bio Link
+  biolink_created:           Record<string, never>
+  biolink_saved:             Record<string, never>
+  biolink_published:         { slug: string }
+  biolink_link_added:        { type: string }
+  biolink_theme_changed:     { theme: string }
   // Aba Checkout
   checkout_created:          { layout: string; gateway: string }
   checkout_published:        { slug: string; price: number }
