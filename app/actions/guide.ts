@@ -67,8 +67,8 @@ export async function getArticleBodyAction(articleId: string): Promise<{
   const body = (data.body as string | null) ?? ''
 
   // Increment views fire-and-forget
-  supabase.rpc('increment_article_views', { p_article_id: articleId }).catch((err) => {
-    Sentry.captureException(err, { extra: { articleId, context: 'increment_article_views' } })
+  void supabase.rpc('increment_article_views', { p_article_id: articleId }).then(({ error }) => {
+    if (error) Sentry.captureException(error, { extra: { articleId, context: 'increment_article_views' } })
   })
 
   const toc = extractToc(body)
