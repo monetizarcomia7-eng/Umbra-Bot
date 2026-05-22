@@ -171,14 +171,12 @@ export function BioPublicClient({ biolink, slug }: Props) {
             }
           </div>
 
-          {biolink.name && (
-            <h1
-              className="text-[20px] font-bold tracking-tight mt-4 text-center"
-              style={{ color: theme.text }}
-            >
-              {biolink.name}
-            </h1>
-          )}
+          <h1
+            className="text-[20px] font-bold tracking-tight mt-4 text-center"
+            style={{ color: theme.text }}
+          >
+            {biolink.name || 'Sem nome'}
+          </h1>
 
           {biolink.bio && (
             <p
