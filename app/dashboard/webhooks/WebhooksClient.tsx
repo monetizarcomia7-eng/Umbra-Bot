@@ -9,7 +9,7 @@ import { useAnalytics } from '@/hooks/use-analytics'
 import {
   BookOpen, Plus, CheckCircle2, X, Webhook, Send, AlertTriangle,
   ChevronUp, ChevronDown, Zap, RotateCw, Eye, EyeOff, Copy, Check,
-  RefreshCw, AlertCircle, Trash2, Pencil, XCircle, Globe, Loader2,
+  RefreshCw, AlertCircle, Trash2, Pencil, XCircle, Globe, Loader2, ExternalLink,
 } from 'lucide-react'
 import type { RawWebhookRow } from './page'
 import {
@@ -712,6 +712,151 @@ function WebhookFormModal({ open, onClose, editing, onSaved }: {
 
 interface ToastItem { msg: string; type: 'success' | 'error' }
 
+/* ── IntegrationsSection ─────────────────────────────────────────────────────── */
+
+const INTEGRATION_PLATFORMS = [
+  {
+    id: 'zapier',
+    name: 'Zapier',
+    tagline: '7.000+ apps conectados',
+    description: 'Use o trigger "Webhooks by Zapier" para capturar eventos de venda, lead e outros em qualquer fluxo automatizado.',
+    color: '#FF4A00',
+    bg: 'rgba(255,74,0,0.10)',
+    url: 'https://zapier.com/apps/webhook/integrations',
+    label: 'Z',
+    steps: [
+      'Acesse zapier.com e crie um novo Zap',
+      'Escolha "Webhooks by Zapier" como trigger e selecione "Catch Hook"',
+      'Copie a URL do webhook gerada pelo Zapier',
+      'No Umbra Bot, crie um webhook e cole essa URL no campo "URL do endpoint"',
+      'Clique em "Testar" para enviar um evento de teste e validar a integração',
+    ],
+  },
+  {
+    id: 'make',
+    name: 'Make',
+    tagline: 'Automação visual',
+    description: 'Adicione o módulo "Custom Webhook" em qualquer cenário para receber eventos e processar dados em tempo real.',
+    color: '#6D4AFF',
+    bg: 'rgba(109,74,255,0.10)',
+    url: 'https://www.make.com/en/register',
+    label: 'M',
+    steps: [
+      'Acesse make.com e crie um novo cenário',
+      'Adicione o módulo "Webhooks" e escolha "Custom Webhook"',
+      'Crie o webhook e copie a URL gerada',
+      'No Umbra Bot, crie um webhook e cole essa URL no campo "URL do endpoint"',
+      'Execute o cenário e clique em "Testar" no Umbra Bot para disparar',
+    ],
+  },
+  {
+    id: 'n8n',
+    name: 'n8n',
+    tagline: 'Open-source & self-hosted',
+    description: 'Adicione o nó "Webhook" no seu workflow para receber e processar eventos com lógica completamente customizada.',
+    color: '#EA4B71',
+    bg: 'rgba(234,75,113,0.10)',
+    url: 'https://n8n.io',
+    label: 'n8n',
+    steps: [
+      'Acesse n8n.io ou sua instância self-hosted',
+      'Crie um novo workflow e adicione o nó "Webhook"',
+      'Copie a "Production URL" exibida no nó',
+      'No Umbra Bot, crie um webhook e cole essa URL no campo "URL do endpoint"',
+      'Ative o workflow e clique em "Testar" para confirmar o recebimento',
+    ],
+  },
+] as const
+
+function IntegrationsSection() {
+  const [openGuide, setOpenGuide] = useState<string | null>(null)
+
+  return (
+    <div className="mt-8">
+      <div className="mb-4">
+        <div className="text-[14px] font-semibold text-[var(--text)]">Integrações</div>
+        <div className="text-[12.5px] text-[var(--text-muted)] mt-0.5">
+          Conecte o Umbra Bot com plataformas de automação para disparar ações em qualquer app.
+        </div>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {INTEGRATION_PLATFORMS.map((p) => {
+          const isOpen = openGuide === p.id
+          return (
+            <div key={p.id} className="bg-[var(--surface)] border border-[var(--border)] rounded-xl overflow-hidden">
+              {/* Header */}
+              <div className="px-4 pt-4 pb-3">
+                <div className="flex items-center gap-3 mb-3">
+                  <div
+                    className="w-10 h-10 rounded-xl flex items-center justify-center text-[13px] font-bold shrink-0"
+                    style={{ background: p.bg, color: p.color }}
+                  >
+                    {p.label}
+                  </div>
+                  <div>
+                    <div className="text-[13px] font-semibold text-[var(--text)]">{p.name}</div>
+                    <div className="text-[11px] text-[var(--text-muted)]">{p.tagline}</div>
+                  </div>
+                </div>
+                <p className="text-[12px] text-[var(--text-muted)] leading-relaxed">
+                  {p.description}
+                </p>
+              </div>
+
+              {/* Actions */}
+              <div className="px-4 pb-3 flex items-center gap-2">
+                <a
+                  href={p.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 h-8 px-3 text-[12px] font-medium rounded-lg border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--surface-2)] hover:text-[var(--text)] transition-colors"
+                >
+                  <ExternalLink size={11} />
+                  Abrir {p.name}
+                </a>
+                <button
+                  onClick={() => setOpenGuide(isOpen ? null : p.id)}
+                  className="inline-flex items-center gap-1.5 h-8 px-3 text-[12px] font-medium rounded-lg border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--surface-2)] hover:text-[var(--text)] transition-colors"
+                >
+                  {isOpen ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+                  {isOpen ? 'Ocultar guia' : 'Ver guia'}
+                </button>
+              </div>
+
+              {/* Expandable step-by-step guide */}
+              {isOpen && (
+                <div className="border-t border-[var(--border)] px-4 py-3">
+                  <div className="text-[10.5px] font-semibold text-[var(--text-muted)] uppercase tracking-wider mb-2.5">
+                    Passo a passo
+                  </div>
+                  <ol className="space-y-2.5">
+                    {p.steps.map((step, i) => (
+                      <li key={i} className="flex gap-2.5 text-[12px] text-[var(--text-muted)]">
+                        <span
+                          className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 mt-0.5"
+                          style={{ background: p.bg, color: p.color }}
+                        >
+                          {i + 1}
+                        </span>
+                        <span className="leading-relaxed">{step}</span>
+                      </li>
+                    ))}
+                  </ol>
+                  <div className="mt-3 rounded-lg bg-[var(--surface-2)] border border-[var(--border)] px-3 py-2.5 text-[11.5px] text-[var(--text-muted)] leading-relaxed">
+                    <span className="font-semibold text-[var(--text)]">Dica:</span> após colar a URL, clique em{' '}
+                    <span className="font-semibold text-[var(--text)]">&quot;Testar&quot;</span> no Umbra Bot
+                    para confirmar que a integração está recebendo eventos corretamente.
+                  </div>
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 /* ── WebhooksClient ─────────────────────────────────────────────────────────── */
 
 export function WebhooksClient({ initialWebhooks, userId }: {
@@ -990,6 +1135,9 @@ export function WebhooksClient({ initialWebhooks, userId }: {
           </div>
         )}
       </div>
+
+      {/* Integrações */}
+      <IntegrationsSection />
 
       <WebhookFormModal
         open={modalOpen}
