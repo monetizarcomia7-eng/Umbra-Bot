@@ -116,6 +116,12 @@ type EventMap = {
   notifications_channel_toggled:    { channel: string; linked: boolean }
   notifications_quiet_hours_set:    Record<string, never>
   notifications_reset_to_default:   Record<string, never>
+  // Aba Guia da Plataforma
+  guide_article_opened:      { article_id: string; article_title: string; category: string }
+  guide_article_helpful:     { article_id: string; helpful: boolean }
+  guide_search_performed:    { query: string; results_count: number }
+  guide_support_clicked:     { action: string }
+  guide_category_viewed:     { category: string }
   // Aba Ferramentas
   tool_opened:               { tool_id: string }
   test_message_sent:         { bot_id: string; success: boolean; time_ms: number; format: string }
