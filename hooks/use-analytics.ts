@@ -80,6 +80,14 @@ type EventMap = {
   webhook_deleted:        Record<string, never>
   webhook_secret_rotated: Record<string, never>
   delivery_resent:        { event_type: string; attempt: number }
+  // Aba Perfil
+  profile_saved:             Record<string, never>
+  password_changed:          Record<string, never>
+  two_fa_enabled:            Record<string, never>
+  two_fa_disabled:           Record<string, never>
+  member_invited:            { role: string }
+  member_role_changed:       { role: string }
+  member_removed:            Record<string, never>
   // Aba Bio Link
   biolink_created:           Record<string, never>
   biolink_saved:             Record<string, never>
