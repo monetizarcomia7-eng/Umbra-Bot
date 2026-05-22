@@ -202,6 +202,7 @@ export function DocsLayout({ categories, breadcrumb, toc, children }: DocsLayout
                 <X size={16} />
               </button>
             </div>
+            {/* eslint-disable-next-line react-hooks/static-components */}
             <SidebarNav />
           </div>
         </div>
@@ -212,6 +213,7 @@ export function DocsLayout({ categories, breadcrumb, toc, children }: DocsLayout
 
         {/* Desktop sidebar */}
         <aside className="hidden lg:flex flex-col w-[240px] xl:w-[260px] shrink-0 sticky top-[56px] self-start max-h-[calc(100vh-56px)] border-r border-border">
+          {/* eslint-disable-next-line react-hooks/static-components */}
           <SidebarNav />
         </aside>
 

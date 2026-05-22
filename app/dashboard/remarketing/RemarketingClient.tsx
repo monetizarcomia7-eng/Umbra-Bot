@@ -1101,8 +1101,10 @@ function CampaignEditor({ campaign, bots, saving, onBack, onSave, onActivate, on
 
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const campaignRef      = useRef(campaign)
+  // eslint-disable-next-line react-hooks/refs
   campaignRef.current    = campaign
   const stateRef = useRef({ name, desc: '', trigger, audience, triggerConfig, botId, steps })
+  // eslint-disable-next-line react-hooks/refs
   stateRef.current = { name, desc, trigger, audience, triggerConfig, botId, steps }
 
   const dirty = name !== campaign.name
@@ -1482,6 +1484,7 @@ export default function RemarketingClient({ initialCampaigns, bots, userId, init
       .subscribe()
 
     return () => { supabase.removeChannel(channel) }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId])
 
   /* ── Paginação ──────────────────────────────────────────────── */

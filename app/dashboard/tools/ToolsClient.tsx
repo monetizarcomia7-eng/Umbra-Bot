@@ -614,6 +614,7 @@ function QRCodeModal({ open, onClose, bots }: { open: boolean; onClose: () => vo
           {loading && <Spinner />}
           {!loading && qrUrl && (
             <>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={qrUrl} alt="QR Code" width={size} height={size} className="block rounded" />
               <div className="mt-3 text-center">
                 <div className="text-[11.5px] text-text-muted">Aponte a câmera para abrir:</div>
@@ -992,6 +993,16 @@ function PreviewFlowModal({ open, onClose, flows }: { open: boolean; onClose: ()
 
 /* ── Tool 6 — Import Config ──────────────────────────────────────────────── */
 
+function ImportRow({ icon, label, count }: { icon: string; label: string; count: number }) {
+  return (
+    <div className="flex items-center gap-2">
+      <Icon name={icon} size={12} className="text-text-muted shrink-0" />
+      <span className="text-[12px] text-text-muted">{label}:</span>
+      <span className="text-[12px] text-text font-semibold ml-auto">{fmtNum(count)}</span>
+    </div>
+  )
+}
+
 function ImportConfigModal({ open, onClose, onToast }: {
   open: boolean; onClose: () => void; onToast: (msg: string, type?: 'success' | 'error') => void
 }) {
@@ -1064,16 +1075,6 @@ function ImportConfigModal({ open, onClose, onToast }: {
     finally { setImporting(false) }
   }
 
-  function Row({ icon, label, count }: { icon: string; label: string; count: number }) {
-    return (
-      <div className="flex items-center gap-2">
-        <Icon name={icon} size={12} className="text-text-muted shrink-0" />
-        <span className="text-[12px] text-text-muted">{label}:</span>
-        <span className="text-[12px] text-text font-semibold ml-auto">{fmtNum(count)}</span>
-      </div>
-    )
-  }
-
   return (
     <Modal open={open} onClose={onClose}
       title="Importar configurações" subtitle="Restaure o workspace a partir de um backup JSON." size="md"
@@ -1136,12 +1137,12 @@ function ImportConfigModal({ open, onClose, onToast }: {
             )}
             <div className="text-[10.5px] uppercase tracking-wider font-semibold text-text-subtle mb-2.5">Conteúdo a importar</div>
             <div className="grid grid-cols-2 gap-y-2 gap-x-4">
-              <Row icon="bot"         label="Bots"       count={parsed.bots} />
-              <Row icon="git-branch"  label="Fluxos"     count={parsed.flows} />
-              <Row icon="layers"      label="Sequências" count={parsed.sequences} />
-              <Row icon="credit-card" label="Gateways"   count={parsed.gateways} />
-              <Row icon="link"        label="Links"      count={parsed.links} />
-              <Row icon="tag"         label="Tags"       count={parsed.tags} />
+              <ImportRow icon="bot"         label="Bots"       count={parsed.bots} />
+              <ImportRow icon="git-branch"  label="Fluxos"     count={parsed.flows} />
+              <ImportRow icon="layers"      label="Sequências" count={parsed.sequences} />
+              <ImportRow icon="credit-card" label="Gateways"   count={parsed.gateways} />
+              <ImportRow icon="link"        label="Links"      count={parsed.links} />
+              <ImportRow icon="tag"         label="Tags"       count={parsed.tags} />
             </div>
             <div className="mt-3 pt-3 border-t border-border flex items-start gap-2 text-[11px] text-warning">
               <Icon name="alert-triangle" size={12} className="mt-0.5 shrink-0" />
@@ -1568,7 +1569,7 @@ export function ToolsClient({ bots, flows }: { bots: RawBot[]; flows: RawFlow[] 
     if (!toast) return
     const t = setTimeout(() => setToast(null), 3500)
     return () => clearTimeout(t)
-  }, [toast, toastKey.current]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [toast, toastKey.current]) // eslint-disable-line react-hooks/exhaustive-deps, react-hooks/refs
 
   const handleToast = useCallback((msg: string, type: 'success' | 'error' = 'success') => {
     toastKey.current++

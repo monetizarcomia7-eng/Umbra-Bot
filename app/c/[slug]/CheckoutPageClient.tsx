@@ -251,7 +251,7 @@ export default function CheckoutPageClient({
     }
     document.addEventListener('mouseleave', handleMouseLeave)
     return () => document.removeEventListener('mouseleave', handleMouseLeave)
-  }, [extraComponents, step]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [extraComponents, step])
 
   // Contador de visitantes ao vivo via Supabase Realtime Presence
   useEffect(() => {
@@ -275,7 +275,6 @@ export default function CheckoutPageClient({
   // Redireciona para success_url 3s após confirmação — ou mostra upsell primeiro
   useEffect(() => {
     if (step !== 'success') return
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     track('checkout_pay_success', {
       checkout_id: c.id,
       amount:      paidAmountRef.current,
@@ -1072,6 +1071,7 @@ export default function CheckoutPageClient({
             )
             if (ec.type === 'countdown' && ec.endsAt) {
               const endsMs = new Date(ec.endsAt).getTime()
+              // eslint-disable-next-line react-hooks/purity
               const secLeft = Math.max(0, Math.floor((endsMs - Date.now()) / 1000))
               return secLeft > 0 ? (
                 <div key={ec.id} className="flex items-center gap-3 px-4 py-3 rounded-xl text-[13.5px] font-semibold" style={{ background: '#fef2f2', border: '1px solid #fecaca', color: '#dc2626' }}>

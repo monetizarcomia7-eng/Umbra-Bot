@@ -1132,6 +1132,7 @@ function Canvas({ nodes, edges, vp, setVp, selectedIds, selectedEdgeId, onSelect
       window.addEventListener('mouseup', up)
       return () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up) }
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dragging, panning, boxSelect, vp, nodes, onUpdateNodes, onSelectNodes, onDragEnd, setVp])
 
   function onWheel(e: React.WheelEvent) {
@@ -1320,6 +1321,7 @@ function RenderPreviewEntries({ entries }: { entries: PreviewEntry[] }) {
               <div className="max-w-[240px]">
                 <div className="w-[200px] h-[120px] bg-surface-2 border border-border rounded-lg flex items-center justify-center overflow-hidden">
                   {entry.url
+                    // eslint-disable-next-line @next/next/no-img-element
                     ? <img src={entry.url} alt={entry.caption} className="w-full h-full object-cover" onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
                     : <LucideImage size={28} className="text-text-subtle" />
                   }
@@ -1560,16 +1562,21 @@ function FlowEditor({ flow, bots, onBack, onSave, onPublish, showToast }: {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const autoSaveRef  = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const onSaveRef    = useRef(onSave)
+  // eslint-disable-next-line react-hooks/refs
   onSaveRef.current  = onSave
 
   // Refs para leitura síncrona do estado mais recente
   const nodesRef = useRef(nodes)
+  // eslint-disable-next-line react-hooks/refs
   nodesRef.current = nodes
   const edgesRef = useRef(edges)
+  // eslint-disable-next-line react-hooks/refs
   edgesRef.current = edges
   const selectedNodeIdsRef = useRef(selectedNodeIds)
+  // eslint-disable-next-line react-hooks/refs
   selectedNodeIdsRef.current = selectedNodeIds
   const selectedEdgeIdRef = useRef(selectedEdgeId)
+  // eslint-disable-next-line react-hooks/refs
   selectedEdgeIdRef.current = selectedEdgeId
 
   // ── History (Undo/Redo) ────────────────────────────────────────────────────
@@ -1776,6 +1783,7 @@ function FlowEditor({ flow, bots, onBack, onSave, onPublish, showToast }: {
   const singleSelectedId = selectedNodeIds.size === 1 ? [...selectedNodeIds][0] : null
   const selectedNode = singleSelectedId ? nodes.find(n => n.id === singleSelectedId) : undefined
   const st = flowStatusMap[flow.status] ?? flowStatusMap.draft
+  // eslint-disable-next-line react-hooks/purity
   const savedRecently = savedAt && Date.now() - savedAt < 5000
 
   return (

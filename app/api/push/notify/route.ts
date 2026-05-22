@@ -3,17 +3,24 @@ import { createClient } from '@/lib/supabase/server'
 import webpush from 'web-push'
 import { rateLimit } from '@/lib/rate-limit'
 
-// Configure VAPID — set these env vars via `npx web-push generate-vapid-keys`
-webpush.setVapidDetails(
-  `mailto:${process.env.VAPID_EMAIL ?? 'admin@umbra.bot'}`,
-  process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? '',
-  process.env.VAPID_PRIVATE_KEY ?? '',
-)
+function getWebPush() {
+  const publicKey  = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY
+  const privateKey = process.env.VAPID_PRIVATE_KEY
+  if (!publicKey || !privateKey) return null
+  webpush.setVapidDetails(
+    `mailto:${process.env.VAPID_EMAIL ?? 'admin@umbra.bot'}`,
+    publicKey,
+    privateKey,
+  )
+  return webpush
+}
 
 // POST /api/push/notify
 // Body: { user_id?: string, title: string, body: string, url?: string }
 // If user_id is omitted, notifies the authenticated user.
 export async function POST(request: NextRequest) {
+  const wp = getWebPush()
+  if (!wp) return NextResponse.json({ error: 'push not configured' }, { status: 503 })
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
@@ -49,7 +56,7 @@ export async function POST(request: NextRequest) {
   })
 
   try {
-    await webpush.sendNotification(
+    await wp.sendNotification(
       row.subscription as webpush.PushSubscription,
       payload,
     )

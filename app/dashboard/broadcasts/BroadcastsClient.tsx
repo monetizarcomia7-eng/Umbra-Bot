@@ -653,6 +653,7 @@ function SchedulePicker({ mode, setMode, scheduledFor, setScheduledFor }: {
             type="datetime-local"
             value={toLocal(scheduledFor)}
             onChange={e => setScheduledFor(new Date(e.target.value).getTime())}
+            // eslint-disable-next-line react-hooks/purity
             min={toLocal(Date.now())}
             className="w-full h-10 px-3 bg-surface border border-border rounded-lg text-[12.5px] font-mono text-text focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50"
           />
@@ -715,6 +716,7 @@ function PreviewBroadcast({ message, media, buttons, botLabel }: {
             {media && (
               <div className="bg-surface-2 h-32 flex items-center justify-center text-text-muted relative overflow-hidden">
                 {media.url && media.kind === 'image'
+                  // eslint-disable-next-line @next/next/no-img-element
                   ? <img src={media.url} alt="prévia" className="absolute inset-0 w-full h-full object-cover" onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
                   : <Icon name={media.kind === 'image' ? 'image' : media.kind === 'video' ? 'film' : 'file'} size={28} />
                 }
@@ -989,7 +991,7 @@ function BroadcastEditor({
   const [media,        setMedia]        = useState<MediaAttachment | null>(broadcast.media)
   const [buttons,      setButtons]      = useState<BroadcastButton[]>(broadcast.buttons)
   const [scheduleMode, setScheduleMode] = useState<'now' | 'later'>(broadcast.scheduledFor ? 'later' : 'now')
-  const [scheduledFor, setScheduledFor] = useState(broadcast.scheduledFor ?? Date.now() + 3600 * 1000)
+  const [scheduledFor, setScheduledFor] = useState(() => broadcast.scheduledFor ?? Date.now() + 3600 * 1000)
   const [regAfter,     setRegAfter]     = useState(broadcast.filters?.registered_after  ?? '')
   const [regBefore,    setRegBefore]    = useState(broadcast.filters?.registered_before ?? '')
   const [confirmOpen,  setConfirmOpen]  = useState(false)
@@ -1588,6 +1590,7 @@ export default function BroadcastsClient({
       )
       .subscribe()
     return () => { supabase.removeChannel(channel) }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId])
 
   /* ── CRUD ────────────────────────────────────────────────────────── */

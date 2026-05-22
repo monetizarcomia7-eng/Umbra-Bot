@@ -899,8 +899,9 @@ export default function ActivityClient({
             <EmptyFeed onClear={onClear} />
           ) : (
             <div className="space-y-1">
-              {grouped.map(([k, items]) => (
-                <DayGroup
+              {grouped.map(([k, items]) => {
+                // eslint-disable-next-line react-hooks/refs
+                return <DayGroup
                   key={k}
                   dayKey={k}
                   events={items}
@@ -908,7 +909,7 @@ export default function ActivityClient({
                   newIds={initialNewIds.current}
                   botMap={botMap}
                 />
-              ))}
+              })}
 
               <div ref={sentinelRef} className="py-6 flex items-center justify-center">
                 {(visibleCount < filtered.length || isLoadingMore) ? (

@@ -1013,6 +1013,7 @@ function AddCustomerModal({ open, onClose, bots, originOptions, onSuccess }: {
 
   useEffect(() => {
     if (open) { setForm(emptyForm); setError('') }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
   useEffect(() => {

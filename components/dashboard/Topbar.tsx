@@ -17,6 +17,9 @@ export interface TopbarProps {
   onMobileMenu: () => void
 }
 
+type DbResult<T> = PromiseSettledResult<{ data: T[] | null }>
+function ok<T>(r: DbResult<T>): T[] { return r.status === 'fulfilled' ? (r.value.data ?? []) : [] }
+
 const PLAN_LABEL: Record<string, string> = {
   free: 'Plano Free',
   pro: 'Plano Pro',
@@ -275,9 +278,6 @@ export function Topbar({ onMobileMenu }: TopbarProps) {
   type ArticleRow     = { id: string; title: string; excerpt: string | null; category: string | null }
   type CourseRow      = { id: string; title: string; subtitle: string | null; instructor: string | null }
   type AlertRow       = { id: string; title: string; description: string | null; severity: string }
-
-  type DbResult<T> = PromiseSettledResult<{ data: T[] | null }>
-  const ok = <T,>(r: DbResult<T>): T[] => r.status === 'fulfilled' ? (r.value.data ?? []) : []
 
   const runSearch = useCallback(async (q: string) => {
     if (q.trim().length < 2) { setSearchResults([]); setSearchLoading(false); return }

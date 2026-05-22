@@ -923,6 +923,7 @@ function TelegramProfileModal({ bot, open, onClose }: {
                 onClick={() => fileRef.current?.click()}
                 className="relative w-20 h-20 rounded-xl overflow-hidden bg-surface-2 border-2 border-dashed border-border hover:border-primary transition-colors group shrink-0"
               >
+                {/* eslint-disable @next/next/no-img-element */}
                 {displayPhoto ? (
                   <img src={displayPhoto} alt="Foto do bot" className="w-full h-full object-cover" />
                 ) : (

@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { PageHeader } from '@/components/dashboard/PageHeader'
 import { createClient } from '@/lib/supabase/client'
@@ -1351,7 +1352,7 @@ export default function TrackingClient({ initialPixels, initialStats, userId }: 
   const { track } = useAnalytics()
   const router     = useRouter()
 
-  const [now,       setNow]       = useState(Date.now())
+  const [now,       setNow]       = useState(() => Date.now())
   const [stats,     setStats]     = useState<PixelStats>(initialStats)
   const [pixels,    setPixels]    = useState<PixelItem[]>(() => mergePixels(initialPixels, initialStats, Date.now()))
   const [editing,   setEditing]   = useState<PixelItem | null>(null)
@@ -1576,12 +1577,12 @@ export default function TrackingClient({ initialPixels, initialStats, userId }: 
                 <Download size={13} />Exportar JSON
               </button>
             )}
-            <a
+            <Link
               href="/dashboard/docs/07-analytics/visao-geral-analytics"
               className="inline-flex items-center gap-2 h-9 px-4 text-[13px] font-medium rounded-lg border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--surface-2)] transition-colors"
             >
               <BookOpen size={14} />Documentação
-            </a>
+            </Link>
           </div>
         }
       />

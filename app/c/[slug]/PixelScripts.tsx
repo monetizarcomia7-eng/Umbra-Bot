@@ -30,7 +30,6 @@ function loadScript(src: string, id: string, onLoad?: () => void) {
 
 // ── Meta Pixel ──────────────────────────────────────────────
 function initMeta(pixelId: string) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const w = window as any
   if (!w.fbq) {
     // Base code do Meta Pixel (minificado)
@@ -46,7 +45,6 @@ function initMeta(pixelId: string) {
 }
 
 function trackMeta(event: string, params?: Record<string, unknown>) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const fbq = (window as any).fbq
   if (typeof fbq === 'function') fbq('track', event, params)
 }
@@ -57,8 +55,7 @@ function trackMeta(event: string, params?: Record<string, unknown>) {
 function initTikTok(pixelCode: string) {
   if (document.getElementById('tiktok-base')) {
     // Já inicializado — apenas registra o pixel code
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const ttq = (window as any).ttq
+      const ttq = (window as any).ttq
     if (ttq) { ttq.load(pixelCode); ttq.page() }
     return
   }
@@ -69,14 +66,12 @@ function initTikTok(pixelCode: string) {
 }
 
 function trackTikTok(event: string, params?: Record<string, unknown>) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const ttq = (window as any).ttq
   if (ttq && typeof ttq.track === 'function') ttq.track(event, params)
 }
 
 // ── Google (GA4) ────────────────────────────────────────────
 function initGoogle(measurementId: string) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const w = window as any
   if (!w.gtag) {
     w.dataLayer = w.dataLayer ?? []
@@ -88,7 +83,6 @@ function initGoogle(measurementId: string) {
 }
 
 function trackGoogle(event: string, params?: Record<string, unknown>) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const gtag = (window as any).gtag
   if (typeof gtag === 'function') gtag('event', event, params)
 }

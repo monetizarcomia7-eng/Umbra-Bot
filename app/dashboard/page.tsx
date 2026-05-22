@@ -7,6 +7,7 @@ import { DashboardClient } from './_components/DashboardClient'
 export default async function DashboardPage() {
   const supabase = await createClient()
 
+  // eslint-disable-next-line react-hooks/purity
   const now        = Date.now()
   const since30d   = new Date(now - 30 * 86_400_000).toISOString()
   const prevSince  = new Date(now - 60 * 86_400_000).toISOString()

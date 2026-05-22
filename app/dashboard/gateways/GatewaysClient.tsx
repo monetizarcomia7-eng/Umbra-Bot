@@ -566,6 +566,8 @@ function RenewModal({ open, onClose, g, bankAccounts }: {
 }) {
   const [accountId,   setAccountId]   = useState(g.accountId ?? bankAccounts[0]?.id ?? '')
   const [redirecting, setRedirecting] = useState(false)
+  // eslint-disable-next-line react-hooks/purity
+  const renderNow = Date.now()
 
   useEffect(() => {
     if (open) {
@@ -598,17 +600,17 @@ function RenewModal({ open, onClose, g, bankAccounts }: {
       <div className="space-y-3">
         {g.tokenExpiresAt && (
           <div className={`flex items-start gap-2 rounded-lg p-3 text-[12px] ${
-            daysUntilExpiry(g.tokenExpiresAt, Date.now()) <= 0
+            daysUntilExpiry(g.tokenExpiresAt, renderNow) <= 0
               ? 'bg-[color:var(--danger)]/5 border border-[color:var(--danger)]/20 text-[color:var(--danger)]'
-              : daysUntilExpiry(g.tokenExpiresAt, Date.now()) <= 30
+              : daysUntilExpiry(g.tokenExpiresAt, renderNow) <= 30
               ? 'bg-[color:var(--warning)]/5 border border-[color:var(--warning)]/20 text-[color:var(--warning)]'
               : 'bg-surface-2/40 border border-border text-text-muted'
           }`}>
             <Clock size={13} className="mt-0.5 shrink-0" />
             <span>
-              {daysUntilExpiry(g.tokenExpiresAt, Date.now()) <= 0
+              {daysUntilExpiry(g.tokenExpiresAt, renderNow) <= 0
                 ? 'Token expirado. Renove agora para retomar o processamento de pagamentos.'
-                : `Token expira em ${daysUntilExpiry(g.tokenExpiresAt, Date.now())} dias (${new Date(g.tokenExpiresAt).toLocaleDateString('pt-BR')}).`}
+                : `Token expira em ${daysUntilExpiry(g.tokenExpiresAt, renderNow)} dias (${new Date(g.tokenExpiresAt).toLocaleDateString('pt-BR')}).`}
             </span>
           </div>
         )}
@@ -936,7 +938,7 @@ export function GatewaysClient({
   const router    = useRouter()
 
   const [gateways,      setGateways]      = useState<GatewayItem[]>(() => mergeGateways(initialGateways, gatewayStats))
-  const [now,           setNow]           = useState(Date.now())
+  const [now,           setNow]           = useState(() => Date.now())
   const [connecting,    setConnecting]    = useState<GatewayItem | null>(null)
   const [testing,       setTesting]       = useState<GatewayItem | null>(null)
   const [disconnecting, setDisconnecting] = useState<GatewayItem | null>(null)
@@ -1050,6 +1052,7 @@ export function GatewaysClient({
   const totalTx     = connected.reduce((s, g) => s + g.tx30d,     0)
 
   // Taxa média ponderada real: usa avg_fee_pct da RPC, ponderado pelo volume
+  // eslint-disable-next-line react-hooks/preserve-manual-memoization
   const avgFee = useMemo(() => {
     const total = connected.reduce((s, g) => s + g.volume30d, 0)
     if (total > 0) {

@@ -82,7 +82,6 @@ async function findEligibleContactIds(
   campaign:  RawCampaign,
   limit:     number,
 ): Promise<string[]> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let query: any = supabase
     .from('contacts')
     .select('id')

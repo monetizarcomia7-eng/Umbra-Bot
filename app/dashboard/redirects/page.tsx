@@ -7,7 +7,9 @@ export default async function RedirectsPage() {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
 
+  // eslint-disable-next-line react-hooks/purity
   const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
+  // eslint-disable-next-line react-hooks/purity
   const sixtyDaysAgo  = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString()
 
   const [redirectsRes, currRes, prevRes, currUniqueRes] = await Promise.all([

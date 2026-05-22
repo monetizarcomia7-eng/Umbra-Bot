@@ -497,15 +497,13 @@ export function AlertsClient({
     const supabase = createClient()
     const channel  = supabase
       .channel('alerts-feed')
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .on('postgres_changes' as any, {
         event: 'INSERT', schema: 'public', table: 'alerts',
-        filter: `user_id=eq.${userId}`,   // ← CORRIGIDO: filtro por usuário
+        filter: `user_id=eq.${userId}`,
       }, (payload: { new: Record<string, unknown> }) => {
         const row = payload.new as unknown as RawAlert
         setAlerts((prev) => [mapRaw(row), ...prev])
       })
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .on('postgres_changes' as any, {
         event: 'UPDATE', schema: 'public', table: 'alerts',
         filter: `user_id=eq.${userId}`,   // ← NOVO: atualiza estado de outro contexto

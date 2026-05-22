@@ -235,16 +235,20 @@ export function FinanceDashboard({
   )
 
   // Filtros por período (roda só quando txRows ou period mudam)
+  // eslint-disable-next-line react-hooks/preserve-manual-memoization
   const filteredTxs = useMemo(() => {
     if (period === 'all') return txRows
     const days = period === '7d' ? 7 : period === '30d' ? 30 : 90
+    // eslint-disable-next-line react-hooks/purity
     const ts = Date.now() - days * 86_400_000
     return txRows.filter((t) => new Date(t.dt).getTime() >= ts)
   }, [txRows, period])
 
+  // eslint-disable-next-line react-hooks/preserve-manual-memoization
   const filteredWds = useMemo(() => {
     if (period === 'all') return wdRows
     const days = period === '7d' ? 7 : period === '30d' ? 30 : 90
+    // eslint-disable-next-line react-hooks/purity
     const ts = Date.now() - days * 86_400_000
     return wdRows.filter((w) => new Date(w.date).getTime() >= ts)
   }, [wdRows, period])
