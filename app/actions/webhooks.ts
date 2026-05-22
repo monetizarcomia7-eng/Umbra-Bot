@@ -213,16 +213,15 @@ export async function testWebhookAction(id: string): Promise<TestWebhookResult> 
     success:         fetchOk,
     attempt:         1,
   }).then(async () => {
-    // Atualiza stats do webhook após a entrega
-    await supabase.rpc('sync_webhook_stats', { p_webhook_id: id }).catch(() => {})
-    // Atualiza last_delivery
+    try { await supabase.rpc('sync_webhook_stats', { p_webhook_id: id }) } catch { /* ignore */ }
     if (fetchOk) {
-      await supabase
-        .from('webhooks')
-        .update({ last_delivery: Date.now() })
-        .eq('id', id)
-        .eq('user_id', user.id)
-        .catch(() => {})
+      try {
+        await supabase
+          .from('webhooks')
+          .update({ last_delivery: Date.now() })
+          .eq('id', id)
+          .eq('user_id', user.id)
+      } catch { /* ignore */ }
     }
   }).catch(() => {})
 
@@ -339,13 +338,14 @@ export async function resendDeliveryAction(deliveryId: string): Promise<TestWebh
     success:         fetchOk,
     attempt:         delivery.attempt + 1,
   }).then(async () => {
-    await supabase.rpc('sync_webhook_stats', { p_webhook_id: delivery.webhook_id }).catch(() => {})
+    try { await supabase.rpc('sync_webhook_stats', { p_webhook_id: delivery.webhook_id }) } catch { /* ignore */ }
     if (fetchOk) {
-      await supabase
-        .from('webhooks')
-        .update({ last_delivery: Date.now() })
-        .eq('id', delivery.webhook_id)
-        .catch(() => {})
+      try {
+        await supabase
+          .from('webhooks')
+          .update({ last_delivery: Date.now() })
+          .eq('id', delivery.webhook_id)
+      } catch { /* ignore */ }
     }
   }).catch(() => {})
 
