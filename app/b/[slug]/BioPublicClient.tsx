@@ -43,6 +43,7 @@ const themePresets: ThemePreset[] = [
   { id: 'rose',   primary: '#ec4899', bg: '#1a060f', surface: '#2a0e1c', text: '#fff0f6', muted: '#f9a8d4' },
   { id: 'mono',   primary: '#f5f5f5', bg: '#0a0a0a', surface: '#171717', text: '#fafafa', muted: '#a3a3a3' },
   { id: 'cream',  primary: '#7c3aed', bg: '#f9f5ee', surface: '#ffffff', text: '#1a1a1a', muted: '#737373' },
+  { id: 'forest', primary: '#16a34a', bg: '#040e08', surface: '#081a0e', text: '#f0fdf4', muted: '#4ade80' },
 ]
 
 const ICON_MAP: Record<string, React.ElementType> = {

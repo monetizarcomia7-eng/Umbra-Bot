@@ -6,14 +6,16 @@ import { PageHeader } from '@/components/dashboard/PageHeader'
 import { createClient } from '@/lib/supabase/client'
 import { useAnalytics } from '@/hooks/use-analytics'
 import type { RawBiolink, BioAnalytics } from './page'
+import QRCode from 'qrcode'
 import {
   ExternalLink, Save, Rocket, Copy, Check, Eye,
   Signal, Wifi, BatteryFull,
   Bot, ShoppingBag, Link2, AtSign, Play, Music,
   MessageCircle, Briefcase, Globe, Camera, Calendar,
-  ArrowUpRight, ChevronUp, ChevronDown, Trash2,
+  ArrowUpRight, Trash2,
   MousePointerClick, Target, Square, Paintbrush, Grip, Plus,
   Loader2, Upload, X, AlertCircle, CheckCircle2,
+  QrCode, GripVertical, Download,
 } from 'lucide-react'
 
 /* ============================================================
@@ -65,6 +67,15 @@ const linkTypes: Record<string, { label: string; iconName: string; color: string
   video:   { label: 'Vídeo / YouTube', iconName: 'play',         color: '#ef4444' },
 }
 
+const SOCIAL_PRESETS = [
+  { id: 'instagram', label: 'Instagram', icon: 'instagram', color: '#E1306C' },
+  { id: 'tiktok',    label: 'TikTok',    icon: 'music',     color: '#010101' },
+  { id: 'youtube',   label: 'YouTube',   icon: 'youtube',   color: '#FF0000' },
+  { id: 'whatsapp',  label: 'WhatsApp',  icon: 'at-sign',   color: '#25D366' },
+  { id: 'linkedin',  label: 'LinkedIn',  icon: 'linkedin',  color: '#0A66C2' },
+  { id: 'twitter',   label: 'Twitter',   icon: 'twitter',   color: '#1DA1F2' },
+] as const
+
 const themePresets: ThemePreset[] = [
   { id: 'violet', label: 'Violeta',    primary: '#7c3aed', bg: '#0b0a14', surface: '#171428', text: '#f5f3ff', muted: '#a7a3c7' },
   { id: 'mint',   label: 'Menta',      primary: '#10b981', bg: '#06140e', surface: '#0e2017', text: '#ecfdf5', muted: '#86efac' },
@@ -73,6 +84,7 @@ const themePresets: ThemePreset[] = [
   { id: 'rose',   label: 'Rosé',       primary: '#ec4899', bg: '#1a060f', surface: '#2a0e1c', text: '#fff0f6', muted: '#f9a8d4' },
   { id: 'mono',   label: 'Mono',       primary: '#f5f5f5', bg: '#0a0a0a', surface: '#171717', text: '#fafafa', muted: '#a3a3a3' },
   { id: 'cream',  label: 'Creme',      primary: '#7c3aed', bg: '#f9f5ee', surface: '#ffffff', text: '#1a1a1a', muted: '#737373' },
+  { id: 'forest', label: 'Floresta',   primary: '#16a34a', bg: '#040e08', surface: '#081a0e', text: '#f0fdf4', muted: '#4ade80' },
 ]
 
 /* ============================================================
@@ -214,13 +226,36 @@ function AddLinkDropdown({ onAdd }: { onAdd: (type: string) => void }) {
 }
 
 /* ============================================================
+   Quick Social Row
+   ============================================================ */
+
+function QuickSocialRow({ onAddSocial }: { onAddSocial: (id: string) => void }) {
+  return (
+    <div className="flex flex-wrap gap-1.5 pt-1 pb-2 border-b border-[var(--border)] mb-2">
+      <span className="text-[10.5px] text-[var(--text-muted)] self-center mr-1 font-medium uppercase tracking-wide">Redes:</span>
+      {SOCIAL_PRESETS.map((s) => (
+        <button key={s.id}
+          onClick={() => onAddSocial(s.id)}
+          title={`Adicionar ${s.label}`}
+          className="inline-flex items-center gap-1 h-7 px-2.5 rounded-full text-[11.5px] font-medium text-white transition-opacity hover:opacity-85 active:scale-95"
+          style={{ background: s.color }}
+        >
+          <DynIcon name={s.icon} size={11} />
+          {s.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+/* ============================================================
    Phone Preview
    ============================================================ */
 
-function PhonePreview({ page, theme }: { page: BioPage; theme: ThemePreset }) {
+function PhonePreview({ page, theme, publicUrl }: { page: BioPage; theme: ThemePreset; publicUrl: string | null }) {
   const t = theme
   const buttonRadius = page.buttonStyle === 'rounded' ? '12px' : page.buttonStyle === 'pill' ? '999px' : '4px'
-  return (
+  const inner = (
     <div
       className="mx-auto rounded-[44px] border-4 overflow-hidden relative"
       style={{ width: 320, height: 640, background: t.bg, borderColor: 'rgba(128,128,128,0.3)', boxShadow: '0 25px 60px rgba(0,0,0,0.4)' }}
@@ -244,7 +279,10 @@ function PhonePreview({ page, theme }: { page: BioPage; theme: ThemePreset }) {
         <div className="flex flex-col items-center">
           <div className="w-20 h-20 rounded-full flex items-center justify-center font-bold text-[28px]"
             style={{ background: page.avatarColor, color: '#fff', border: `3px solid ${t.surface}` }}>
-            {page.avatar || '?'}
+            {page.avatar?.startsWith('http')
+              ? <img src={page.avatar} alt="" className="w-full h-full object-cover rounded-full" />
+              : (page.avatar || '?')
+            }
           </div>
           <div className="text-[15px] font-bold tracking-tight mt-3" style={{ color: t.text }}>
             {page.name || 'Seu nome'}
@@ -282,29 +320,47 @@ function PhonePreview({ page, theme }: { page: BioPage; theme: ThemePreset }) {
       <div className="absolute bottom-1.5 left-1/2 -translate-x-1/2 w-28 h-1 rounded-full bg-white/40 z-20" />
     </div>
   )
+
+  if (publicUrl) {
+    return (
+      <a href={publicUrl} target="_blank" rel="noopener noreferrer" title="Abrir página pública" className="block group relative">
+        {inner}
+        <div className="absolute inset-0 rounded-[44px] bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center">
+          <span className="opacity-0 group-hover:opacity-100 transition-opacity bg-black/70 text-white text-[11px] font-medium px-3 py-1.5 rounded-full flex items-center gap-1.5">
+            <ExternalLink size={11} />Abrir página
+          </span>
+        </div>
+      </a>
+    )
+  }
+  return inner
 }
 
 /* ============================================================
-   Link Item Row
+   Link Item Row — drag-and-drop
    ============================================================ */
 
-function LinkItemRow({ link, index, total, onUpdate, onDelete, onMove }: {
+function LinkItemRow({ link, index, total, onUpdate, onDelete, isDragOver, onDragStart, onDragEnd, onDragEnter, onDragOver: handleDragOver, onDrop }: {
   link: LinkItem; index: number; total: number
-  onUpdate: (l: LinkItem) => void; onDelete: (id: string) => void; onMove: (id: string, dir: number) => void
+  onUpdate: (l: LinkItem) => void; onDelete: (id: string) => void
+  isDragOver: boolean
+  onDragStart: () => void; onDragEnd: () => void
+  onDragEnter: () => void; onDragOver: (e: React.DragEvent) => void; onDrop: () => void
 }) {
   const lt = linkTypes[link.type] ?? linkTypes.custom
   return (
-    <div className="bg-[var(--surface)] border border-[var(--border)] rounded-lg p-3 hover:border-[var(--text-muted)]/40 transition-colors">
+    <div
+      draggable
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      onDragEnter={onDragEnter}
+      onDragOver={handleDragOver}
+      onDrop={onDrop}
+      className={`bg-[var(--surface)] border rounded-lg p-3 transition-colors select-none ${isDragOver ? 'border-[var(--primary)] bg-[var(--primary)]/5 scale-[1.01]' : 'border-[var(--border)] hover:border-[var(--text-muted)]/40'}`}
+    >
       <div className="flex items-start gap-2.5">
-        <div className="flex flex-col gap-0 pt-0.5">
-          <button onClick={() => onMove(link.id, -1)} disabled={index === 0}
-            className="w-5 h-5 inline-flex items-center justify-center rounded text-[var(--text-muted)] hover:bg-[var(--surface-2)] hover:text-[var(--text)] disabled:opacity-30 disabled:hover:bg-transparent focus:outline-none">
-            <ChevronUp size={11} />
-          </button>
-          <button onClick={() => onMove(link.id, +1)} disabled={index === total - 1}
-            className="w-5 h-5 inline-flex items-center justify-center rounded text-[var(--text-muted)] hover:bg-[var(--surface-2)] hover:text-[var(--text)] disabled:opacity-30 disabled:hover:bg-transparent focus:outline-none">
-            <ChevronDown size={11} />
-          </button>
+        <div className="pt-2 cursor-grab active:cursor-grabbing text-[var(--text-muted)] hover:text-[var(--text)] shrink-0" title="Arrastar para reordenar">
+          <GripVertical size={15} />
         </div>
         <div className="w-9 h-9 rounded-md flex items-center justify-center text-white shrink-0" style={{ background: lt.color }}>
           <DynIcon name={link.icon} size={14} />
@@ -341,6 +397,52 @@ function LinkItemRow({ link, index, total, onUpdate, onDelete, onMove }: {
         <button onClick={() => onDelete(link.id)}
           className="w-7 h-7 inline-flex items-center justify-center rounded-md text-[var(--text-muted)] hover:bg-red-500/10 hover:text-red-500 transition-colors focus:outline-none">
           <Trash2 size={13} />
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/* ============================================================
+   QR Code Modal
+   ============================================================ */
+
+function QRCodeModal({ url, slug, onClose }: { url: string; slug: string; onClose: () => void }) {
+  const [dataUrl, setDataUrl] = useState<string | null>(null)
+
+  useEffect(() => {
+    QRCode.toDataURL(url, { width: 280, margin: 2, color: { dark: '#000000', light: '#ffffff' } })
+      .then(setDataUrl)
+      .catch(console.error)
+  }, [url])
+
+  function handleDownload() {
+    if (!dataUrl) return
+    const a = document.createElement('a')
+    a.href = dataUrl
+    a.download = `qr-${slug}.png`
+    a.click()
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
+      <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-6 w-full max-w-xs shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-[14px] font-semibold text-[var(--text)]">QR Code da página</h3>
+          <button onClick={onClose} className="text-[var(--text-muted)] hover:text-[var(--text)] transition-colors"><X size={16} /></button>
+        </div>
+        <div className="bg-white rounded-xl p-3 mx-auto w-fit mb-4">
+          {dataUrl
+            ? <img src={dataUrl} alt="QR Code" width={240} height={240} />
+            : <div className="w-60 h-60 flex items-center justify-center"><Loader2 size={24} className="animate-spin text-gray-400" /></div>
+          }
+        </div>
+        <p className="text-[11.5px] text-[var(--text-muted)] text-center mb-4 font-mono break-all">{url}</p>
+        <button
+          onClick={handleDownload} disabled={!dataUrl}
+          className="w-full h-10 rounded-xl bg-[var(--primary)] text-white text-[13px] font-semibold inline-flex items-center justify-center gap-2 hover:opacity-90 transition-opacity disabled:opacity-50"
+        >
+          <Download size={15} />Baixar QR Code
         </button>
       </div>
     </div>
@@ -402,7 +504,7 @@ function DiscardModal({ onKeep, onDiscard }: { onKeep: () => void; onDiscard: ()
 }
 
 /* ============================================================
-   Avatar upload (image file → base64 for preview, URL for DB)
+   Avatar upload
    ============================================================ */
 
 function AvatarUpload({ avatarUrl, initials, color, onFileSelect, uploading }: {
@@ -439,18 +541,24 @@ export function BioLinkClient({ userId, initialBiolink, initialAnalytics, appUrl
   const [page, setPage]         = useState<BioPage>(() => initialBiolink ? mapRaw(initialBiolink) : buildDefault())
   const [snapshot, setSnapshot] = useState<BioPage>(() => initialBiolink ? mapRaw(initialBiolink) : buildDefault())
   const [analytics, setAnalytics] = useState<BioAnalytics>(initialAnalytics)
-  const [avatarUrl, setAvatarUrl] = useState<string | null>(null) // uploaded image preview
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null)
   const [avatarUploading, setAvatarUploading] = useState(false)
   const [saving, setSaving]     = useState(false)
   const [publishing, setPublishing] = useState(false)
   const [saved, setSaved]       = useState(false)
   const [copied, setCopied]     = useState(false)
+  const [qrOpen, setQrOpen]     = useState(false)
   const [toast, setToast]       = useState<ToastState | null>(null)
   const [discardOpen, setDiscardOpen] = useState(false)
 
-  const pageRef    = useRef(page)
-  pageRef.current  = page
+  // Drag-and-drop state
+  const [dragId, setDragId]         = useState<string | null>(null)
+  const [dragOverId, setDragOverId] = useState<string | null>(null)
+
+  const pageRef     = useRef(page)
+  pageRef.current   = page
   const autoSaveRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const mountedRef  = useRef(false)
 
   // dirty check
   const dirty = useMemo(() => JSON.stringify(page) !== JSON.stringify(snapshot), [page, snapshot])
@@ -464,26 +572,17 @@ export function BioLinkClient({ userId, initialBiolink, initialAnalytics, appUrl
     setPage((p) => ({ ...p, ...patch }))
   }
 
-  function scheduleAutoSave() {
-    if (!pageRef.current.id) return // don't auto-save before first manual save
-    clearTimeout(autoSaveRef.current)
-    autoSaveRef.current = setTimeout(() => {
-      if (!pageRef.current.id) return
-      if (!pageRef.current.slug.trim()) return
-      saveImpl(pageRef.current, false) // silent auto-save
-    }, 30_000)
-  }
-
-  // Trigger auto-save when page changes (after first save)
+  // Auto-save 30s — skip first render (mountedRef) and skip when nothing changed (!dirty)
   useEffect(() => {
-    if (!page.id) return
+    if (!mountedRef.current) { mountedRef.current = true; return }
+    if (!page.id || !dirty) return
     clearTimeout(autoSaveRef.current)
     autoSaveRef.current = setTimeout(() => {
       if (!pageRef.current.id || !pageRef.current.slug.trim()) return
       saveImpl(pageRef.current, false)
     }, 30_000)
     return () => clearTimeout(autoSaveRef.current)
-  }, [page]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [page, dirty]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function saveImpl(toSave: BioPage, showFeedback = true) {
     if (!toSave.slug.trim()) {
@@ -495,7 +594,6 @@ export function BioLinkClient({ userId, initialBiolink, initialAnalytics, appUrl
     try {
       const sb = createClient()
       if (!toSave.id) {
-        // First save — INSERT
         const newId = crypto.randomUUID()
         const { error } = await sb.from('biolinks').insert({
           id: newId,
@@ -517,7 +615,6 @@ export function BioLinkClient({ userId, initialBiolink, initialAnalytics, appUrl
         setSnapshot(withId)
         track('biolink_created', {})
       } else {
-        // Subsequent saves — UPDATE (IDOR-safe: .eq user_id)
         const { error } = await sb.from('biolinks').update({
           slug: toSave.slug,
           name: toSave.name,
@@ -583,16 +680,20 @@ export function BioLinkClient({ userId, initialBiolink, initialAnalytics, appUrl
     setPage((p) => ({ ...p, links: p.links.filter((l) => l.id !== id) }))
   }
 
-  function moveLink(id: string, dir: number) {
+  // Drag-and-drop reorder
+  function handleDrop(targetId: string) {
+    if (!dragId || dragId === targetId) { setDragId(null); setDragOverId(null); return }
     setPage((p) => {
-      const idx = p.links.findIndex((l) => l.id === id)
-      if (idx < 0) return p
-      const newIdx = idx + dir
-      if (newIdx < 0 || newIdx >= p.links.length) return p
-      const next = [...p.links];
-      [next[idx], next[newIdx]] = [next[newIdx], next[idx]]
+      const from = p.links.findIndex((l) => l.id === dragId)
+      const to   = p.links.findIndex((l) => l.id === targetId)
+      if (from < 0 || to < 0) return p
+      const next = [...p.links]
+      const [item] = next.splice(from, 1)
+      next.splice(to, 0, item)
       return { ...p, links: next }
     })
+    setDragId(null)
+    setDragOverId(null)
   }
 
   function addLink(type: string) {
@@ -608,6 +709,21 @@ export function BioLinkClient({ userId, initialBiolink, initialAnalytics, appUrl
     }
     setPage((p) => ({ ...p, links: [...p.links, newLink] }))
     track('biolink_link_added', { type })
+  }
+
+  function addSocialLink(socialId: string) {
+    const preset = SOCIAL_PRESETS.find((s) => s.id === socialId)
+    if (!preset) return
+    const newLink: LinkItem = {
+      id: crypto.randomUUID(),
+      type: 'social',
+      label: preset.label,
+      url: '',
+      icon: preset.icon,
+      highlight: false,
+    }
+    setPage((p) => ({ ...p, links: [...p.links, newLink] }))
+    track('biolink_link_added', { type: `social:${socialId}` })
   }
 
   function copyUrl() {
@@ -626,7 +742,6 @@ export function BioLinkClient({ userId, initialBiolink, initialAnalytics, appUrl
     try {
       const sb = createClient()
       if (!page.id) {
-        // No DB record yet — just show preview, save will be triggered manually
         const url = URL.createObjectURL(file)
         setAvatarUrl(url)
         return
@@ -637,7 +752,6 @@ export function BioLinkClient({ userId, initialBiolink, initialAnalytics, appUrl
       if (upErr) throw upErr
       const { data: { publicUrl } } = sb.storage.from('bio-avatars').getPublicUrl(path)
       setAvatarUrl(publicUrl)
-      // Save avatar URL as slug-based avatar field
       setPage((p) => ({ ...p, avatar: publicUrl }))
     } catch {
       showToast('Erro ao enviar imagem.', 'error')
@@ -648,7 +762,6 @@ export function BioLinkClient({ userId, initialBiolink, initialAnalytics, appUrl
 
   const theme = themePresets.find((t) => t.id === page.themeId) ?? themePresets[0]
 
-  // Compute analytics display data
   const clicksByLink = analytics.clicks_by_link ?? {}
   const sortedByClicks = useMemo(() => {
     const withClicks = page.links.map((l) => ({ ...l, clicks: clicksByLink[l.id] ?? 0 }))
@@ -718,7 +831,12 @@ export function BioLinkClient({ userId, initialBiolink, initialAnalytics, appUrl
           <button onClick={copyUrl} disabled={!page.slug}
             className="inline-flex items-center gap-1.5 h-8 px-3 text-[12px] font-medium rounded-lg border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--surface-2)] transition-colors disabled:opacity-40">
             {copied ? <Check size={13} className="text-green-500" /> : <Copy size={13} />}
-            {copied ? 'Copiado' : 'Copiar URL'}
+            {copied ? 'Copiado' : 'Copiar'}
+          </button>
+          <button onClick={() => setQrOpen(true)} disabled={!page.slug}
+            title="Gerar QR Code"
+            className="inline-flex items-center gap-1.5 h-8 px-3 text-[12px] font-medium rounded-lg border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--surface-2)] transition-colors disabled:opacity-40">
+            <QrCode size={13} />QR Code
           </button>
           <div className="flex items-center gap-4 ml-auto">
             <Stat label="Visitas (30d)"  value={fmtNum(analytics.views_period)}  icon={Eye} />
@@ -783,20 +901,29 @@ export function BioLinkClient({ userId, initialBiolink, initialAnalytics, appUrl
           {/* Links */}
           <SectionCard
             title="Links"
-            subtitle={`${page.links.length} link${page.links.length !== 1 ? 's' : ''} · use as setas para reordenar`}
+            subtitle={`${page.links.length} link${page.links.length !== 1 ? 's' : ''} · arraste para reordenar`}
             action={<AddLinkDropdown onAdd={addLink} />}
           >
+            <QuickSocialRow onAddSocial={addSocialLink} />
             <div className="space-y-2">
               {page.links.length === 0 && (
                 <div className="bg-[var(--surface-2)]/30 border border-dashed border-[var(--border)] rounded-lg p-8 text-center">
                   <Link2 size={20} className="text-[var(--text-muted)] mx-auto mb-2" />
                   <div className="text-[13px] font-semibold text-[var(--text)]">Adicione seu primeiro link</div>
-                  <div className="text-[11.5px] text-[var(--text-muted)] mt-1">Escolha o tipo no botão "Adicionar" acima.</div>
+                  <div className="text-[11.5px] text-[var(--text-muted)] mt-1">Use os atalhos de rede social acima ou "Adicionar".</div>
                 </div>
               )}
-              {page.links.map((l, i) => (
-                <LinkItemRow key={l.id} link={l} index={i} total={page.links.length}
-                  onUpdate={updateLink} onDelete={deleteLink} onMove={moveLink} />
+              {page.links.map((l) => (
+                <LinkItemRow
+                  key={l.id} link={l} index={0} total={page.links.length}
+                  onUpdate={updateLink} onDelete={deleteLink}
+                  isDragOver={dragOverId === l.id}
+                  onDragStart={() => setDragId(l.id)}
+                  onDragEnd={() => { setDragId(null); setDragOverId(null) }}
+                  onDragEnter={() => setDragOverId(l.id)}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={() => handleDrop(l.id)}
+                />
               ))}
             </div>
           </SectionCard>
@@ -805,7 +932,7 @@ export function BioLinkClient({ userId, initialBiolink, initialAnalytics, appUrl
           <SectionCard title="Tema da página" subtitle="Cores, fundo e estilo dos botões">
             <div className="space-y-3.5">
               <FieldB label="Paleta">
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <div className="grid grid-cols-4 gap-2">
                   {themePresets.map((t) => {
                     const active = page.themeId === t.id
                     return (
@@ -910,20 +1037,35 @@ export function BioLinkClient({ userId, initialBiolink, initialAnalytics, appUrl
               {isPublished ? 'Publicado' : 'Rascunho'}
             </Badge>
           </div>
-          <PhonePreview page={page} theme={theme} />
+          <PhonePreview
+            page={page}
+            theme={theme}
+            publicUrl={isPublished && page.slug ? publicUrl : null}
+          />
           {page.slug && (
             <div className="mt-3 text-center text-[10.5px] text-[var(--text-muted)]">
-              {appUrl}/b/{page.slug}
+              {isPublished
+                ? <a href={publicUrl} target="_blank" rel="noopener noreferrer" className="hover:text-[var(--primary)] transition-colors inline-flex items-center gap-1">{appUrl}/b/{page.slug} <ExternalLink size={9} /></a>
+                : <span>{appUrl}/b/{page.slug}</span>
+              }
             </div>
           )}
         </div>
       </div>
 
-      {/* Discard modal */}
+      {/* Modals */}
       {discardOpen && (
         <DiscardModal
           onKeep={() => setDiscardOpen(false)}
           onDiscard={() => { setPage(snapshot); setDiscardOpen(false) }}
+        />
+      )}
+
+      {qrOpen && page.slug && (
+        <QRCodeModal
+          url={publicUrl}
+          slug={page.slug}
+          onClose={() => setQrOpen(false)}
         />
       )}
 
