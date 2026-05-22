@@ -85,7 +85,7 @@ Ambos usam `Authorization: Bearer CRON_SECRET`.
   - `lib/supabase/server.ts` — `createClient()` com anon key + cookies (Server Components, API Routes autenticadas)
   - `lib/supabase/client.ts` — `createClient()` browser (Client Components)
   - `lib/supabase/admin.ts` — `createAdminClient()` com service role key (webhooks externos, cron jobs — bypassa RLS)
-- **Total de arquivos de migração:** 91 arquivos `.sql` (numerados 000–090 + timestamps)
+- **Total de arquivos de migração:** 92 arquivos `.sql` (numerados 000–091 + timestamps)
 - **Migrações auxiliares (não executáveis diretamente):** `_combined.sql`, `_pending_analytics_037_to_041.sql`, `_pending_run_now.sql`
 
 ### Supabase Auth
@@ -389,6 +389,11 @@ Ambos usam `Authorization: Bearer CRON_SECRET`.
 | `upsell_accepted` | CheckoutPageClient — ao clicar no CTA do upsell |
 | `upsell_rejected` | CheckoutPageClient — ao clicar em "Não, obrigado" |
 | `two_step_phase_advanced` | CheckoutPageClient — ao avançar de dados pessoais para pagamento |
+| `guide_article_opened` | GuideClient — ao abrir artigo (article_id, article_title, category) |
+| `guide_article_helpful` | GuideClient — ao votar em artigo (article_id, helpful: boolean) |
+| `guide_search_performed` | GuideClient — ao realizar busca ≥ 2 chars (query, results_count) |
+| `guide_support_clicked` | GuideClient — ao clicar em CTA de suporte (action: 'whatsapp'\|'telegram') |
+| `guide_category_viewed` | GuideClient — ao filtrar por categoria (category: string) |
 | `tool_opened` | (EventMap — módulo Ferramentas, não iniciado) |
 | `test_message_sent` | (EventMap — módulo Ferramentas, não iniciado) |
 | `token_validated` | (EventMap — não iniciado) |
@@ -899,7 +904,7 @@ Fonte: `.env.example` na raiz do repositório.
 
 ## 11. TABELAS DO BANCO
 
-Total de migrações: **91 arquivos** (numeradas de 000 a 090, mais arquivos de timestamp).
+Total de migrações: **92 arquivos** (numeradas de 000 a 091, mais arquivos de timestamp).
 
 | Tabela | Função |
 |---|---|
@@ -934,7 +939,10 @@ Total de migrações: **91 arquivos** (numeradas de 000 a 090, mais arquivos de 
 | `biolink_click_events` | Eventos de clique em links do bio link (link_id, link_url, ip_hash, device_type) |
 | `webhooks` | Webhooks de saída (funcional — CRUD real + delivery log + retry + HMAC) |
 | `team_members` | Membros de equipe (funcional — convites in-app via RPCs SECURITY DEFINER; controle de acesso por papel pendente) |
-| `guide_articles` | Artigos de guia (busca global — sem CRUD) |
+| `guide_articles` | Artigos do guia da plataforma (SSR ISR 3600s + Server Actions: views, votos, body lazy) |
+| `guide_article_votes` | Votos de utilidade por artigo (UNIQUE article_id + user_id; toggle via RPC vote_article) |
+| `guide_faqs` | FAQs da plataforma (SSR + accordion no GuideClient) |
+| `guide_search_logs` | Logs de busca no guia (telemetria — INSERT via logGuideSearchAction) |
 | `courses` | Cursos (busca global — sem CRUD) |
 | `audit_log` | Log de auditoria (tabela criada, uso limitado) |
 | `cron_log` | Log de execução dos cron jobs (job, status, processed, error_message) |

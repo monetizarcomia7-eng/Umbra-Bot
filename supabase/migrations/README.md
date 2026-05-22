@@ -1,7 +1,7 @@
 # Umbra Bot — Schema do Banco de Dados
 
 Schema extraído diretamente do banco Supabase (projeto: `aoycxcepjvpmeptdafxn`).
-**34 tabelas** no schema `public`.
+**38 tabelas** no schema `public`.
 
 ---
 
@@ -545,17 +545,88 @@ RPC `gateways_stats(p_user_id uuid)` → `json`:
 ## public.guide_articles
 
 ```
-id:         text        NOT NULL  default gen_random_uuid()::text
-title:      text        NOT NULL  default ''
-excerpt:    text        NOT NULL  default ''
-category:   text        NOT NULL  default ''
-read_min:   integer     NOT NULL  default 5
-views:      integer     NOT NULL  default 0
-featured:   boolean     NOT NULL  default false
-body:       text        NOT NULL  default ''
-created_at: timestamptz NOT NULL  default now()
-updated_at: timestamptz NOT NULL  default now()
+id:                text        NOT NULL  default gen_random_uuid()::text
+title:             text        NOT NULL  default ''
+excerpt:           text        NOT NULL  default ''
+category:          text        NOT NULL  default ''
+read_min:          integer     NOT NULL  default 5
+views:             integer     NOT NULL  default 0
+featured:          boolean     NOT NULL  default false
+body:              text        NOT NULL  default ''
+created_at:        timestamptz NOT NULL  default now()
+updated_at:        timestamptz NOT NULL  default now()
+-- Colunas adicionadas na migração 070:
+slug:              text                  (UNIQUE onde not null — índice parcial)
+status:            text        NOT NULL  default 'published'  check in ('published','draft','archived')
+icon:              text        NOT NULL  default '📄'
+icon_color:        text        NOT NULL  default 'blue'
+helpful_yes:       integer     NOT NULL  default 0
+helpful_no:        integer     NOT NULL  default 0
+tags:              text[]      NOT NULL  default '{}'
+order_in_category: integer     NOT NULL  default 0
 ```
+
+RLS (migração 070): `guide_articles_authenticated_select` — SELECT for role=authenticated.
+Substitui `guide_articles_open` (using true) que expunha dados à anon key.
+
+**RPCs do módulo (migração 070):**
+
+`increment_article_views(p_article_id text)` → void
+- Incrementa `views = views + 1` — security invoker, grant to authenticated
+- Chamada fire-and-forget via `void .then({error})` — NUNCA `.catch()` (PostgrestFilterBuilder não tem `.catch()`)
+
+`vote_article(p_article_id text, p_helpful boolean)` → void
+- Toggle: mesmo voto → DELETE; voto diferente → UPDATE; sem voto → INSERT em `guide_article_votes`
+- Recalcula `helpful_yes` e `helpful_no` em `guide_articles` — security definer, grant to authenticated
+
+`get_article_vote(p_article_id text)` → boolean | null
+- SELECT em `guide_article_votes` WHERE `article_id = p_article_id AND user_id = auth.uid()`
+- Retorna `true/false` se votou, `null` se nunca votou — security invoker, grant to authenticated
+
+---
+
+## public.guide_article_votes
+
+```
+id:         uuid        NOT NULL  default gen_random_uuid()
+article_id: text        NOT NULL  FK → guide_articles(id)  ON DELETE CASCADE
+user_id:    uuid        NOT NULL  FK → auth.users(id)       ON DELETE CASCADE
+helpful:    boolean     NOT NULL
+created_at: timestamptz NOT NULL  default now()
+```
+
+CONSTRAINT: `guide_article_votes_article_user_key UNIQUE (article_id, user_id)` — 1 voto por usuário por artigo
+RLS: `guide_article_votes_owner` → `auth.uid() = user_id` (for all)
+
+---
+
+## public.guide_faqs
+
+```
+id:        uuid        NOT NULL  default gen_random_uuid()
+question:  text        NOT NULL
+answer:    text        NOT NULL
+order_num: integer     NOT NULL  default 0
+created_at:timestamptz NOT NULL  default now()
+```
+
+RLS: `guide_faqs_authenticated_select` — SELECT for role=authenticated (conteúdo global, sem user_id)
+
+---
+
+## public.guide_search_logs
+
+```
+id:            uuid        NOT NULL  default gen_random_uuid()
+user_id:       uuid        NOT NULL  FK → auth.users(id)  ON DELETE CASCADE
+query:         text        NOT NULL  (truncado em 200 chars pela Server Action)
+results_count: integer     NOT NULL  default 0
+clicked:       boolean     NOT NULL  default false
+created_at:    timestamptz NOT NULL  default now()
+```
+
+RLS: INSERT policy `guide_search_logs_insert` → `auth.uid() = user_id` (sem SELECT policy — dados de telemetria)
+Nota: sem user_id FK nos artigos/faqs — são conteúdo global não vinculado a um usuário específico
 
 ---
 
@@ -958,4 +1029,10 @@ auth.users
   ├── team_members       (user_id)  [mig 092 — user_id FK + RLS owner]
   └── webhooks           (user_id)
         └── webhook_deliveries (webhook_id)  [mig 091]
+
+guide_articles  (sem user_id — conteúdo global compartilhado)
+  └── guide_article_votes (article_id → guide_articles(id), user_id → auth.users(id))
+
+guide_faqs          (sem user_id — conteúdo global)
+guide_search_logs   (user_id → auth.users(id))  [telemetria]
 ```

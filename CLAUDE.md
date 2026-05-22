@@ -42,6 +42,10 @@ umbra-bot/
 │   │   │                         # connectGatewayAction (valida + encryptToken + upsert), disconnectGatewayAction,
 │   │   │                         # updateGatewayAction (só conta bancária), testGatewayConnectionAction (decryptToken + API)
 │   │   │                         # Rate limit por action; userId sempre do servidor (sem IDOR)
+│   │   ├── guide.ts              # 4 Server Actions: getArticleBodyAction (body Markdown→HTML + TOC + views),
+│   │   │                         # voteArticleAction (toggle vote via RPC + rate limit 10/min), getUserVoteAction,
+│   │   │                         # logGuideSearchAction (INSERT em guide_search_logs se query ≥ 2 chars)
+│   │   │                         # fire-and-forget com void .then({error}) — nunca .catch() no PostgrestFilterBuilder
 │   │   └── recaptcha.ts          # verifyRecaptchaAction: Server Action para verificar token reCAPTCHA v2
 │   │                             # Chama verifyRecaptchaToken de lib/recaptcha — secret key nunca exposta ao browser
 │   ├── (auth)/
@@ -308,9 +312,14 @@ umbra-bot/
 │       │                         # PendingInvitesCard: convites recebidos com Aceitar/Recusar no topo
 │       │                         # Migrações 092 (avatar_initials + team_members user_id FK) e 093 (4 RPCs)
 │       ├── notifications/        # Notificações — Server Component SSR + Client Component
-│       │   ├── page.tsx          # Server Component: SSR prefs + firstBot em paralelo; passa userId + userEmail
+│       │   ├── page.tsx          # Server Component: SSR prefs + bots (array) em paralelo; passa userId + userEmail
 │       │   └── NotificationsClient.tsx # Client Component: salva via upsert ON CONFLICT user_id;
 │       │                               # email e Telegram reais (user.email + bot.username do banco)
+│       │                               # ChannelsCard: email/panel sempre "Ativo" (sem toggle), botões Testar
+│       │                               # Painel: testPanelNotificationAction (alerta real na tabela alerts)
+│       │                               # E-mail: aviso "Em breve" inline (sem backend de e-mail)
+│       │                               # "Restaurar padrão": dialog de confirmação (ação destrutiva)
+│       │                               # snapshot sincronizado ao vincular/desvincular Telegram
 │       ├── docs/                 # Documentação para usuários — renderizador de artigos Markdown
 │       │   ├── layout.tsx        # Layout com DocsSidebar (sidebar fixa à esquerda)
 │       │   ├── page.tsx          # Redireciona para /dashboard/docs/01-comecando/introducao
@@ -322,7 +331,11 @@ umbra-bot/
 │       │                                     # strip frontmatter, marked() → HTML, processHtml()
 │       │                                     # TL;DR → callout, screenshots → placeholder visual,
 │       │                                     # TODO → removido, blockquotes coloridos por tipo
-│       ├── guide/                # Guia da plataforma (mock)
+│       ├── guide/                # Guia da Plataforma — SSR + GuideClient (dados reais, migração 070)
+│       │   ├── page.tsx          # Server Component: SSR guide_articles + guide_faqs em paralelo (ISR revalidate=3600)
+│       │   └── GuideClient.tsx   # Client Component: busca + filtros por categoria + ArticlePanel com body lazy,
+│       │                         # TOC (table of contents), votos (helpful/not helpful), views, FAQ accordion,
+│       │                         # suporte CTAs (WhatsApp/Telegram), 5 PostHog eventos
 │       └── academy/              # Academia (mock)
 ├── components/
 │   ├── ReCaptchaWidget.tsx       # Widget reCAPTCHA v2 reutilizável (react-google-recaptcha)
@@ -631,6 +644,13 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Notificações — email e bot Telegram reais (user.email + bots.username do banco) | ✅ Implementado |
 | Notificações — RLS corrigida: política por usuário em vez de open (migração 060) | ✅ Corrigido |
 | Notificações — migração 061: fix CONSTRAINT UNIQUE completo (substitui índice parcial incompatível) | ✅ Corrigido |
+| Notificações — botão "Testar" no canal Painel: testPanelNotificationAction insere alerta real na tabela alerts | ✅ Implementado |
+| Notificações — botão "Testar" no canal E-mail: aviso inline "Em breve" (sem backend de e-mail) | ✅ Implementado |
+| Notificações — toggle Ativar/Desativar de e-mail e painel removido — ambos sempre exibem badge "Ativo" | ✅ Corrigido |
+| Notificações — "Restaurar padrão" abre dialog de confirmação antes de resetar (ação destrutiva protegida) | ✅ Corrigido |
+| Notificações — snapshot sincronizado ao vincular/desvincular Telegram — "Descartar" não reverte link já gravado no banco | ✅ Corrigido |
+| Notificações — notifications_quiet_hours_set disparava a cada keystroke — movido para save(), dispara só quando quiet mudou | ✅ Corrigido |
+| Notificações — buildDefaultChannels() sem parâmetro hasBots (era código morto) | ✅ Corrigido |
 | Checkout — SSR + CheckoutClient (dados reais, sem mock) | ✅ Funcional |
 | Checkout — CRUD real: criar/salvar/publicar/duplicar/arquivar/apagar com user_id IDOR-safe | ✅ Implementado |
 | Checkout — gateway + pixel pickers do banco (SSR: connectedGateways + configuredPixels) | ✅ Implementado |
@@ -934,6 +954,19 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Documentação — toggle dark/light na sidebar da docs | ✅ Implementado |
 | Documentação — TL;DR callout, screenshots placeholder, blockquotes coloridos | ✅ Implementado |
 | Documentação — botão "Documentação" em Gerenciar Bots navega para /dashboard/docs | ✅ Implementado |
+| Guia da Plataforma — Server Component SSR + GuideClient (dados reais, migração 070) | ✅ Funcional |
+| Guia da Plataforma — page.tsx: SSR guide_articles + guide_faqs em paralelo (ISR revalidate=3600) | ✅ Implementado |
+| Guia da Plataforma — busca por texto (query ≥ 2 chars) + logGuideSearchAction (guide_search_logs) | ✅ Implementado |
+| Guia da Plataforma — filtro por categoria com contagem de artigos | ✅ Implementado |
+| Guia da Plataforma — ArticlePanel: body lazy (getArticleBodyAction) + TOC (##-headings) + views | ✅ Implementado |
+| Guia da Plataforma — votos helpful/not helpful: voteArticleAction + getUserVoteAction + rate limit | ✅ Implementado |
+| Guia da Plataforma — FAQ accordion com guide_faqs do banco | ✅ Implementado |
+| Guia da Plataforma — CTAs de suporte (WhatsApp/Telegram) + 5 eventos PostHog | ✅ Implementado |
+| Guia da Plataforma — migração 070: slug/status/icon/icon_color/helpful_yes/helpful_no/tags/order_in_category em guide_articles | ✅ Criada |
+| Guia da Plataforma — migração 070: guide_faqs + guide_article_votes + guide_search_logs + RPCs | ✅ Criada |
+| Guia da Plataforma — RPC increment_article_views (fire-and-forget via void .then({error})) | ✅ Implementado |
+| Guia da Plataforma — RPC vote_article (toggle: insert/delete + atualiza helpful_yes/no) | ✅ Implementado |
+| Guia da Plataforma — RPC get_article_vote (retorna boolean\|null para estado do voto do usuário) | ✅ Implementado |
 | Testes (unit/e2e) | ❌ Não iniciado |
 | CI/CD | ❌ Não iniciado |
 
@@ -1005,6 +1038,11 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | `upsell_accepted` | `CheckoutPageClient.tsx` — ao clicar no CTA do upsell (inclui checkout_id) |
 | `upsell_rejected` | `CheckoutPageClient.tsx` — ao clicar em "Não, obrigado" no upsell (inclui checkout_id) |
 | `two_step_phase_advanced` | `CheckoutPageClient.tsx` — ao avançar de dados pessoais para pagamento (inclui checkout_id) |
+| `guide_article_opened` | `GuideClient.tsx` — ao abrir artigo (inclui article_id, article_title, category) |
+| `guide_article_helpful` | `GuideClient.tsx` — ao votar em artigo (inclui article_id, helpful: boolean) |
+| `guide_search_performed` | `GuideClient.tsx` — ao realizar busca (inclui query, results_count) |
+| `guide_support_clicked` | `GuideClient.tsx` — ao clicar em CTA de suporte (inclui action: string) |
+| `guide_category_viewed` | `GuideClient.tsx` — ao filtrar por categoria (inclui category: string) |
 
 ---
 
@@ -2342,8 +2380,16 @@ Garante que ao deletar um fluxo, `bots.active_flow_id` é zerado automaticamente
 
 ```
 app/dashboard/notifications/
-  ├── page.tsx                # Server Component — busca prefs + firstBot em paralelo
+  ├── page.tsx                # Server Component — busca prefs + bots (array) em paralelo
   └── NotificationsClient.tsx # Client Component — toda a UI interativa + save para o banco
+
+app/actions/notifications.ts  # 5 Server Actions
+  ├── saveNotificationPrefsAction(prefs, channelState, quiet)
+  ├── generateTelegramVerifyCodeAction(botId)  → código 6 dígitos + TTL 10 min
+  ├── checkTelegramLinkStatusAction()          → polling: verifica se webhook vinculou owner_chat_id
+  ├── unlinkTelegramChannelAction()            → remove linked + owner_chat_id
+  ├── testTelegramNotificationAction()         → envia mensagem real via Bot API
+  └── testPanelNotificationAction()            → insere alerta real (type='sale', severity='info') na tabela alerts
 ```
 
 ### Fluxo de dados
@@ -2353,41 +2399,57 @@ NotificationsPage (Server Component)
   ├── Promise.all em paralelo:
   │     ├── notification_prefs: prefs, channel_state, quiet
   │     │   .eq('user_id', user.id).maybeSingle()
-  │     └── bots: name, username
-  │         .eq('user_id', user.id).not('token', 'is', null).limit(1).maybeSingle()
+  │     └── bots: id, name, username
+  │         .eq('user_id', user.id).not('token', 'is', null)  ← array completo (não apenas o primeiro)
   └── passa como props:
         userId: string
         userEmail: string            ← user.email do Supabase Auth
         initialPrefs: RawNotifPrefs | null
-        firstBot: { name, username } | null
+        bots: RawBotOption[]         ← lista de bots para o seletor do TelegramChannelCard
 
 NotificationsClient (Client Component)
   ├── prefs state: initialPrefs?.prefs ?? DEFAULT_PREFS
-  ├── channelState state: initialPrefs?.channel_state ?? buildDefaultChannels(!!firstBot)
-  │     email: { linked: true }
-  │     panel: { linked: true }
-  │     telegram: { linked: !!firstBot }  ← false se usuário não tem bot configurado
+  ├── channelState state: buildChannelMap(initialPrefs?.channel_state)
+  │     email: { linked: true }   ← sempre ativo — sem toggle (sem backend de e-mail)
+  │     panel: { linked: true }   ← sempre ativo — sem toggle
+  │     telegram: { linked: false } ← gerenciado separadamente pelo tgState
+  ├── tgState state: parseTelegramState(initialPrefs?.channel_state)
   ├── quiet state: initialPrefs?.quiet ?? DEFAULT_QUIET
-  ├── snapshot state: cópia do estado persistido (compara com estado atual para dirty check)
+  ├── snapshot state: cópia do estado persistido (dirty check)
+  │     atualizado em: save() + handleTgLinked() + handleTgUnlinked()
+  │     (sync em handleTg* garante que "Descartar" não reverta link já gravado no banco)
+  ├── resetConfirmOpen state: boolean — abre dialog de confirmação ao clicar "Restaurar padrão"
   ├── saving state: boolean — botão exibe Loader2 durante o upsert
   ├── error state: string — exibe mensagem real do banco (ou genérica se longa)
-  ├── channelDescs (dinâmico):
-  │     email:    userEmail || 'Seu e-mail de cadastro'
-  │     panel:    'Sino + página de Atividade'
-  │     telegram: firstBot ? `Bot @${username ?? name}` : 'Nenhum bot configurado'
   ├── save() async:
-  │     supabase.from('notification_prefs').upsert(
-  │       { user_id, prefs, channel_state, quiet, updated_at },
-  │       { onConflict: 'user_id' }           ← requer CONSTRAINT UNIQUE (migração 061)
-  │     )
-  │     on success: atualiza snapshot + setSaved(true)
-  │     on error: console.error + setError(msg)
+  │     saveNotificationPrefsAction(prefs, buildFullChannelState(), quiet)
+  │     on success: setSnapshot + setSaved(true)
+  │     on error: setError(msg) com auto-clear 5s
+  │     track('notifications_saved', { channels_enabled, telegram_linked })
+  │     track('notifications_quiet_hours_set', {})  ← SÓ quando quiet mudou vs snapshot
   ├── discard(): reset ao snapshot (último salvo)
-  ├── reset(): reset aos DEFAULT_PREFS / DEFAULT_QUIET / buildDefaultChannels
+  ├── reset(): reset aos DEFAULT_PREFS / DEFAULT_QUIET / buildDefaultChannels()
+  │     chamado apenas ao confirmar o dialog resetConfirmOpen
+  │     track('notifications_reset_to_default', {})
+  ├── handleTgLinked(updated): setTgState + setSnapshot(s => ({ ...s, tg: updated }))
+  │     track('notifications_channel_toggled', { channel: 'telegram', linked: true })
+  ├── handleTgUnlinked(): setTgState({ linked:false }) + setSnapshot(s => ({ ...s, tg: {linked:false} }))
+  │     track('notifications_channel_toggled', { channel: 'telegram', linked: false })
   ├── dirty: JSON.stringify(current) !== JSON.stringify(snapshot)
-  ├── ChannelsCard: recebe descs dinâmicos por canal
+  ├── ChannelsCard:
+  │     props: { tgState, bots, userEmail, onTgLinked, onTgUnlinked }
+  │     E-mail card: badge "Ativo" fixo + botão "Testar" → aviso inline "Em breve"
+  │     Painel card: badge "Ativo" fixo + botão "Testar" → testPanelNotificationAction()
+  │                  feedback colorido: verde (ok) / vermelho (erro), auto-oculta em 4s
+  │     Telegram card: TelegramChannelCard (fluxo de vinculação via código de 6 dígitos)
   ├── PreferencesTable: matriz eventos × canais com toggles por célula e por coluna/linha
   └── QuietHoursCard: toggle enable + time pickers (De / Até) + toggle exceptCritical
+        setQuiet passado diretamente (sem wrapper que chamava track em cada keystroke)
+
+Dialog "Restaurar padrão":
+  Modal overlay com aviso (AlertTriangle icon, ícone warning)
+  Botões: "Cancelar" (fecha) | "Restaurar padrão" (chama reset() + fecha)
+  Aparece apenas quando resetConfirmOpen=true
 ```
 
 ### Tabela notification_prefs — schema (migração 018 + 060 + 061)
@@ -2437,11 +2499,11 @@ policy "notification_prefs_owner": auth.uid() = user_id
 
 ### Canais
 
-| ID | Label | Descrição dinâmica |
-|---|---|---|
-| `email` | E-mail | `user.email` do Supabase Auth |
-| `panel` | Painel | Sino + página de Atividade (fixo) |
-| `telegram` | Telegram | `Bot @username` real ou "Nenhum bot configurado" |
+| ID | Label | Estado | Testar | Observação |
+|---|---|---|---|---|
+| `email` | E-mail | Sempre "Ativo" (sem toggle) | "Em breve" inline | Sem backend de envio de e-mail por ora |
+| `panel` | Painel | Sempre "Ativo" (sem toggle) | `testPanelNotificationAction()` — insere alerta real | Alerta aparece na aba Alertas |
+| `telegram` | Telegram | Vinculado / Não vinculado | `testTelegramNotificationAction()` — envia mensagem real | Fluxo de vinculação via código 6 dígitos |
 
 ### Horário de silêncio (QuietHours)
 
@@ -4463,3 +4525,231 @@ Renderizado no topo do ProfileClient quando `pendingInvites.length > 0`. Exibe:
 | 093 | Estendeu CHECK `alerts.type` para incluir `'webhookFailed'` e `'team_invite'`; criou 4 RPCs SECURITY DEFINER: `invite_team_member`, `get_pending_invites_for_user`, `accept_team_invite`, `reject_team_invite` |
 
 > ⚠️ **Migrações 092 e 093 precisam ser aplicadas no Supabase SQL Editor para ativar o sistema em produção.**
+
+---
+
+## 28. MÓDULO GUIA DA PLATAFORMA
+
+### Arquivos
+
+```
+app/dashboard/guide/
+  ├── page.tsx          # Server Component — SSR guide_articles + guide_faqs em paralelo (ISR revalidate=3600)
+  │                     # Exporta RawGuideArticle e RawGuideFaq; busca apenas artigos published,
+  │                     # ordenados por category e order_in_category
+  └── GuideClient.tsx   # Client Component — busca client-side, filtros por categoria,
+                        # ArticlePanel com body Markdown→HTML lazy, TOC, votos, views,
+                        # FAQ accordion, CTAs de suporte (WhatsApp/Telegram), 5 PostHog eventos
+
+app/actions/guide.ts    # 4 Server Actions (todas autenticadas)
+  ├── getArticleBodyAction(articleId)   → body Markdown→HTML + TOC + helpful_yes/no + views
+  │   fire-and-forget: void .then({error}) para increment_article_views — NUNCA .catch()
+  │   (PostgrestFilterBuilder não tem .catch — apenas .then)
+  ├── voteArticleAction(articleId, helpful)  → toggle via RPC vote_article + rate limit 10/60s
+  ├── getUserVoteAction(articleId)           → boolean | null via RPC get_article_vote
+  └── logGuideSearchAction(query, count)     → INSERT guide_search_logs se query ≥ 2 chars
+```
+
+### Fluxo de dados
+
+```
+GuidePage (Server Component — ISR revalidate=3600)
+  ├── Auth guard: if (!user) redirect('/login')
+  ├── Promise.all em paralelo:
+  │     ├── guide_articles: id, slug, category, icon, icon_color, title, excerpt,
+  │     │   read_min, views, featured, helpful_yes, helpful_no, tags,
+  │     │   order_in_category, updated_at   WHERE status='published'
+  │     │   ORDER BY category, order_in_category
+  │     └── guide_faqs: id, question, answer, order_num   ORDER BY order_num
+  └── passa como props:
+        initialArticles: RawGuideArticle[]
+        initialFaqs: RawGuideFaq[]
+
+GuideClient (Client Component)
+  ├── articles state: initialArticles — nunca mock
+  ├── faqs state: initialFaqs — nunca mock
+  ├── search state: string — filtra título/excerpt/tags (client-side, sem debounce de DB)
+  ├── selectedCategory state: string | 'all'
+  ├── selectedArticleId state: string | null — null = lista; string = ArticlePanel aberto
+  │
+  ├── Categorias derivadas: Array.from(new Set(articles.map(a => a.category)))
+  │
+  ├── filteredArticles useMemo: filtra por search + selectedCategory
+  │   logGuideSearchAction chamado quando search.trim().length ≥ 2 (debounce 600ms)
+  │
+  ├── ArticlePanel (quando selectedArticleId !== null):
+  │     Abre com body lazy: getArticleBodyAction(selectedArticleId)
+  │     Renderiza: bodyHtml + TOC (table of contents com links âncora para h2)
+  │     Votos: estado local userVote + helpfulYes/helpfulNo
+  │       handleVote(): voteArticleAction → atualiza contadores locais
+  │       getUserVoteAction() ao abrir painel (carregado junto com o body)
+  │     Views: exibido com +1 otimista (incremento real é fire-and-forget no servidor)
+  │     CTAs de suporte: WhatsApp + Telegram deep link
+  │     Navegação: botão Voltar → selectedArticleId = null
+  │
+  ├── FAQ Section (accordion):
+  │     Cada RawGuideFaq: question (clicável) + answer (expandível)
+  │     Estado local expandedFaq: string | null
+  │
+  └── CTAs de Suporte (fora do ArticlePanel — na área principal):
+        Botão WhatsApp / Botão Telegram
+        track('guide_support_clicked', { action: 'whatsapp' | 'telegram' })
+```
+
+### Interfaces TypeScript
+
+```typescript
+// Exportadas de app/dashboard/guide/page.tsx
+export interface RawGuideArticle {
+  id:                string
+  slug:              string | null
+  category:          string
+  icon:              string
+  icon_color:        string
+  title:             string
+  excerpt:           string
+  read_min:          number
+  views:             number
+  featured:          boolean
+  helpful_yes:       number
+  helpful_no:        number
+  tags:              string[]
+  order_in_category: number
+  updated_at:        string
+}
+
+export interface RawGuideFaq {
+  id:        string
+  question:  string
+  answer:    string
+  order_num: number
+}
+
+// TocItem — retornado por getArticleBodyAction
+export interface TocItem {
+  id:    string   // slugify do texto do h2
+  label: string   // texto do h2
+}
+```
+
+### Rendering Markdown → HTML (app/actions/guide.ts)
+
+```typescript
+// slugify(text): lowercase → NFD normalize → remove diacritics → replace non-alnum → trim → hyphenate
+function slugify(text: string): string { ... }
+
+// extractToc(markdown): regex /^## (.+)$/gm → TocItem[]
+function extractToc(markdown: string): TocItem[] { ... }
+
+// buildRenderer(): custom Renderer para marked
+// Sobrescreve heading para depth===2: <h2 id="${slugify(text)}">${text}</h2>
+// Outros levels → renderer padrão
+function buildRenderer(): Renderer { ... }
+
+// getArticleBodyAction(articleId):
+// 1. Auth check
+// 2. SELECT body, helpful_yes, helpful_no, views WHERE id=articleId AND status='published'
+// 3. fire-and-forget: void supabase.rpc('increment_article_views', { p_article_id: articleId })
+//      .then(({ error }) => { if (error) Sentry.captureException(error) })
+// 4. toc = extractToc(body)
+// 5. bodyHtml = marked.parse(body, { renderer }) as string
+// 6. retorna { bodyHtml, toc, helpfulYes, helpfulNo, views: views + 1 }
+//    (views + 1: otimista antes do DB propagar)
+```
+
+### Schema do banco (migração 070)
+
+```sql
+-- guide_articles (colunas existentes + novas da mig 070)
+id              text        primary key  -- shortcode manual (ex: 'bots-conectar')
+title           text        not null
+excerpt         text
+body            text
+read_min        integer     not null default 3
+views           integer     not null default 0
+updated_at      timestamptz not null default now()
+-- Colunas adicionadas na migração 070:
+slug            text                             -- URL amigável (UNIQUE onde not null)
+status          text        not null default 'published'
+                              check (status in ('published','draft','archived'))
+icon            text        not null default '📄'
+icon_color      text        not null default 'blue'
+helpful_yes     integer     not null default 0
+helpful_no      integer     not null default 0
+tags            text[]      not null default '{}'
+order_in_category integer   not null default 0
+-- RLS (migração 070): guide_articles_authenticated_select
+--   (SELECT for role=authenticated — usando true → todos os usuários logados podem ler)
+--   Substitui guide_articles_open (using true — expunha a anon key)
+
+-- guide_faqs (nova tabela — migração 070)
+id         uuid  primary key default gen_random_uuid()
+question   text  not null
+answer     text  not null
+order_num  integer not null default 0
+created_at timestamptz not null default now()
+-- RLS: guide_faqs_authenticated_select (SELECT for authenticated)
+
+-- guide_article_votes (nova tabela — migração 070)
+id          uuid  primary key default gen_random_uuid()
+article_id  text  not null references guide_articles(id) on delete cascade
+user_id     uuid  not null references auth.users(id) on delete cascade
+helpful     boolean not null
+created_at  timestamptz not null default now()
+UNIQUE (article_id, user_id)
+-- RLS: guide_article_votes_owner (for all using auth.uid() = user_id)
+
+-- guide_search_logs (nova tabela — migração 070)
+id            uuid  primary key default gen_random_uuid()
+user_id       uuid  not null references auth.users(id) on delete cascade
+query         text  not null   -- truncado em 200 chars
+results_count integer not null default 0
+clicked       boolean not null default false
+created_at    timestamptz not null default now()
+-- RLS: INSERT policy → auth.uid() = user_id (sem SELECT policy — dados de telemetria)
+```
+
+### RPCs do módulo (migração 070)
+
+```sql
+-- increment_article_views(p_article_id text) → void
+-- UPDATE guide_articles SET views = views + 1 WHERE id = p_article_id
+-- grant to authenticated; security invoker
+-- Chamada fire-and-forget — falha não bloqueia carregamento do artigo
+
+-- vote_article(p_article_id text, p_helpful boolean) → void
+-- Toggle: se voto igual → DELETE; se voto diferente → UPDATE; se sem voto → INSERT
+-- Recalcula helpful_yes e helpful_no: UPDATE guide_articles SET
+--   helpful_yes = (SELECT count WHERE helpful=true),
+--   helpful_no  = (SELECT count WHERE helpful=false)
+-- grant to authenticated; security definer
+
+-- get_article_vote(p_article_id text) → boolean | null
+-- SELECT helpful FROM guide_article_votes WHERE article_id=p_article_id AND user_id=auth.uid()
+-- Retorna boolean se votou, null se nunca votou
+-- grant to authenticated; security invoker
+```
+
+### ISR — estratégia de cache
+
+- `export const revalidate = 3600` no `page.tsx` — artigos/FAQs rehidratados do banco a cada 1 hora
+- Artigos individuais (body): carregados via Server Action `getArticleBodyAction` a cada abertura — sem cache de borda
+- Views: incremento fire-and-forget + otimismo no client (`views + 1`) para UX imediata
+
+### Eventos PostHog do módulo
+
+| Evento | Quando | Props |
+|---|---|---|
+| `guide_article_opened` | ao abrir artigo no ArticlePanel | `{ article_id, article_title, category }` |
+| `guide_article_helpful` | ao votar em artigo (sim ou não) | `{ article_id, helpful: boolean }` |
+| `guide_search_performed` | ao realizar busca (≥ 2 chars, debounce 600ms) | `{ query, results_count }` |
+| `guide_support_clicked` | ao clicar em CTA de suporte (WhatsApp/Telegram) | `{ action: 'whatsapp' \| 'telegram' }` |
+| `guide_category_viewed` | ao filtrar por categoria | `{ category: string }` |
+
+### Segurança
+
+- Auth check em todas as Server Actions — retorna erro se `!user`
+- `voteArticleAction`: rate limit `guide_vote:${user.id}` 10 requests / 60 segundos (Upstash Redis)
+- `logGuideSearchAction`: silencia qualquer exceção (try/catch vazio) — operação de telemetria não crítica
+- fire-and-forget de `increment_article_views`: usa `void .then({error})` em vez de `.catch()` — `PostgrestFilterBuilder` não implementa `.catch()` nativo
+- Artigos: RLS `authenticated` garante que visitantes sem sessão (anon key direta) não acessam

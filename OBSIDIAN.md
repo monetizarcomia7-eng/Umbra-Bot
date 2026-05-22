@@ -22,7 +22,7 @@ C:\Users\Usuario\OneDrive\Documentos\Obsidian Vault\umbra-bot\
 | `Módulo - Analytics.md` | Funil, coorte, UTM, filtros SQL |
 | `Módulo - Atividade.md` | activity_events, Realtime, TTL, backfill |
 | `Módulo - Alertas.md` | Alertas reais, TTL 30d, resolved_by_id, source |
-| `Módulo - Notificações.md` | notification_prefs, upsert, canais |
+| `Módulo - Notificações.md` | notification_prefs, upsert, canais; ChannelsCard sem toggle (email/panel sempre Ativo), botões Testar (Painel: alerta real via testPanelNotificationAction; E-mail: "Em breve"), dialog confirmação em "Restaurar padrão", snapshot sync no handleTgLinked/Unlinked, notifications_quiet_hours_set só no save() |
 | `Módulo - Clientes.md` | Contacts, Realtime, sort, timeline, CSV |
 | `Módulo - Afiliados.md` | CRUD, /r/[slug], comissão, cookie de atribuição |
 | `Módulo - Bots.md` | SSR + BotsClient + 9 server actions + webhook (motor de fluxo) + cron + perfil no Telegram |
@@ -37,12 +37,19 @@ C:\Users\Usuario\OneDrive\Documentos\Obsidian Vault\umbra-bot\
 | `Módulo - Webhooks.md` | SSR + WebhooksClient: CRUD real (9 Server Actions), KPI cards (ativos/entregas 24h/taxa sucesso/com falhas), toggle ativo/pausado, Realtime canal 'webhooks-realtime' (INSERT/UPDATE), delivery log lazy paginado (20/página); retry automático 3 tentativas com backoff [0 ms, 1 s, 5 s] + header X-Umbra-Retry; payload preview expandível (DeliveryRow stateful → loadDeliveryDetailAction lazy-fetch); alerta proativo de falha (_createFailureAlert cria type='webhookFailed' após todas as tentativas; _resolveFailureAlert auto-resolve ao sucesso); seção Integrações (Zapier/Make/n8n/ManyChat cards expandíveis, grid md:2 xl:4); testWebhookAction + resendDeliveryAction (HTTP real + HMAC); SSRF protection (bloqueia localhost, 169.254.x, 10.x, 192.168.x); secret AES-256-GCM (encryptToken); dispatchWebhookEvent fire-and-forget (wired em MP webhook: sale.approved/pending + Telegram: lead.created); 7 PostHog events; migração 091 (user_id FK + RLS owner + webhook_deliveries + RPCs webhooks_stats/sync_webhook_stats) |
 | `Módulo - Perfil.md` | SSR real (profiles + team_members + MFA + pending invites); getInitials email fallback; 2FA TOTP; convites de equipe in-app (RPCs SECURITY DEFINER); PendingInvitesCard; AlertsClient +team_invite; papéis owner/admin/editor/analista (labels OK; controle acesso pendente); migrações 092+093 |
 | `Módulo - Documentação.md` | /docs/ 30 artigos, /dashboard/docs renderizador, marked, toggle tema |
-| `Referência - Eventos PostHog.md` | 58 eventos rastreados (inclui +11 do checkout público: checkout_pay_started/success/failed/timeout, coupon_applied/rejected, order_bump_selected, upsell_accepted/rejected, two_step_phase_advanced, checkout_link_copied) |
+| `Módulo - Guia da Plataforma.md` | SSR (ISR revalidate=3600) + GuideClient: busca client-side, filtros por categoria, ArticlePanel (body Markdown→HTML lazy, TOC, votos, views), FAQ accordion, CTAs suporte; 4 Server Actions (getArticleBodyAction, voteArticleAction, getUserVoteAction, logGuideSearchAction), fire-and-forget void .then({error}); tabelas guide_articles/guide_faqs/guide_article_votes/guide_search_logs; RPCs (increment_article_views, vote_article, get_article_vote); migração 070; 5 PostHog events (guide_article_opened/helpful/search_performed/support_clicked/category_viewed) |
+| `Referência - Eventos PostHog.md` | 63 eventos rastreados (inclui +11 do checkout público: checkout_pay_started/success/failed/timeout, coupon_applied/rejected, order_bump_selected, upsell_accepted/rejected, two_step_phase_advanced, checkout_link_copied; +5 do Guia da Plataforma: guide_article_opened/helpful/search_performed/support_clicked/category_viewed) |
 | `Referência - Onboarding Wizard.md` | 4 passos, localStorage, gateway |
 | `Referência - Busca Global.md` | 14 tabelas, race condition, debounce |
 | `Referência - Cron Jobs.md` | 4 crons no vercel.json (Hobby executa só 2) + process-remarketing via cron-job.org (1x/hora) + process-broadcasts via cron-job.org (15 min) + register-webhooks (utilitário admin, CRON_SECRET) |
 
 ## Notas a criar/atualizar no Vault após esta sessão
+
+| Nota | O que atualizar |
+|---|---|
+| `Módulo - Notificações.md` | **Atualizar** — documentar 6 melhorias desta sessão: (1) testPanelNotificationAction: insere alerta real (type='sale', severity='info') na tabela alerts, rate limit 3/min; (2) botão Testar E-mail: aviso "Em breve" inline sem server action; (3) toggle Ativar/Desativar de e-mail/painel removido — ambos sempre "Ativo" (sem backend de e-mail); (4) dialog de confirmação em "Restaurar padrão" (resetConfirmOpen state + AlertTriangle modal); (5) handleTgLinked/handleTgUnlinked sincronizam snapshot — Descartar não reverte Telegram já gravado; (6) notifications_quiet_hours_set movido do wrapper setQuiet para save(), dispara só quando quiet mudou vs snapshot. Arquivos: app/actions/notifications.ts + app/dashboard/notifications/NotificationsClient.tsx |
+
+---
 
 | Nota | O que atualizar |
 |---|---|
@@ -67,6 +74,10 @@ C:\Users\Usuario\OneDrive\Documentos\Obsidian Vault\umbra-bot\
 | `Módulo - Perfil.md` | **Criar** — documentar módulo completo conforme Seção 27 do CLAUDE.md: getInitials email fallback, 2FA TOTP real, convites de equipe in-app (InviteModal → RPC invite_team_member → alerta no convidado), PendingInvitesCard (Aceitar/Recusar via RPCs), AlertsClient +team_invite/+webhookFailed, papéis (controle de acesso pendente), migrações 092+093 |
 | `04 - Banco de Dados e Migrações.md` | Adicionar migração 092: avatar_initials em profiles + user_id FK em team_members + RLS team_members_owner. Adicionar migração 093: CHECK alerts.type (+team_invite,+webhookFailed) + 4 RPCs SECURITY DEFINER (invite_team_member, get_pending_invites_for_user, accept_team_invite, reject_team_invite) |
 | `03 - Estado do Projeto.md` | Marcar Perfil ✅ Funcional (convites in-app + fix iniciais); ⏳ Parcial (controle de acesso por papel pendente) |
+| `Módulo - Guia da Plataforma.md` | **Criar** — documentar módulo completo conforme Seção 28 do CLAUDE.md: GuidePage (SSR ISR 3600, Promise.all guide_articles + guide_faqs), GuideClient (busca + filtros + ArticlePanel lazy, FAQ accordion, CTAs suporte), 4 Server Actions (getArticleBodyAction: Markdown→HTML + TOC + votos + views otimista; voteArticleAction rate limit 10/60s; getUserVoteAction; logGuideSearchAction), Rendering (slugify, extractToc, buildRenderer, marked.parse), schema banco (guide_articles colunas mig 070 + guide_faqs + guide_article_votes + guide_search_logs), RPCs (increment_article_views + vote_article toggle + get_article_vote), ISR strategy, segurança (auth guard + rate limit + fire-and-forget .then vs .catch), 5 PostHog events |
+| `04 - Banco de Dados e Migrações.md` | Adicionar migração 070 (guide): ALTER TABLE guide_articles (slug UNIQUE, status check, icon, icon_color, helpful_yes, helpful_no, tags, order_in_category); RLS fix (guide_articles_authenticated_select); CREATE TABLE guide_faqs (id/question/answer/order_num); CREATE TABLE guide_article_votes (id/article_id FK/user_id FK/helpful/UNIQUE(article_id,user_id), RLS owner); CREATE TABLE guide_search_logs (id/user_id FK/query/results_count/clicked, INSERT policy); RPCs increment_article_views + vote_article + get_article_vote; seeds 17 artigos + 7 FAQs |
+| `Referência - Eventos PostHog.md` | **Atualizar** — total 63 eventos: +5 do Guia da Plataforma (guide_article_opened/helpful/search_performed/support_clicked/category_viewed) — detalhar onde cada evento é disparado (GuideClient.tsx) e suas propriedades |
+| `03 - Estado do Projeto.md` | Marcar Guia da Plataforma ✅ Funcional: SSR real + GuideClient + 4 Server Actions + migração 070 + 5 PostHog events |
 
 ## Como Atualizar
 
