@@ -35,17 +35,19 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
 
   if (!data) return { title: 'Umbra Bot' }
 
+  const displayTitle = data.name || `@${slug}`
   return {
-    title: `${data.name || 'Bio Link'} | Umbra Bot`,
+    title: `${displayTitle} | Umbra Bot`,
     description: data.bio || 'Minha página de links',
     ...(data.avatar?.startsWith('http') && {
       openGraph: {
-        title: `${data.name || 'Bio Link'} | Umbra Bot`,
+        title: `${displayTitle} | Umbra Bot`,
         description: data.bio || 'Minha página de links',
         images: [{ url: data.avatar }],
       },
       twitter: {
         card: 'summary',
+        title: `${displayTitle} | Umbra Bot`,
         images: [data.avatar],
       },
     }),

@@ -237,24 +237,6 @@ export function BioPublicClient({ biolink, slug }: Props) {
           ))}
         </div>
 
-        {/* Footer */}
-        <div className="mt-10 text-center">
-          <a
-            href="https://umbra.bot"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 text-[11px] font-medium transition-opacity hover:opacity-80"
-            style={{ color: theme.muted }}
-          >
-            <span
-              className="w-4 h-4 rounded flex items-center justify-center text-white text-[9px] font-bold"
-              style={{ background: theme.primary }}
-            >
-              U
-            </span>
-            feito com Umbra Bot
-          </a>
-        </div>
       </div>
     </div>
   )

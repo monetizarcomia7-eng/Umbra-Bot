@@ -315,7 +315,6 @@ function PhonePreview({ page, theme, publicUrl }: { page: BioPage; theme: ThemeP
             </div>
           ))}
         </div>
-        <div className="mt-6 text-center text-[9.5px]" style={{ color: t.muted }}>feito com Umbra Bot</div>
       </div>
       <div className="absolute bottom-1.5 left-1/2 -translate-x-1/2 w-28 h-1 rounded-full bg-white/40 z-20" />
     </div>
@@ -762,12 +761,15 @@ export function BioLinkClient({ userId, initialBiolink, initialAnalytics, appUrl
 
   const theme = themePresets.find((t) => t.id === page.themeId) ?? themePresets[0]
 
-  const clicksByLink = analytics.clicks_by_link ?? {}
+  const clicksByLink = useMemo(() => analytics.clicks_by_link ?? {}, [analytics.clicks_by_link])
   const sortedByClicks = useMemo(() => {
     const withClicks = page.links.map((l) => ({ ...l, clicks: clicksByLink[l.id] ?? 0 }))
     return [...withClicks].sort((a, b) => b.clicks - a.clicks)
   }, [page.links, clicksByLink])
-  const totalLinkClicks = Object.values(clicksByLink).reduce((s, v) => s + (v ?? 0), 0)
+  const totalLinkClicks = useMemo(
+    () => Object.values(clicksByLink).reduce((s, v) => s + (v ?? 0), 0),
+    [clicksByLink],
+  )
 
   const publicUrl = `${appUrl}/b/${page.slug}`
   const isPublished = page.status === 'published'
@@ -818,6 +820,9 @@ export function BioLinkClient({ userId, initialBiolink, initialAnalytics, appUrl
 
       {/* URL bar */}
       <div className="bg-[var(--surface)] border border-[var(--border)] rounded-xl p-4 mb-5">
+        {page.name && (
+          <p className="text-[14px] font-semibold text-[var(--text)] mb-3 leading-none">{page.name}</p>
+        )}
         <div className="flex items-center gap-3 flex-wrap">
           <div className="flex items-center gap-0 flex-1 min-w-[260px] max-w-md bg-[var(--surface-2)]/40 border border-[var(--border)] rounded-lg overflow-hidden">
             <span className="pl-3 text-[10.5px] font-mono text-[var(--text-muted)] shrink-0">{appUrl}/b/</span>
