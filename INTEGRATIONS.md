@@ -478,6 +478,18 @@ Ambos usam `Authorization: Bearer CRON_SECRET`.
 | `GET` | `/api/checkout/status` | Polling de status PIX (retorna apenas `{ status }`) | Nenhuma | 30 req/min por IP |
 | `POST` | `/api/checkout/track` | Registra evento de funil (visited/cart_added) | Nenhuma (CORS `*`) | 60 req/min por IP |
 
+**Página pública `/c/[slug]` (Server Component):**
+- Usa `createAdminClient()` — sem sessão do comprador
+- Busca checkout por slug + pixels do dono (sem `access_token`)
+- **Busca `profiles.name` do vendedor** → passa como `sellerName` ao `CheckoutPageClient`
+  - Fallback: `'o vendedor'` quando `profiles.name` está vazio
+- `CheckoutPageClient` exibe rodapé legal abaixo do botão Pagar:
+  - Declaração citando **Umbra Bot** e o **nome do vendedor** (dinâmico)
+  - Links para Termos de Compra, Termos de Uso e Política de Privacidade (`umbra.bot/*`)
+  - Link "Denunciar esse produto" (`mailto:contato@umbra.bot?subject=...`)
+  - Nota de parcelamento com acréscimo (visível apenas quando `installments > 1`)
+  - Aviso Google reCAPTCHA com links oficiais das políticas do Google
+
 ---
 
 ### Affiliates

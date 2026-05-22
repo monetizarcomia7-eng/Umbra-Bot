@@ -145,6 +145,7 @@ umbra-bot/
 │   │   └── [slug]/
 │   │       ├── page.tsx          # Página pública do checkout (Server Component, admin client)
 │   │       │                     # Busca checkout por slug + pixels do dono (sem access_token)
+│   │       │                     # Busca profiles.name do vendedor → sellerName (fallback 'o vendedor')
 │   │       │                     # PublicCheckout inclui: success_url, guarantee_days, countdown_end,
 │   │       │                     # order_bump, logo_image, two_step, upsell, visitor_tracking
 │   │       ├── CheckoutPageClient.tsx # Client Component: formulário com CPF/CNPJ mask,
@@ -156,6 +157,8 @@ umbra-bot/
 │   │       │                          # GET /api/checkout/validate-coupon), order bump checkbox,
 │   │       │                          # upsell step pós-pagamento (modal antes do redirect),
 │   │       │                          # reCAPTCHA v2 obrigatório antes do botão Pagar
+│   │       │                          # Aviso legal abaixo do botão Pagar (sellerName dinâmico):
+│   │       │                          # declaração Umbra Bot + Termos + Denunciar produto + nota reCAPTCHA
 │   │       └── PixelScripts.tsx  # Snippets de pixel (Meta/TikTok/Google) injetados no head
 │   │                              # step inclui 'upsell' — Purchase dispara em success + upsell
 │   ├── r/
@@ -639,6 +642,8 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Checkout — checkout_coupons: tabela com RLS + UNIQUE(user_id, code) + validate_and_apply_coupon RPC — migração 086 | ✅ Implementado |
 | Checkout — /api/checkout/validate-coupon: preview sem incremento de uso (rate-limit 30/min) | ✅ Implementado |
 | Checkout — /api/checkout/pay: coupon_code + order_bump; totalPrice = (price − desconto) + bumpPrice | ✅ Implementado |
+| Checkout — aviso legal no rodapé da página pública: declaração Umbra Bot + nome do vendedor dinâmico + links Termos/Privacidade + Denunciar produto + nota reCAPTCHA Google | ✅ Implementado |
+| Checkout — /c/[slug]/page.tsx: busca profiles.name do vendedor (sellerName) via admin client e passa ao CheckoutPageClient | ✅ Implementado |
 | Sistema de planos/billing | ❌ Não iniciado |
 | Remarketing — Server Component SSR + RemarketingClient (dados reais, sem mock) | ✅ Funcional |
 | Remarketing — createCampaign: INSERT real com user_id + UUID real retornado | ✅ Implementado |
@@ -4087,6 +4092,16 @@ CheckoutPageClient (Client Component)
   │     Botão CTA: window.open(c.upsell.link) → navega para oferta
   │     Botão "Não, obrigado": avança para success_url ou confirmação inline
   │     PixelScripts: Purchase dispara em step==='upsell' também
+  │
+  ├── Aviso legal (abaixo do botão Pagar, apenas em step='form'):
+  │     Texto: "Ao clicar em 'Pagar R$X', eu declaro que (i) estou ciente que a Umbra Bot está processando
+  │     essa compra em nome de {sellerName} e que não possui responsabilidade pelo conteúdo, oferta, e nem
+  │     faz controle prévio do infoproduto; (ii) que li e concordo com os Termos de Compra, Termos de Uso
+  │     e Política de Privacidade."
+  │     + Link "Denunciar esse produto" (mailto:contato@umbra.bot?subject=...)
+  │     + Nota "*Parcelamento com acréscimo" (visível apenas quando c.installments > 1)
+  │     + "Este site está protegido pelo Google reCAPTCHA. Política de Privacidade e Termos de Serviço."
+  │     sellerName: prop string vinda do Server Component (profiles.name do vendedor, fallback 'o vendedor')
   │
   └── Sucesso:
         Se success_url configurado: window.location.href = success_url (comprador sai do checkout)
