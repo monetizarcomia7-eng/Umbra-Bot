@@ -669,7 +669,7 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Checkout — upsell: nota de preço "Cobrado separadamente ao clicar em…" + link com target="_blank" rel="noopener" | ✅ Implementado |
 | Checkout — build fix: `paidAmountRef` captura `effectivePrice` no `handleSubmit` para uso no `useEffect` de `checkout_pay_success` (evita temporal dead zone de `const` declarada depois do efeito) | ✅ Corrigido |
 | Webhooks — Server Component SSR + WebhooksClient (dados reais, sem mock) | ✅ Funcional |
-| Webhooks — CRUD real: create/update/delete/toggle (8 Server Actions) com IDOR-safe (.eq user_id) | ✅ Implementado |
+| Webhooks — CRUD real: create/update/delete/toggle (9 Server Actions) com IDOR-safe (.eq user_id) | ✅ Implementado |
 | Webhooks — HMAC-SHA256 em todas as entregas (header X-Umbra-Signature-256) | ✅ Implementado |
 | Webhooks — webhook_deliveries: histórico lazy paginado (20/página via loadDeliveriesAction) | ✅ Implementado |
 | Webhooks — dispatchWebhookEvent fire-and-forget wired em MP webhook (sale.approved/pending) e Telegram (lead.created) | ✅ Implementado |
@@ -678,6 +678,10 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Webhooks — SSRF protection: bloqueia localhost, 169.254.x, 10.x, 192.168.x na URL do endpoint | ✅ Implementado |
 | Webhooks — secret criptografado AES-256-GCM (encryptToken) — nunca descriptografado no client | ✅ Implementado |
 | Webhooks — 7 eventos PostHog: webhook_created/tested/paused/resumed/deleted/secret_rotated/delivery_resent | ✅ Implementado |
+| Webhooks — retry automático: 3 tentativas com backoff [0 ms, 1 s, 5 s]; header X-Umbra-Retry: N (0 = primeira tentativa) em lib/webhooks.ts | ✅ Implementado |
+| Webhooks — payload preview no histórico: DeliveryRow expandível com lazy-fetch de payload + response_body via loadDeliveryDetailAction | ✅ Implementado |
+| Webhooks — alerta proativo de falha: _createFailureAlert cria type='webhookFailed' após todas as 3 tentativas falharem; _resolveFailureAlert auto-resolve ao próximo sucesso | ✅ Implementado |
+| Webhooks — seção Integrações: cards Zapier/Make/n8n/ManyChat com guias passo a passo expandíveis (grid md:2 xl:4 colunas) na página de Webhooks | ✅ Implementado |
 | Sistema de planos/billing | ❌ Não iniciado |
 | Bio Link — Server Component SSR + BioLinkClient (dados reais, sem mock, migração 088) | ✅ Funcional |
 | Bio Link — CRUD real: INSERT na primeira vez (UUID) + UPDATE com .eq('user_id') IDOR-safe | ✅ Implementado |

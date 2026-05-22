@@ -819,8 +819,8 @@ id:             text        NOT NULL
 name:           text        NOT NULL
 url:            text        NOT NULL
 events:         text[]      NOT NULL  default '{}'
-secret:         text        NOT NULL  default ''
-status:         text        NOT NULL  default 'healthy'
+secret:         text        NOT NULL  default ''  (criptografado AES-256-GCM — enc:<iv>:<tag>:<cipher>)
+status:         text        NOT NULL  default 'healthy'  check in ('healthy','failing','paused')
 active:         boolean     NOT NULL  default true
 deliveries_24h: integer     NOT NULL  default 0
 success_rate:   numeric     NOT NULL  default 100
@@ -829,6 +829,40 @@ created_at:     timestamptz NOT NULL  default now()
 updated_at:     timestamptz NOT NULL  default now()
 user_id:        uuid        FK → auth.users(id)
 ```
+
+RLS: `webhooks_owner` → `auth.uid() = user_id` (migração 091)
+
+**RPC `sync_webhook_stats(p_webhook_id text)`** — security definer:
+- Atualiza `deliveries_24h` (count das últimas 24h), `success_rate` (% de entregas com sucesso) e `status` (`failing` se success_rate < 80%; `healthy` se ≥ 80%; `paused` se `active = false`)
+- Chamada após cada entrega em `lib/webhooks.ts`, `testWebhookAction` e `resendDeliveryAction`
+
+**RPC `webhooks_stats(p_user_id uuid)`** → json:
+- Retorna `{ total, active, failing, deliveries_24h, success_rate }` — usado nos KPI cards do dashboard
+
+---
+
+## public.webhook_deliveries
+
+```
+id:              uuid        NOT NULL  default gen_random_uuid()
+webhook_id:      text        NOT NULL  FK → webhooks(id)  ON DELETE CASCADE
+user_id:         uuid        NOT NULL  FK → auth.users(id)  ON DELETE CASCADE
+event_type:      text        NOT NULL  (ex: 'sale.approved', 'lead.created', 'test.ping')
+payload:         jsonb       NOT NULL  default '{}'  (corpo completo do evento entregue)
+response_status: integer               (código HTTP retornado pelo endpoint — null em timeout)
+response_body:   text                  (até 2.000 chars da resposta; null em timeout)
+duration_ms:     integer               (tempo total da entrega em milissegundos)
+success:         boolean     NOT NULL  default false  (true se response_status 2xx)
+attempt:         integer     NOT NULL  default 1  (1 = primeira tentativa; 2 ou 3 = retentativa)
+created_at:      timestamptz NOT NULL  default now()
+```
+
+RLS: `wd_owner` → `auth.uid() = user_id` (SELECT only — INSERT via funções `security definer`)
+Índices: `wd_webhook_created_idx (webhook_id, created_at desc)`, `wd_user_created_idx (user_id, created_at desc)`
+
+**Coluna `attempt`:** indica o número da tentativa de entrega. O dispatcher (`lib/webhooks.ts`) realiza até 3 tentativas com backoff [0 ms, 1 s, 5 s]. Cada tentativa gera uma row separada em `webhook_deliveries` com o mesmo `webhook_id` e `event_type` mas `attempt` diferente (1, 2 ou 3). O header `X-Umbra-Retry: N` (onde N = attempt - 1) informa ao receptor se é uma retentativa.
+
+**Payload preview:** `loadDeliveryDetailAction(deliveryId)` em `app/actions/webhooks.ts` busca `payload` + `response_body` sob demanda (lazy) — evita carregar os campos pesados na listagem inicial de entregas.
 
 ---
 
@@ -893,4 +927,5 @@ auth.users
   │     └── checkout_coupons (user_id)  checkout_id → checkouts(id)  [mig 086]
   ├── pixels             (user_id)
   └── webhooks           (user_id)
+        └── webhook_deliveries (webhook_id)  [mig 091]
 ```

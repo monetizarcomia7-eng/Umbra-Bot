@@ -610,12 +610,16 @@ Ambos usam `Authorization: Bearer CRON_SECRET`.
 | `deleteWebhookAction(id)` | DELETE com `.eq('user_id')` | Nenhum |
 | `toggleWebhookAction(id, active)` | UPDATE active + status (healthy/paused) | Nenhum |
 | `testWebhookAction(id)` | HTTP POST real + HMAC + persiste em `webhook_deliveries` + `sync_webhook_stats` RPC | 10/min por usuário |
+| `loadDeliveryDetailAction(deliveryId)` | SELECT payload + response_body de entrega específica (lazy — só ao expandir) | Nenhum |
 | `loadDeliveriesAction(webhookId, page)` | SELECT paginado de `webhook_deliveries` (20/página) | Nenhum |
 | `resendDeliveryAction(deliveryId)` | HTTP POST real com payload original + nova assinatura HMAC | 10/min por usuário |
 
 **Dispatcher (`lib/webhooks.ts`):**
 
 ```typescript
+const MAX_ATTEMPTS    = 3
+const RETRY_DELAYS_MS = [0, 1_000, 5_000]  // delay antes da tentativa 1, 2, 3
+
 export function dispatchWebhookEvent(
   userId: string,
   eventType: WebhookEventType,
@@ -626,12 +630,19 @@ export function dispatchWebhookEvent(
 ```
 
 - Usa `createAdminClient()` para buscar webhooks (route handlers não têm sessão de usuário)
-- Filtra por `active = true` e `events @> [eventType]`
+- Filtra por `active = true` e `events @> [eventType]`; seleciona `id, url, secret, name`
+- **Retry automático:** `_sendWithRetry()` tenta até 3 vezes com backoff [0 ms, 1 s, 5 s]
+  - Cada tentativa inserida individualmente em `webhook_deliveries` com campo `attempt` (1, 2 ou 3)
+  - Loop interrompido ao primeiro sucesso (`res.ok = true`)
 - Assina com HMAC-SHA256: `'sha256=' + createHmac('sha256', plainSecret).update(payload).digest('hex')`
-- Headers: `X-Umbra-Signature-256`, `X-Umbra-Event`, `X-Umbra-Delivery`, `X-Umbra-Timestamp`, `User-Agent: Umbra-Bot-Webhook/1.0`
-- AbortSignal.timeout(8000) — nunca trava o thread
-- Persiste resultado em `webhook_deliveries` (success, response_status, response_body, duration_ms)
-- Chama RPC `sync_webhook_stats` após cada entrega (atualiza deliveries_24h, success_rate, status)
+- Headers: `X-Umbra-Signature-256`, `X-Umbra-Event`, `X-Umbra-Delivery`, `X-Umbra-Timestamp`, `X-Umbra-Retry: N` (N = attempt - 1; 0 = primeira tentativa), `User-Agent: Umbra-Bot-Webhook/1.0`
+- AbortSignal.timeout(8000) por tentativa — nunca trava o thread
+- Persiste resultado em `webhook_deliveries` por tentativa (success, response_status, response_body, duration_ms, attempt)
+- Chama RPC `sync_webhook_stats` após todas as tentativas (atualiza deliveries_24h, success_rate, status)
+- **Alerta proativo de falha:**
+  - Se todas as 3 tentativas falharem: `_createFailureAlert()` cria `alert` do tipo `webhookFailed` (severity=warning) — só se não houver alerta aberto para aquele webhook
+  - Se próxima entrega tiver sucesso: `_resolveFailureAlert()` auto-resolve o alerta com `resolved_by='sistema (auto)'`
+  - Usa `.filter('context->>webhook_id', 'eq', webhookId)` para acessar o campo JSONB `context`
 
 **Eventos disponíveis (`WebhookEventType`):**
 
@@ -690,6 +701,19 @@ create table public.webhook_deliveries (
 **PostHog events:** `webhook_created`, `webhook_tested`, `webhook_paused`, `webhook_resumed`, `webhook_deleted`, `webhook_secret_rotated`, `delivery_resent`
 
 **Supabase Realtime:** canal `webhooks-realtime`, event `*`, filtro `user_id=eq.${userId}` — atualiza status/active/deliveries_24h/success_rate em tempo real no dashboard
+
+**Payload preview no histórico:** `DeliveryRow` é um componente stateful com botão de expansão. Ao expandir, chama `loadDeliveryDetailAction(delivery.id)` para buscar `payload` (JSON) e `response_body` lazy — evita carregar dados pesados na listagem inicial. Campos `payload` e `response_body` são exibidos em `<pre>` formatado dentro de uma linha extra na tabela.
+
+**Seção Integrações (WebhooksClient.tsx):** Componente `IntegrationsSection` exibido abaixo da tabela de webhooks. Apresenta 4 cards em grid `grid-cols-1 md:grid-cols-2 xl:grid-cols-4` com guias passo a passo inline expansíveis:
+
+| Plataforma | URL | Descrição |
+|---|---|---|
+| Zapier | zapier.com/apps/webhook/integrations | 7.000+ apps conectados |
+| Make | make.com | Automação visual avançada |
+| n8n | n8n.io | Open-source, self-hostável |
+| ManyChat | manychat.com | Automação para Telegram e Instagram |
+
+Cada card contém: logo inicial colorido, nome da plataforma, tagline, link "Abrir [Platform]" e botão chevron para expandir/colapsar os passos do guia. **Funcionamento E2E:** o usuário cria o webhook na plataforma externa (obtém a URL de destino), cola a URL no formulário do Umbra Bot, e a plataforma passa a receber eventos assinados via HMAC automaticamente.
 
 ---
 

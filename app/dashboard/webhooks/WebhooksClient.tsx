@@ -853,6 +853,194 @@ const INTEGRATION_PLATFORMS = [
   },
 ] as const
 
+/* ── PayloadExampleSection ──────────────────────────────────────────────────── */
+
+const PAYLOAD_TABS = [
+  { key: 'lead',     label: 'Novo Lead',           event: 'lead.created'   },
+  { key: 'pix',      label: 'PIX Gerado',          event: 'sale.pending'   },
+  { key: 'approved', label: 'Pagamento Aprovado',  event: 'sale.approved'  },
+] as const
+
+type PayloadTabKey = (typeof PAYLOAD_TABS)[number]['key']
+
+const PAYLOAD_EXAMPLES: Record<PayloadTabKey, object> = {
+  lead: {
+    id: 'wd_8f2a1c3e9b0d4f7a',
+    event: 'lead.created',
+    created: 1748985600000,
+    data: {
+      customer: {
+        id: 'c9a3e7b1-4f2d-4a8e-b0c1-d5e6f7a8b9c0',
+        telegram_id: '123456789',
+        first_name: 'Victor',
+        last_name: 'Araújo',
+        username: 'victoraraujo',
+      },
+      bot: {
+        id: 'b1c2d3e4-f5a6-7b8c-9d0e-f1a2b3c4d5e6',
+        name: 'Meu Bot',
+        username: 'MeuBot',
+      },
+      flow: {
+        id: 'f1e2d3c4-b5a6-7c8d-9e0f-a1b2c3d4e5f6',
+        name: 'Fluxo de Captação',
+      },
+      tracking: {
+        utm_source: 'instagram',
+        utm_campaign: 'lancamento-junho',
+      },
+    },
+  },
+  pix: {
+    id: 'wd_4e7b2f9a1c8d3e6f',
+    event: 'sale.pending',
+    created: 1748985780000,
+    data: {
+      transaction: {
+        id: 'tx_a1b2c3d4e5f6a7b8',
+        amount: 197.00,
+        status: 'pending',
+        product_name: 'Mentoria Premium',
+        payment_method: 'pix',
+        gateway: 'mercadopago',
+        created_at: '2026-06-03T14:03:00Z',
+      },
+      customer: {
+        name: 'Victor Araújo',
+        email: 'victor@exemplo.com',
+        telegram_id: '123456789',
+      },
+      bot: {
+        id: 'b1c2d3e4-f5a6-7b8c-9d0e-f1a2b3c4d5e6',
+        username: 'MeuBot',
+      },
+    },
+  },
+  approved: {
+    id: 'wd_7c3f1e9a4b8d2f5a',
+    event: 'sale.approved',
+    created: 1748985902000,
+    data: {
+      transaction: {
+        id: 'tx_a1b2c3d4e5f6a7b8',
+        amount: 197.00,
+        net: 190.09,
+        fee: 6.91,
+        status: 'approved',
+        product_name: 'Mentoria Premium',
+        payment_method: 'pix',
+        gateway: 'mercadopago',
+        approved_at: '2026-06-03T14:05:02Z',
+      },
+      customer: {
+        name: 'Victor Araújo',
+        email: 'victor@exemplo.com',
+        telegram_id: '123456789',
+      },
+      affiliate: {
+        id: 'aff_c3d4e5f6a7b8c9d0',
+        commission: 59.10,
+      },
+      bot: {
+        id: 'b1c2d3e4-f5a6-7b8c-9d0e-f1a2b3c4d5e6',
+        username: 'MeuBot',
+      },
+    },
+  },
+}
+
+const FIELD_LEGEND = [
+  { field: 'id',               desc: 'ID único desta entrega de webhook' },
+  { field: 'event',            desc: 'Tipo de evento (lead.created / sale.pending / sale.approved)' },
+  { field: 'created',          desc: 'Timestamp Unix em milissegundos do momento do disparo' },
+  { field: 'data.customer',    desc: 'Dados do contato: telegram_id, nome, e-mail, username' },
+  { field: 'data.bot',         desc: 'Bot do Umbra Bot que gerou o evento' },
+  { field: 'data.flow',        desc: 'Fluxo de venda ativo no momento do evento (quando houver)' },
+  { field: 'data.transaction', desc: 'Detalhes da transação PIX: valor bruto, líquido, taxa, status, produto, gateway' },
+  { field: 'data.affiliate',   desc: 'Afiliado atribuído à venda e comissão calculada (quando houver)' },
+  { field: 'data.tracking',    desc: 'Parâmetros UTM capturados na sessão do comprador (quando disponíveis)' },
+]
+
+function PayloadExampleSection() {
+  const [activeTab, setActiveTab] = useState<PayloadTabKey>('lead')
+  const [copied, setCopied] = useState(false)
+
+  const json = JSON.stringify(PAYLOAD_EXAMPLES[activeTab], null, 2)
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(json).catch(() => null)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  return (
+    <div className="mt-6 bg-[var(--surface)] border border-[var(--border)] rounded-xl overflow-hidden">
+      {/* Header */}
+      <div className="px-4 pt-4 pb-3 border-b border-[var(--border)]">
+        <div className="text-[13px] font-semibold text-[var(--text)]">Exemplo de Payload</div>
+        <div className="text-[11.5px] text-[var(--text-muted)] mt-0.5">
+          Veja o que seu servidor irá receber em cada tipo de evento.
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div className="flex items-center gap-1 px-4 pt-3 pb-2">
+        {PAYLOAD_TABS.map((tab) => (
+          <button
+            key={tab.key}
+            onClick={() => setActiveTab(tab.key)}
+            className={`h-7 px-3 rounded-md text-[12px] font-medium transition-colors ${
+              activeTab === tab.key
+                ? 'bg-[var(--primary)] text-white'
+                : 'text-[var(--text-muted)] hover:bg-[var(--surface-2)] hover:text-[var(--text)]'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+        <div className="flex-1" />
+        <button
+          onClick={handleCopy}
+          className="h-7 px-2.5 inline-flex items-center gap-1.5 rounded-md text-[11.5px] font-medium text-[var(--text-muted)] hover:bg-[var(--surface-2)] hover:text-[var(--text)] transition-colors"
+        >
+          {copied ? <Check size={12} className="text-green-500" /> : <Copy size={12} />}
+          {copied ? 'Copiado!' : 'Copiar'}
+        </button>
+      </div>
+
+      {/* JSON block */}
+      <div className="mx-4 mb-4 rounded-lg overflow-hidden border border-[var(--border)]">
+        <div className="flex items-center justify-between px-3 py-1.5 bg-[var(--surface-2)] border-b border-[var(--border)]">
+          <span className="text-[10.5px] font-medium text-[var(--text-muted)] uppercase tracking-wider">
+            POST {PAYLOAD_TABS.find(t => t.key === activeTab)?.event}
+          </span>
+          <span className="text-[10px] text-[var(--text-muted)]">application/json</span>
+        </div>
+        <pre className="overflow-x-auto p-4 text-[11.5px] leading-relaxed font-mono text-[var(--text)] bg-[var(--surface)]" style={{ maxHeight: 360 }}>
+          {json}
+        </pre>
+      </div>
+
+      {/* Field legend */}
+      <div className="px-4 pb-4">
+        <div className="text-[10.5px] font-semibold text-[var(--text-muted)] uppercase tracking-wider mb-2">
+          Campos do payload
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1.5">
+          {FIELD_LEGEND.map(({ field, desc }) => (
+            <div key={field} className="flex items-start gap-2 text-[11.5px]">
+              <code className="shrink-0 mt-0.5 font-mono text-[10.5px] px-1.5 py-0.5 rounded bg-[var(--surface-2)] border border-[var(--border)] text-[var(--primary)]">
+                {field}
+              </code>
+              <span className="text-[var(--text-muted)] leading-relaxed">{desc}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function IntegrationsSection() {
   const [openGuide, setOpenGuide] = useState<string | null>(null)
 
@@ -1220,6 +1408,9 @@ export function WebhooksClient({ initialWebhooks, userId }: {
           </div>
         )}
       </div>
+
+      {/* Payload de Exemplo */}
+      <PayloadExampleSection />
 
       {/* Integrações */}
       <IntegrationsSection />
