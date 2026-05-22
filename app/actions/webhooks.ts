@@ -202,28 +202,31 @@ export async function testWebhookAction(id: string): Promise<TestWebhookResult> 
   const durationMs = Date.now() - start
 
   // Persiste a entrega de teste (fire-and-forget)
-  supabase.from('webhook_deliveries').insert({
-    webhook_id:      id,
-    user_id:         user.id,
-    event_type:      'test.ping',
-    payload:         JSON.parse(payload),
-    response_status: responseStatus,
-    response_body:   responseBody.slice(0, 2000),
-    duration_ms:     durationMs,
-    success:         fetchOk,
-    attempt:         1,
-  }).then(async () => {
-    try { await supabase.rpc('sync_webhook_stats', { p_webhook_id: id }) } catch { /* ignore */ }
-    if (fetchOk) {
-      try {
-        await supabase
-          .from('webhooks')
-          .update({ last_delivery: Date.now() })
-          .eq('id', id)
-          .eq('user_id', user.id)
-      } catch { /* ignore */ }
-    }
-  }).catch(() => {})
+  void (async () => {
+    try {
+      await supabase.from('webhook_deliveries').insert({
+        webhook_id:      id,
+        user_id:         user.id,
+        event_type:      'test.ping',
+        payload:         JSON.parse(payload),
+        response_status: responseStatus,
+        response_body:   responseBody.slice(0, 2000),
+        duration_ms:     durationMs,
+        success:         fetchOk,
+        attempt:         1,
+      })
+      try { await supabase.rpc('sync_webhook_stats', { p_webhook_id: id }) } catch { /* ignore */ }
+      if (fetchOk) {
+        try {
+          await supabase
+            .from('webhooks')
+            .update({ last_delivery: Date.now() })
+            .eq('id', id)
+            .eq('user_id', user.id)
+        } catch { /* ignore */ }
+      }
+    } catch { /* ignore */ }
+  })()
 
   return {
     ok:         fetchOk,
@@ -327,27 +330,30 @@ export async function resendDeliveryAction(deliveryId: string): Promise<TestWebh
 
   const durationMs = Date.now() - start
 
-  supabase.from('webhook_deliveries').insert({
-    webhook_id:      delivery.webhook_id,
-    user_id:         user.id,
-    event_type:      delivery.event_type,
-    payload:         delivery.payload,
-    response_status: responseStatus,
-    response_body:   responseBody.slice(0, 2000),
-    duration_ms:     durationMs,
-    success:         fetchOk,
-    attempt:         delivery.attempt + 1,
-  }).then(async () => {
-    try { await supabase.rpc('sync_webhook_stats', { p_webhook_id: delivery.webhook_id }) } catch { /* ignore */ }
-    if (fetchOk) {
-      try {
-        await supabase
-          .from('webhooks')
-          .update({ last_delivery: Date.now() })
-          .eq('id', delivery.webhook_id)
-      } catch { /* ignore */ }
-    }
-  }).catch(() => {})
+  void (async () => {
+    try {
+      await supabase.from('webhook_deliveries').insert({
+        webhook_id:      delivery.webhook_id,
+        user_id:         user.id,
+        event_type:      delivery.event_type,
+        payload:         delivery.payload,
+        response_status: responseStatus,
+        response_body:   responseBody.slice(0, 2000),
+        duration_ms:     durationMs,
+        success:         fetchOk,
+        attempt:         delivery.attempt + 1,
+      })
+      try { await supabase.rpc('sync_webhook_stats', { p_webhook_id: delivery.webhook_id }) } catch { /* ignore */ }
+      if (fetchOk) {
+        try {
+          await supabase
+            .from('webhooks')
+            .update({ last_delivery: Date.now() })
+            .eq('id', delivery.webhook_id)
+        } catch { /* ignore */ }
+      }
+    } catch { /* ignore */ }
+  })()
 
   return {
     ok:         fetchOk,
