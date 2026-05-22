@@ -135,6 +135,7 @@ export default function CheckoutPageClient({
   const [recaptchaToken,   setRecaptchaToken]   = useState<string | null>(null)
   const { track }      = useAnalytics()
   const payStartTime   = useRef<number | null>(null)
+  const paidAmountRef  = useRef<number>(0)
   const visitTracked   = useRef(false)
   const presenceRef    = useRef<ReturnType<typeof createClient> | null>(null)
   const [exitPopup, setExitPopup] = useState(false)
@@ -277,7 +278,7 @@ export default function CheckoutPageClient({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     track('checkout_pay_success', {
       checkout_id: c.id,
-      amount:      effectivePrice,
+      amount:      paidAmountRef.current,
       time_to_pay_ms: payStartTime.current ? Date.now() - payStartTime.current : undefined,
     })
     if (c.upsell) { setStep('upsell'); return }
@@ -376,7 +377,8 @@ export default function CheckoutPageClient({
 
     setSubmitting(true)
     setErrMsg('')
-    payStartTime.current = Date.now()
+    payStartTime.current  = Date.now()
+    paidAmountRef.current = effectivePrice
 
     track('checkout_pay_started', {
       checkout_id:    c.id,
