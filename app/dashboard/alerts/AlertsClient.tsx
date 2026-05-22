@@ -11,7 +11,7 @@ import {
   AlertTriangle, AlertCircle, Info, CheckCircle2, RotateCcw, MoreHorizontal,
   Bell, X, FilterX, CheckCheck, Play, BarChart3, Plug, TrendingDown,
   Inbox, XCircle, CircleDollarSign, Users, Globe, Sparkles, Calendar, Check,
-  Bot, ChevronDown, Trash2,
+  Bot, ChevronDown, Trash2, UserPlus, ArrowRight,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -40,6 +40,7 @@ export interface RawAlert {
 type AlertType =
   | 'gateway_fail' | 'bot_banned' | 'bot_offline' | 'send_quota'
   | 'webhook_fail' | 'payment_pending' | 'limit_warning' | 'ssl_expiring' | 'sale'
+  | 'webhookFailed' | 'team_invite'
 type Severity = 'critical' | 'warning' | 'info'
 
 interface CtxChip { icon: string; label: string }
@@ -74,7 +75,9 @@ const ALERT_TYPES: Record<AlertType, {
   payment_pending: { icon: Clock,            categoryLabel: 'Pagamento',   actionLabel: 'Ver financeiro',   actionIcon: Globe,       actionUrl: '/dashboard/finance'       },
   limit_warning:   { icon: TrendingUp,       categoryLabel: 'Plano',       actionLabel: 'Ver plano',        actionIcon: BarChart3,   actionUrl: '/dashboard/notifications' },
   ssl_expiring:    { icon: ShieldAlert,      categoryLabel: 'Domínio',     actionLabel: 'Ver integrações',  actionIcon: ShieldCheck, actionUrl: '/dashboard/redirects'     },
-  sale:            { icon: CircleDollarSign, categoryLabel: 'Venda',       actionLabel: 'Ver financeiro',   actionIcon: TrendingUp,  actionUrl: '/dashboard/finance'       },
+  sale:            { icon: CircleDollarSign, categoryLabel: 'Venda',        actionLabel: 'Ver financeiro',   actionIcon: TrendingUp,  actionUrl: '/dashboard/finance'       },
+  webhookFailed:   { icon: AlertCircle,      categoryLabel: 'Integração',   actionLabel: 'Ver webhooks',     actionIcon: Play,        actionUrl: '/dashboard/webhooks'      },
+  team_invite:     { icon: UserPlus,         categoryLabel: 'Equipe',       actionLabel: 'Ver convite',      actionIcon: ArrowRight,  actionUrl: '/dashboard/profile'       },
 }
 
 const SEVERITY_CONFIG: Record<Severity, { label: string; tone: string; bg: string; text: string; severityIcon: LucideIcon }> = {

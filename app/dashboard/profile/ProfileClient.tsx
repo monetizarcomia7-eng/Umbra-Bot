@@ -9,8 +9,8 @@ import type { RawProfile, RawMember } from './page'
 import {
   Save, Upload, Lock, Eye, EyeOff, Shield, ShieldCheck,
   AlertTriangle, AlertCircle, Check, CheckCircle2, X, Key,
-  ArrowRight, ArrowLeft, Search, UserPlus, Trash2, Send, Download,
-  Loader2,
+  ArrowRight, ArrowLeft, Search, UserPlus, UserCheck, Trash2, Send, Download,
+  Loader2, Users,
 } from 'lucide-react'
 
 /* ================================================================
@@ -32,9 +32,32 @@ interface Member {
 
 interface TwoFAState { enabled: boolean; enabledAt: number | null }
 
+export interface RawPendingInvite {
+  id: string
+  owner_id: string
+  role: string
+  joined_at: number
+  owner_name: string
+  owner_color: string
+  owner_initials: string
+  owner_workspace: string
+}
+
+interface PendingInvite {
+  id: string
+  ownerId: string
+  role: string
+  invitedAt: number
+  ownerName: string
+  ownerColor: string
+  ownerInitials: string
+  ownerWorkspace: string
+}
+
 interface ProfileClientProps {
   initialProfile: RawProfile | null
   initialMembers: RawMember[]
+  initialPendingInvites: RawPendingInvite[]
   userId: string
   userEmail: string
   hasMfa: boolean
@@ -64,11 +87,17 @@ const AVATAR_COLORS = ['#7c3aed','#10b981','#f97316','#0ea5e9','#ec4899','#ef444
    Helpers
    ================================================================ */
 
-function getInitials(name: string): string {
+function getInitials(name: string, email?: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean)
-  if (parts.length === 0) return '?'
+  if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+  // Name is empty — fall back to first 2 chars of email local part
+  if (email) {
+    const local = email.split('@')[0].replace(/[^a-zA-Z0-9]/g, '')
+    if (local.length >= 2) return local.slice(0, 2).toUpperCase()
+    if (local.length === 1) return local.toUpperCase()
+  }
+  return '?'
 }
 
 function fmtDate(ts: number): string {
@@ -128,7 +157,7 @@ function profileToAccount(p: RawProfile | null, email: string): Account {
     name:       p?.name       ?? '',
     email,
     phone:      p?.phone      ?? '',
-    initials:   (p?.avatar_initials && p.avatar_initials.trim()) ? p.avatar_initials : getInitials(p?.name ?? ''),
+    initials:   (p?.avatar_initials && p.avatar_initials.trim()) ? p.avatar_initials : getInitials(p?.name ?? '', email),
     avatarColor: p?.avatar_color ?? '#7c3aed',
     timezone:   p?.timezone   ?? 'America/Sao_Paulo (GMT-03)',
     language:   p?.language   ?? 'Português (Brasil)',
@@ -142,7 +171,7 @@ function mapMember(row: RawMember): Member {
     id:       row.id,
     name:     row.name,
     email:    row.email,
-    avatar:   row.avatar || getInitials(row.name),
+    avatar:   row.avatar || getInitials(row.name, row.email),
     color:    row.color  || '#7c3aed',
     role:     row.role as Member['role'],
     status:   row.status as Member['status'],
@@ -889,29 +918,30 @@ function InviteModal({ open, userId, onClose, onInvited }: {
     try {
       const supabase = createClient()
       const emailTrimmed = email.trim().toLowerCase()
-      const seed   = emailTrimmed.charCodeAt(0) + emailTrimmed.length
-      const parts  = emailTrimmed.split('@')[0].split(/[._-]/).map(s => s.charAt(0).toUpperCase() + s.slice(1))
-      const name   = parts.join(' ')
-      const avatar = getInitials(name)
-      const color  = AVATAR_COLORS[seed % AVATAR_COLORS.length]
-      const newId  = crypto.randomUUID()
+      const seed      = emailTrimmed.charCodeAt(0) + emailTrimmed.length
+      const parts     = emailTrimmed.split('@')[0].split(/[._-]/).map(s => s.charAt(0).toUpperCase() + s.slice(1))
+      const name      = parts.join(' ')
+      const avatar    = getInitials(name, emailTrimmed)
+      const color     = AVATAR_COLORS[seed % AVATAR_COLORS.length]
+      const newId     = crypto.randomUUID()
+      const joinedAt  = Date.now()
 
-      const { error: insertErr } = await supabase.from('team_members').insert({
-        id:        newId,
-        user_id:   userId,
-        name,
-        email:     emailTrimmed,
-        avatar,
-        color,
-        role,
-        status:    'invited',
-        last_seen: null,
-        joined_at: Date.now(),
-        self:      false,
+      // Use RPC so the invite also creates an in-app alert for the invitee
+      const { data, error: rpcErr } = await supabase.rpc('invite_team_member', {
+        p_owner_id:  userId,
+        p_id:        newId,
+        p_name:      name,
+        p_email:     emailTrimmed,
+        p_avatar:    avatar,
+        p_color:     color,
+        p_role:      role,
+        p_joined_at: joinedAt,
       })
-      if (insertErr) throw insertErr
+      if (rpcErr) throw rpcErr
+      const result = data as { ok: boolean; error?: string }
+      if (!result.ok) throw new Error(result.error ?? 'Erro ao convidar membro')
 
-      onInvited({ id: newId, name, email: emailTrimmed, avatar, color, role, status: 'invited', lastSeen: null, joinedAt: Date.now(), self: false })
+      onInvited({ id: newId, name, email: emailTrimmed, avatar, color, role, status: 'invited', lastSeen: null, joinedAt, self: false })
       track('member_invited', { role })
       onClose()
     } catch (err) {
@@ -1127,11 +1157,136 @@ function TeamCard({ members, userId, now, onMembersChange }: {
 }
 
 /* ================================================================
+   PendingInvitesCard
+   ================================================================ */
+
+function mapPendingInvite(row: RawPendingInvite): PendingInvite {
+  return {
+    id:             row.id,
+    ownerId:        row.owner_id,
+    role:           row.role,
+    invitedAt:      Number(row.joined_at),
+    ownerName:      row.owner_name,
+    ownerColor:     row.owner_color,
+    ownerInitials:  row.owner_initials || getInitials(row.owner_name),
+    ownerWorkspace: row.owner_workspace,
+  }
+}
+
+function PendingInvitesCard({ invites, userId, onAccepted, onRejected }: {
+  invites: PendingInvite[]
+  userId: string
+  onAccepted: (inviteId: string) => void
+  onRejected: (inviteId: string) => void
+}) {
+  const [busy, setBusy] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  async function handleAccept(inv: PendingInvite) {
+    setBusy(inv.id); setError(null)
+    try {
+      const supabase = createClient()
+      const { data, error: rpcErr } = await supabase.rpc('accept_team_invite', {
+        p_invite_id: inv.id,
+        p_user_id:   userId,
+      })
+      if (rpcErr) throw rpcErr
+      const result = data as { ok: boolean; error?: string }
+      if (!result.ok) throw new Error(result.error ?? 'Erro ao aceitar convite')
+      onAccepted(inv.id)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erro ao aceitar convite')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function handleReject(inv: PendingInvite) {
+    setBusy(inv.id + '_reject'); setError(null)
+    try {
+      const supabase = createClient()
+      const { data, error: rpcErr } = await supabase.rpc('reject_team_invite', {
+        p_invite_id: inv.id,
+        p_user_id:   userId,
+      })
+      if (rpcErr) throw rpcErr
+      const result = data as { ok: boolean; error?: string }
+      if (!result.ok) throw new Error(result.error ?? 'Erro ao recusar convite')
+      onRejected(inv.id)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erro ao recusar convite')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  if (invites.length === 0) return null
+
+  return (
+    <CardSection
+      title="Convites pendentes"
+      subtitle={`Você tem ${invites.length} convite${invites.length > 1 ? 's' : ''} de equipe aguardando resposta.`}
+    >
+      <div className="space-y-3">
+        {error && (
+          <div className="flex items-start gap-2 bg-danger-soft border border-danger/30 rounded-lg px-3 py-2 text-[12px] text-danger">
+            <AlertCircle size={13} className="mt-0.5 shrink-0" />{error}
+          </div>
+        )}
+        {invites.map(inv => {
+          const roleInfo = ROLE_MAP[inv.role] ?? { label: inv.role, tone: 'muted' }
+          const accepting = busy === inv.id
+          const rejecting = busy === inv.id + '_reject'
+          return (
+            <div key={inv.id}
+              className="flex items-center gap-3 p-3.5 rounded-xl border border-border bg-surface-2/40">
+              {/* Owner avatar */}
+              <div className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-[13px] shrink-0"
+                style={{ background: inv.ownerColor }}>
+                {inv.ownerInitials || <Users size={16} />}
+              </div>
+              {/* Info */}
+              <div className="flex-1 min-w-0">
+                <div className="text-[13px] font-medium text-text">
+                  {inv.ownerName || 'Usuário'} convidou você
+                </div>
+                {inv.ownerWorkspace && (
+                  <div className="text-[11.5px] text-text-muted truncate">
+                    Workspace: {inv.ownerWorkspace}
+                  </div>
+                )}
+                <div className="mt-1 flex items-center gap-1.5">
+                  <Badge tone={roleInfo.tone}>{roleInfo.label}</Badge>
+                  <span className="text-[10.5px] text-text-muted">·</span>
+                  <span className="text-[10.5px] text-text-muted">{fmtDate(inv.invitedAt)}</span>
+                </div>
+              </div>
+              {/* Actions */}
+              <div className="flex items-center gap-1.5 shrink-0">
+                <Btn variant="ghost" size="sm" loading={rejecting} disabled={accepting || rejecting}
+                  onClick={() => handleReject(inv)}>
+                  Recusar
+                </Btn>
+                <Btn variant="primary" size="sm" icon={<UserCheck size={13} />}
+                  loading={accepting} disabled={accepting || rejecting}
+                  onClick={() => handleAccept(inv)}>
+                  Aceitar
+                </Btn>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </CardSection>
+  )
+}
+
+/* ================================================================
    ProfileClient — main export
    ================================================================ */
 
 export default function ProfileClient({
-  initialProfile, initialMembers, userId, userEmail, hasMfa, mfaFactorId,
+  initialProfile, initialMembers, initialPendingInvites, userId, userEmail, hasMfa, mfaFactorId,
 }: ProfileClientProps) {
   // Owner member derived from profile data, NOT stored in team_members
   const ownerMember: Member = useMemo(() => ({
@@ -1140,7 +1295,7 @@ export default function ProfileClient({
     email:    userEmail,
     avatar:   (initialProfile?.avatar_initials && initialProfile.avatar_initials.trim())
               ? initialProfile.avatar_initials
-              : getInitials(initialProfile?.name ?? userEmail),
+              : getInitials(initialProfile?.name ?? '', userEmail),
     color:    initialProfile?.avatar_color ?? '#7c3aed',
     role:     'owner',
     status:   'active',
@@ -1150,15 +1305,16 @@ export default function ProfileClient({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [])
 
-  const [account, setAccount]   = useState(() => profileToAccount(initialProfile, userEmail))
-  const [members, setMembers]   = useState<Member[]>(() => [ownerMember, ...initialMembers.map(mapMember)])
-  const [twoFA, setTwoFA]       = useState<TwoFAState>({
+  const [account, setAccount]       = useState(() => profileToAccount(initialProfile, userEmail))
+  const [members, setMembers]       = useState<Member[]>(() => [ownerMember, ...initialMembers.map(mapMember)])
+  const [pendingInvites, setPendingInvites] = useState<PendingInvite[]>(() => initialPendingInvites.map(mapPendingInvite))
+  const [twoFA, setTwoFA]           = useState<TwoFAState>({
     enabled:   hasMfa,
     enabledAt: initialProfile?.two_fa_enabled_at != null ? Number(initialProfile.two_fa_enabled_at) : null,
   })
   const [activeMfaFactorId, setActiveMfaFactorId] = useState<string | null>(mfaFactorId)
-  const [now, setNow]           = useState(Date.now())
-  const [toast, setToast]       = useState('')
+  const [now, setNow]               = useState(Date.now())
+  const [toast, setToast]           = useState('')
 
   // Tick every 30s for relative timestamps
   useEffect(() => {
@@ -1195,13 +1351,28 @@ export default function ProfileClient({
       )}
 
       <div className="space-y-4 max-w-[1100px]">
+        {pendingInvites.length > 0 && (
+          <PendingInvitesCard
+            invites={pendingInvites}
+            userId={userId}
+            onAccepted={id => {
+              setPendingInvites(arr => arr.filter(i => i.id !== id))
+              setToast('Convite aceito! Você agora faz parte da equipe.')
+            }}
+            onRejected={id => {
+              setPendingInvites(arr => arr.filter(i => i.id !== id))
+              setToast('Convite recusado.')
+            }}
+          />
+        )}
+
         <AccountCard
           data={account}
           userId={userId}
           onSaved={updated => {
             setAccount(updated)
             setMembers(arr => arr.map(m => m.self
-              ? { ...m, name: updated.name, avatar: updated.initials || getInitials(updated.name), color: updated.avatarColor }
+              ? { ...m, name: updated.name, avatar: updated.initials || getInitials(updated.name, updated.email), color: updated.avatarColor }
               : m
             ))
             setToast('Dados da conta atualizados.')
