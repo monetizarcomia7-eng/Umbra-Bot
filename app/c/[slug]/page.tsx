@@ -93,6 +93,14 @@ export default async function PublicCheckoutPage({
 
   if (!checkout) notFound()
 
+  // Busca nome do vendedor para o aviso legal do rodapé
+  const { data: profile } = await admin
+    .from('profiles')
+    .select('name')
+    .eq('id', checkout.user_id)
+    .maybeSingle()
+  const sellerName = profile?.name || 'o vendedor'
+
   // Busca pixels configurados pelo dono do checkout (pixel_id e pixel_code são públicos)
   // access_token NUNCA exposto — não está no select
   const { data: rawPixels } = await admin
@@ -119,6 +127,7 @@ export default async function PublicCheckoutPage({
       utmMedium={utm_medium}
       utmCampaign={utm_campaign}
       appUrl={appUrl}
+      sellerName={sellerName}
     />
   )
 }

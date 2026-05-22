@@ -22,6 +22,7 @@ interface CheckoutPageClientProps {
   utmMedium?:   string
   utmCampaign?: string
   appUrl:       string
+  sellerName?:  string
 }
 
 interface FieldDef {
@@ -104,7 +105,7 @@ function fmtCountdown(sec: number): string {
 /* ─── Component ──────────────────────────────────────────── */
 
 export default function CheckoutPageClient({
-  checkout, pixels = [], utmSource, utmMedium, utmCampaign, appUrl,
+  checkout, pixels = [], utmSource, utmMedium, utmCampaign, appUrl, sellerName = 'o vendedor',
 }: CheckoutPageClientProps) {
   const c       = checkout
   const isDark  = c.bg_variant === 'dark'
@@ -761,6 +762,37 @@ export default function CheckoutPageClient({
                     <p className="text-[11px] text-center mt-2.5" style={{ color: palette.subtle }}>
                       🔒 Compra 100% segura · SSL · dados criptografados
                     </p>
+
+                    {/* Aviso legal */}
+                    <div className="mt-4 space-y-2 text-[10.5px] leading-relaxed" style={{ color: palette.subtle }}>
+                      <p className="text-center">
+                        Ao clicar em &apos;Pagar {fmtBRL(effectivePrice)}&apos;, eu declaro que (i) estou ciente que a{' '}
+                        <strong>Umbra Bot</strong> está processando essa compra em nome de{' '}
+                        <strong>{sellerName}</strong> e que não possui responsabilidade pelo conteúdo,
+                        oferta, e nem faz controle prévio do infoproduto; (ii) que li e concordo com os{' '}
+                        <a href="https://umbra.bot/termos-de-compra" target="_blank" rel="noopener noreferrer"
+                           className="underline hover:opacity-80">Termos de Compra</a>,{' '}
+                        <a href="https://umbra.bot/termos-de-uso" target="_blank" rel="noopener noreferrer"
+                           className="underline hover:opacity-80">Termos de Uso</a> e{' '}
+                        <a href="https://umbra.bot/privacidade" target="_blank" rel="noopener noreferrer"
+                           className="underline hover:opacity-80">Política de Privacidade</a>.
+                      </p>
+                      <p className="text-center">
+                        <a href={`mailto:contato@umbra.bot?subject=Denúncia de produto: ${encodeURIComponent(c.product_name || c.name)}`}
+                           className="underline hover:opacity-80">
+                          Denunciar esse produto
+                        </a>
+                        {c.installments > 1 && <span> · *Parcelamento com acréscimo</span>}
+                      </p>
+                      <p className="text-center">
+                        Este site está protegido pelo Google reCAPTCHA.{' '}
+                        <a href="https://policies.google.com/privacy" target="_blank" rel="noopener noreferrer"
+                           className="underline hover:opacity-80">Política de Privacidade</a>{' '}
+                        e{' '}
+                        <a href="https://policies.google.com/terms" target="_blank" rel="noopener noreferrer"
+                           className="underline hover:opacity-80">Termos de Serviço</a>.
+                      </p>
+                    </div>
                   </>
                 )}
               </>
