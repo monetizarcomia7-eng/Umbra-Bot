@@ -766,6 +766,23 @@ const INTEGRATION_PLATFORMS = [
       'Ative o workflow e clique em "Testar" para confirmar o recebimento',
     ],
   },
+  {
+    id: 'manychat',
+    name: 'ManyChat',
+    tagline: 'Automação para Telegram e Instagram',
+    description: 'Dispare fluxos no ManyChat a partir de eventos do Umbra Bot usando o gatilho "Webhook" (plano Pro+).',
+    color: '#0084FF',
+    bg: 'rgba(0,132,255,0.10)',
+    url: 'https://manychat.com',
+    label: 'MC',
+    steps: [
+      'Acesse manychat.com e vá em "Automation" → "Flows"',
+      'Crie um novo Flow e adicione o gatilho "Webhook" (requer plano Pro ou superior)',
+      'Copie a URL do webhook gerada pelo ManyChat',
+      'No Umbra Bot, crie um webhook e cole essa URL no campo "URL do endpoint"',
+      'Clique em "Testar" para enviar um evento e confirmar que o fluxo foi acionado',
+    ],
+  },
 ] as const
 
 function IntegrationsSection() {
@@ -779,7 +796,7 @@ function IntegrationsSection() {
           Conecte o Umbra Bot com plataformas de automação para disparar ações em qualquer app.
         </div>
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
         {INTEGRATION_PLATFORMS.map((p) => {
           const isOpen = openGuide === p.id
           return (
