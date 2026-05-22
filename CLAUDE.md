@@ -300,7 +300,13 @@ umbra-bot/
 │       │                           # KPI cards (ativos/entregas 24h/taxa sucesso/com falhas), toggle ativo/pausado,
 │       │                           # testWebhookAction real HTTP + HMAC, resendDeliveryAction, secret show/hide/copy,
 │       │                           # SSRF protection, secret criptografado AES-256-GCM, 7 eventos PostHog
-│       ├── profile/              # Perfil + avatar upload (funcional + analytics)
+│       ├── profile/              # Perfil + avatar upload + 2FA + equipe com convites in-app
+│       │   ├── page.tsx          # SSR: profiles + team_members + MFA factors + get_pending_invites_for_user
+│       │   └── ProfileClient.tsx # getInitials: fallback para local-part do e-mail quando nome vazio
+│       │                         # Papéis: owner/admin/editor/analista (labels OK; controle de acesso pendente)
+│       │                         # InviteModal → RPC invite_team_member (cria alerta in-app para o convidado)
+│       │                         # PendingInvitesCard: convites recebidos com Aceitar/Recusar no topo
+│       │                         # Migrações 092 (avatar_initials + team_members user_id FK) e 093 (4 RPCs)
 │       ├── notifications/        # Notificações — Server Component SSR + Client Component
 │       │   ├── page.tsx          # Server Component: SSR prefs + firstBot em paralelo; passa userId + userEmail
 │       │   └── NotificationsClient.tsx # Client Component: salva via upsert ON CONFLICT user_id;
@@ -477,6 +483,16 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Middleware (auth guard + security headers + CSP) | ✅ Funcional |
 | Callback OAuth + evento user_registered | ✅ Funcional |
 | Upload de avatar + evento avatar_updated | ✅ Funcional (Supabase Storage) |
+| Perfil — aba conectada ao Supabase (SSR real, sem mock) | ✅ Funcional |
+| Perfil — 2FA real via Supabase MFA (TOTP + QR code + factor enroll/verify/unenroll) | ✅ Funcional |
+| Perfil — getInitials com fallback para local-part do e-mail (corrige avatar "?") | ✅ Corrigido |
+| Perfil — convites de equipe in-app: InviteModal → RPC invite_team_member → alerta no convidado | ✅ Implementado |
+| Perfil — PendingInvitesCard: convites recebidos exibidos no topo do perfil (Aceitar/Recusar) | ✅ Implementado |
+| Perfil — accept_team_invite: status='active' + resolve alerta automaticamente | ✅ Implementado |
+| Perfil — reject_team_invite: DELETE + resolve alerta | ✅ Implementado |
+| Perfil — papéis: owner/admin/editor/analista (labels e descrições OK; controle de acesso pendente) | ⏳ Parcial |
+| Perfil — migração 092: avatar_initials em profiles + user_id FK em team_members | ✅ Criada (aplicar no Supabase) |
+| Perfil — migração 093: CHECK alerts.type + 4 RPCs SECURITY DEFINER para convites | ✅ Criada (aplicar no Supabase) |
 | Onboarding wizard (4 passos, aparece só 1x por usuário) | ✅ Funcional |
 | Dashboard KPIs reais (receita, vendas, bots ativos) | ✅ Funcional |
 | Dashboard KPI deltas (variação % vs período anterior) | ✅ Funcional |
@@ -4326,3 +4342,124 @@ await admin.from('transactions').insert({
 | `checkout_published` | ao publicar checkout | `{}` |
 | `checkout_deleted` | ao confirmar exclusão | `{}` |
 | `checkout_duplicated` | ao duplicar checkout | `{}` |
+
+---
+
+## 27. MÓDULO DE PERFIL
+
+### Arquivos
+
+```
+app/dashboard/profile/
+  ├── page.tsx          # Server Component — busca profiles + team_members + MFA factors +
+  │                     # get_pending_invites_for_user em Promise.all
+  └── ProfileClient.tsx # Client Component — todas as abas do perfil
+```
+
+### Fluxo de dados
+
+```
+ProfilePage (Server Component)
+  ├── Promise.all em paralelo:
+  │     ├── profiles: name, phone, avatar_url, avatar_color, avatar_initials,
+  │     │             timezone, language, workspace, two_fa_enabled, two_fa_enabled_at, created_at
+  │     ├── team_members: id, name, email, avatar, color, role, status, last_seen, joined_at, self, user_id
+  │     │   .eq('user_id', user.id) — membros do workspace do usuário logado
+  │     ├── supabase.auth.mfa.listFactors()  — fatores TOTP para 2FA
+  │     └── RPC get_pending_invites_for_user(p_email) — convites recebidos pelo e-mail do usuário
+  └── passa como props:
+        initialProfile: RawProfile | null
+        initialMembers: RawMember[]
+        initialPendingInvites: RawPendingInvite[]
+        userId: string
+        userEmail: string
+        hasMfa: boolean
+        mfaFactorId: string | null
+```
+
+### getInitials — fallback para e-mail
+
+```typescript
+function getInitials(name: string, email?: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean)
+  if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
+  // Nome vazio — usa os 2 primeiros chars do local-part do e-mail
+  if (email) {
+    const local = email.split('@')[0].replace(/[^a-zA-Z0-9]/g, '')
+    if (local.length >= 2) return local.slice(0, 2).toUpperCase()
+    if (local.length === 1) return local.toUpperCase()
+  }
+  return '?'
+}
+// Exemplo: getInitials('', 'monetizarcomia7@gmail.com') → 'MO'
+// Usado em: profileToAccount, mapMember, ownerMember, onSaved, InviteModal
+```
+
+### Papéis de equipe
+
+| Papel | Label | Descrição | Controle de acesso |
+|---|---|---|---|
+| `owner` | Proprietário | Acesso total | ✅ Implementado (dono do workspace) |
+| `admin` | Administrador | Pode gerenciar bots, fluxos, finanças e equipe | ⏳ Pendente |
+| `editor` | Editor | Pode editar fluxos e disparos. Sem acesso a finanças | ⏳ Pendente |
+| `analyst` | Analista | Acesso somente leitura — análises e relatórios | ⏳ Pendente |
+
+> **Nota:** Os papéis têm labels e descrições na UI mas o controle de acesso real (permitir que membros acessem o workspace do dono) não está implementado. Membros aceitam o convite → aparecem na lista → mas acessam apenas o próprio workspace. Implementação futura requer: RLS multi-tenant + contexto de workspace no dashboard + filtro de rotas por papel.
+
+### Convites de equipe in-app (migração 093)
+
+```
+Fluxo completo:
+  1. Dono abre InviteModal → preenche e-mail + papel → clica Convidar
+  2. supabase.rpc('invite_team_member', { p_owner_id, p_id, p_name, p_email, p_avatar,
+                                          p_color, p_role, p_joined_at })
+     ├── INSERT em team_members (status='invited')
+     └── Se o convidado tem conta (auth.users lookup por e-mail):
+           INSERT em alerts (type='team_invite', user_id=invitee_id,
+                             source='team_invite:{invite_id}')
+  3. Convidado entra no Perfil → vê PendingInvitesCard no topo (via get_pending_invites_for_user)
+  4. Clica "Aceitar":
+     supabase.rpc('accept_team_invite', { p_invite_id, p_user_id })
+     ├── UPDATE team_members SET status='active', last_seen=now()
+     └── UPDATE alerts SET resolved=true, resolved_by='aceito pelo convidado'
+  5. Clica "Recusar":
+     supabase.rpc('reject_team_invite', { p_invite_id, p_user_id })
+     ├── DELETE FROM team_members WHERE id=invite_id
+     └── UPDATE alerts SET resolved=true, resolved_by='recusado pelo convidado'
+```
+
+### RPCs de convite (migração 093)
+
+Todas `SECURITY DEFINER`, `search_path = public`, `grant to authenticated`:
+
+| RPC | Descrição |
+|---|---|
+| `invite_team_member(p_owner_id, p_id, p_name, p_email, p_avatar, p_color, p_role, p_joined_at)` | Insere convite + cria alerta in-app para o convidado se ele tiver conta |
+| `get_pending_invites_for_user(p_email)` | Retorna convites `status='invited'` onde `lower(email) = lower(p_email)` + dados do dono |
+| `accept_team_invite(p_invite_id, p_user_id)` | Ativa convite + resolve alerta |
+| `reject_team_invite(p_invite_id, p_user_id)` | Remove convite + resolve alerta |
+
+### PendingInvitesCard
+
+Renderizado no topo do ProfileClient quando `pendingInvites.length > 0`. Exibe:
+- Avatar do dono (cor + iniciais)
+- Nome do dono e workspace
+- Papel oferecido (badge colorido)
+- Data do convite
+- Botões **Aceitar** / **Recusar** (cada um chama a RPC correspondente e remove da lista local)
+
+### AlertsClient — tipos estendidos
+
+`'webhookFailed'` e `'team_invite'` adicionados ao `AlertType` union e ao `ALERT_TYPES` map:
+- `webhookFailed`: ação navega para `/dashboard/webhooks`
+- `team_invite`: ação navega para `/dashboard/profile`
+
+### Migrações do módulo
+
+| Migração | O que fez |
+|---|---|
+| 092 | Adicionou `avatar_initials text` em `profiles`; adicionou `user_id uuid FK → auth.users(id)` em `team_members` + RLS `team_members_owner` (`auth.uid() = user_id`) |
+| 093 | Estendeu CHECK `alerts.type` para incluir `'webhookFailed'` e `'team_invite'`; criou 4 RPCs SECURITY DEFINER: `invite_team_member`, `get_pending_invites_for_user`, `accept_team_invite`, `reject_team_invite` |
+
+> ⚠️ **Migrações 092 e 093 precisam ser aplicadas no Supabase SQL Editor para ativar o sistema em produção.**

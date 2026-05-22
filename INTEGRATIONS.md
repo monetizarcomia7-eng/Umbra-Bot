@@ -932,8 +932,8 @@ Total de migrações: **91 arquivos** (numeradas de 000 a 090, mais arquivos de 
 | `biolinks` | Páginas de bio link públicas (múltiplos por usuário, slug único, status published/draft) |
 | `biolink_view_events` | Eventos de visita ao bio link (ip_hash, device_type, referrer) |
 | `biolink_click_events` | Eventos de clique em links do bio link (link_id, link_url, ip_hash, device_type) |
-| `webhooks` | Webhooks de saída (mock — tabela criada, sem UI funcional) |
-| `team_members` | Membros de equipe (mock — tabela criada, sem UI funcional) |
+| `webhooks` | Webhooks de saída (funcional — CRUD real + delivery log + retry + HMAC) |
+| `team_members` | Membros de equipe (funcional — convites in-app via RPCs SECURITY DEFINER; controle de acesso por papel pendente) |
 | `guide_articles` | Artigos de guia (busca global — sem CRUD) |
 | `courses` | Cursos (busca global — sem CRUD) |
 | `audit_log` | Log de auditoria (tabela criada, uso limitado) |

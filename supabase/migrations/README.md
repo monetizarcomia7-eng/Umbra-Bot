@@ -644,6 +644,7 @@ email:             text        NOT NULL  default ''
 phone:             text        NOT NULL  default ''
 avatar_url:        text        NOT NULL  default ''
 avatar_color:      text        NOT NULL  default '#7c3aed'
+avatar_initials:   text        NOT NULL  default ''  [migração 092]
 timezone:          text        NOT NULL  default 'America/Sao_Paulo (GMT-03)'
 language:          text        NOT NULL  default 'Português (Brasil)'
 workspace:         text        NOT NULL  default ''
@@ -654,6 +655,8 @@ created_at:        timestamptz NOT NULL  default now()
 updated_at:        timestamptz NOT NULL  default now()
 balance:           numeric     NOT NULL  default 0
 ```
+
+Coluna `avatar_initials` (migração 092): iniciais salvas ao atualizar o perfil; usadas como fallback quando `avatar_url` está vazio. Calculadas por `getInitials(name, email)` — quando `name` está vazio, deriva do local-part do e-mail (ex: `monetizarcomia7@...` → `MO`).
 
 ---
 
@@ -754,18 +757,44 @@ created_at:   timestamptz NOT NULL  default now()
 
 ```
 id:         text        NOT NULL  default gen_random_uuid()::text
+user_id:    uuid        NOT NULL  FK → auth.users(id)  ON DELETE CASCADE  [migração 092]
 name:       text        NOT NULL  default ''
 email:      text        NOT NULL
 avatar:     text        NOT NULL  default ''
 color:      text        NOT NULL  default '#7c3aed'
-role:       text        NOT NULL  default 'editor'
-status:     text        NOT NULL  default 'invited'
+role:       text        NOT NULL  default 'editor'   check in ('owner','admin','editor','analyst')
+status:     text        NOT NULL  default 'invited'  check in ('invited','active','removed')
 last_seen:  bigint
 joined_at:  bigint      NOT NULL  default EXTRACT(epoch FROM now())::bigint * 1000
 self:       boolean     NOT NULL  default false
 created_at: timestamptz NOT NULL  default now()
 updated_at: timestamptz NOT NULL  default now()
 ```
+
+RLS (migração 092): `team_members_owner` → `auth.uid() = user_id` (for all) — cada usuário vê/gerencia apenas os membros do próprio workspace.
+
+**Convites in-app (migração 093):** a inserção de convites é feita exclusivamente via RPC `invite_team_member` (SECURITY DEFINER) para que o alerta in-app possa ser criado para o convidado sem violar RLS. Aceitar/recusar também usam RPCs SECURITY DEFINER.
+
+**RPCs do módulo (migração 093)** — todas `security definer`, `grant to authenticated`:
+
+`invite_team_member(p_owner_id, p_id, p_name, p_email, p_avatar, p_color, p_role, p_joined_at bigint)` → `json`
+- Verifica `auth.uid() = p_owner_id`
+- INSERT em `team_members` (status='invited')
+- Lookup `auth.users` por e-mail: se o convidado tem conta, INSERT em `alerts` (type='team_invite', source='team_invite:{id}')
+- Retorna `{ ok: true, invite_id }` ou `{ ok: false, error }`
+
+`get_pending_invites_for_user(p_email text)` → `json`
+- Retorna JSON array de convites `status='invited'` onde `lower(email) = lower(p_email)`
+- Inclui dados do dono: `owner_name`, `owner_color`, `owner_initials`, `owner_workspace`
+
+`accept_team_invite(p_invite_id text, p_user_id uuid)` → `json`
+- Valida que o convite pertence ao e-mail do `p_user_id`
+- UPDATE `team_members` SET `status='active'`, `last_seen=now()`
+- Resolve o alerta correspondente (`source = 'team_invite:{invite_id}'`)
+
+`reject_team_invite(p_invite_id text, p_user_id uuid)` → `json`
+- Valida e-mail + DELETE em `team_members`
+- Resolve o alerta correspondente
 
 ---
 
@@ -926,6 +955,7 @@ auth.users
   ├── checkouts          (user_id)
   │     └── checkout_coupons (user_id)  checkout_id → checkouts(id)  [mig 086]
   ├── pixels             (user_id)
+  ├── team_members       (user_id)  [mig 092 — user_id FK + RLS owner]
   └── webhooks           (user_id)
         └── webhook_deliveries (webhook_id)  [mig 091]
 ```

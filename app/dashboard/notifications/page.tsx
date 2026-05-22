@@ -1,13 +1,13 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
-import { NotificationsClient, type RawNotifPrefs } from './NotificationsClient'
+import { NotificationsClient, type RawNotifPrefs, type RawBotOption } from './NotificationsClient'
 
 export default async function NotificationsPage() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
 
-  const [prefsRes, botRes] = await Promise.all([
+  const [prefsRes, botsRes] = await Promise.all([
     supabase
       .from('notification_prefs')
       .select('prefs, channel_state, quiet')
@@ -15,23 +15,24 @@ export default async function NotificationsPage() {
       .maybeSingle(),
     supabase
       .from('bots')
-      .select('name, username')
+      .select('id, name, username')
       .eq('user_id', user.id)
       .not('token', 'is', null)
-      .limit(1)
-      .maybeSingle(),
+      .order('added_at', { ascending: false }),
   ])
 
-  const firstBot = botRes.data
-    ? { name: botRes.data.name as string, username: (botRes.data.username as string | null) }
-    : null
+  const bots: RawBotOption[] = (botsRes.data ?? []).map(b => ({
+    id:       b.id as string,
+    name:     b.name as string,
+    username: (b.username as string | null) ?? null,
+  }))
 
   return (
     <NotificationsClient
       userId={user.id}
       userEmail={user.email ?? ''}
       initialPrefs={(prefsRes.data ?? null) as RawNotifPrefs | null}
-      firstBot={firstBot}
+      bots={bots}
     />
   )
 }

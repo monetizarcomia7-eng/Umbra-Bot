@@ -2,6 +2,7 @@ import { randomBytes, createHmac } from 'crypto'
 import * as Sentry from '@sentry/nextjs'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { decryptToken } from '@/lib/crypto'
+import { notifyOwnerTelegram } from '@/lib/notifications'
 
 /* ── Types ─────────────────────────────────────────────────────────────────── */
 
@@ -187,6 +188,12 @@ async function _createFailureAlert(
       context:  { webhook_id: webhook.id, url: webhook.url },
       source:   'webhook',
     })
+    // Notificação Telegram para o operador (fire-and-forget)
+    notifyOwnerTelegram(
+      userId,
+      'webhook_fail',
+      `🔴 <b>Webhook falhando!</b>\n\nEndpoint: <b>${webhook.name}</b>\nFalhou em todas as ${MAX_ATTEMPTS} tentativas para o evento <code>${eventType}</code>.\n\nVerifique se o servidor está online.`,
+    )
   } catch { /* ignore */ }
 }
 

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { decryptToken } from '@/lib/crypto'
+import { notifyOwnerTelegram } from '@/lib/notifications'
 import * as Sentry from '@sentry/nextjs'
 
 // GET /api/cron/check-bots
@@ -86,6 +87,12 @@ export async function GET(request: Request) {
             source:      'cron',
           }),
         ])
+        // Notificação Telegram para o operador (fire-and-forget)
+        notifyOwnerTelegram(
+          bot.user_id as string,
+          'bot_down',
+          `⚠️ <b>Bot desconectado!</b>\n\n${displayName} perdeu conexão com a API do Telegram.\n\nAcesse o painel para reconectar.`,
+        )
         disconnected++
       } else if (isOk && lastType === 'disconnect') {
         await Promise.all([

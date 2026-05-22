@@ -518,6 +518,52 @@ export async function POST(request: NextRequest) {
     return new NextResponse(null, { status: 200 })
   }
 
+  // ── Telegram notification channel verification code ─────────────────────────
+  if (/^\d{6}$/.test(text.trim())) {
+    const { data: prefsRow } = await supabase
+      .from('notification_prefs')
+      .select('user_id, channel_state')
+      .filter('channel_state->telegram->>bot_id',     'eq', bot.id)
+      .filter('channel_state->telegram->>verify_code', 'eq', text.trim())
+      .maybeSingle()
+
+    if (prefsRow) {
+      const rawTg  = (prefsRow.channel_state as Record<string, unknown>)?.telegram as Record<string, unknown>
+      const expires = Number(rawTg?.verify_expires ?? 0)
+
+      if (expires > Date.now()) {
+        const newState = {
+          ...(prefsRow.channel_state as Record<string, unknown>),
+          telegram: {
+            ...rawTg,
+            linked:         true,
+            owner_chat_id:  String(chatId),
+            verify_code:    null,
+            verify_expires: null,
+          },
+        }
+        await supabase
+          .from('notification_prefs')
+          .update({ channel_state: newState, updated_at: new Date().toISOString() })
+          .eq('user_id', prefsRow.user_id)
+
+        await sendTelegramMessage(
+          plainToken,
+          chatId,
+          '✅ <b>Canal Telegram vinculado com sucesso!</b>\n\nVocê receberá notificações do Umbra Bot diretamente aqui.',
+        ).catch(() => {})
+      } else {
+        await sendTelegramMessage(
+          plainToken,
+          chatId,
+          '❌ Código expirado. Gere um novo código nas configurações de Notificações.',
+        ).catch(() => {})
+      }
+
+      return new NextResponse(null, { status: 200 })
+    }
+  }
+
   // ── Continue active flow (answer to a question node) ─────────────────────────
   if (!text.startsWith('/') && contactState.flow_node_id && contactState.flow_id) {
     const flow = await loadFlow(contactState.flow_id, supabase)

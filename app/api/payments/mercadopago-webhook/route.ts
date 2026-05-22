@@ -6,6 +6,7 @@ import { decryptToken } from '@/lib/crypto'
 import { sendTelegramMessage } from '@/lib/telegram'
 import { fireCapiPurchase } from '@/lib/capi'
 import { dispatchWebhookEvent } from '@/lib/webhooks'
+import { notifyOwnerTelegram } from '@/lib/notifications'
 
 // Verifies Mercado Pago webhook signature.
 // MP sends: x-signature: ts=<ts>,v1=<hmac>
@@ -180,7 +181,14 @@ export async function POST(request: NextRequest) {
       if (error) Sentry.captureException(error, { extra: { txId: tx.id, context: 'mp_webhook_alert' } })
     })
 
-    // 6. Dispara evento de webhook para integrações externas (fire-and-forget)
+    // 6. Notificação Telegram para o operador (fire-and-forget)
+    notifyOwnerTelegram(
+      tx.user_id,
+      'sale_approved',
+      `🛒 <b>Nova venda aprovada!</b>\n\nProduto: <b>${tx.product_name}</b>\nCliente: ${tx.customer_name ?? 'Desconhecido'}\nValor: <b>${amountFmt}</b>`,
+    )
+
+    // 7. Dispara evento de webhook para integrações externas (fire-and-forget)
     dispatchWebhookEvent(tx.user_id, 'sale.approved', {
       transaction_id: tx.id,
       product_name:   tx.product_name,

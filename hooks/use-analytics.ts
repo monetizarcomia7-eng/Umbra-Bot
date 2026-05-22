@@ -111,6 +111,11 @@ type EventMap = {
   upsell_rejected:           { checkout_id: string }
   two_step_phase_advanced:   { checkout_id: string }
   checkout_link_copied:      { slug: string }
+  // Aba Notificações
+  notifications_saved:              { channels_enabled: number; telegram_linked: boolean }
+  notifications_channel_toggled:    { channel: string; linked: boolean }
+  notifications_quiet_hours_set:    Record<string, never>
+  notifications_reset_to_default:   Record<string, never>
   // Aba Ferramentas
   tool_opened:               { tool_id: string }
   test_message_sent:         { bot_id: string; success: boolean; time_ms: number; format: string }
