@@ -146,7 +146,8 @@ function Header({ theme, toggleTheme, mounted }: {
           <a
             href="#precos"
             onClick={(e) => { e.preventDefault(); document.getElementById('precos')?.scrollIntoView({ behavior: 'smooth' }) }}
-            className="inline-flex h-9 px-3.5 items-center rounded-md text-[13px] font-semibold bg-accent text-accent-fg hover:bg-accent-hover focus-ring whitespace-nowrap"
+            className="inline-flex h-9 px-3.5 items-center rounded-md text-[13px] font-semibold focus-ring whitespace-nowrap transition-opacity hover:opacity-90"
+            style={{ background: 'var(--accent)', color: 'var(--accent-fg)' }}
           >
             Criar conta
           </a>
@@ -188,21 +189,40 @@ function ChatBubble({ side, children, accent, success }: {
   success?: boolean
 }) {
   const isRight = side === 'right'
+
+  if (isRight && success) {
+    return (
+      <div className="flex justify-end">
+        <div className="max-w-[80%] rounded-2xl rounded-br-sm px-3 py-2 leading-snug border"
+          style={{ background: 'color-mix(in oklab, var(--success) 15%, transparent)', color: 'var(--success)', borderColor: 'color-mix(in oklab, var(--success) 30%, transparent)' }}>
+          {children}
+        </div>
+      </div>
+    )
+  }
+  if (isRight) {
+    return (
+      <div className="flex justify-end">
+        <div className="max-w-[80%] rounded-2xl rounded-br-sm px-3 py-2 leading-snug"
+          style={{ background: 'var(--accent)', color: 'var(--accent-fg)' }}>
+          {children}
+        </div>
+      </div>
+    )
+  }
+  if (accent) {
+    return (
+      <div className="flex justify-start">
+        <div className="max-w-[80%] rounded-2xl rounded-bl-sm px-3 py-2 leading-snug"
+          style={{ background: 'var(--accent)', color: 'var(--accent-fg)' }}>
+          {children}
+        </div>
+      </div>
+    )
+  }
   return (
-    <div className={`flex ${isRight ? 'justify-end' : 'justify-start'}`}>
-      <div className={[
-        'max-w-[80%] rounded-2xl px-3 py-2 leading-snug',
-        isRight && success ? 'border' : '',
-        isRight && success ? 'rounded-br-sm' : '',
-        isRight && !success ? 'bg-accent text-accent-fg rounded-br-sm' : '',
-        !isRight && accent ? 'bg-accent text-accent-fg rounded-bl-sm' : '',
-        !isRight && !accent ? 'bg-surface-2 text-text rounded-bl-sm border border-border' : '',
-      ].filter(Boolean).join(' ')}
-      style={isRight && success ? {
-        background: 'color-mix(in oklab, var(--success) 15%, transparent)',
-        color: 'var(--success)',
-        borderColor: 'color-mix(in oklab, var(--success) 30%, transparent)',
-      } : undefined}>
+    <div className="flex justify-start">
+      <div className="max-w-[80%] rounded-2xl rounded-bl-sm px-3 py-2 leading-snug border border-border bg-surface-2 text-text">
         {children}
       </div>
     </div>
@@ -217,43 +237,32 @@ const SALE_NOTIFS = [
 ]
 
 function SaleNotificationCard() {
-  const [idx, setIdx] = useState(0)
-  const [show, setShow] = useState(true)
-  useEffect(() => {
-    let fadeTimer: ReturnType<typeof setTimeout>
-    const cycleTimer = setInterval(() => {
-      setShow(false)
-      fadeTimer = setTimeout(() => {
-        setIdx((i) => (i + 1) % SALE_NOTIFS.length)
-        setShow(true)
-      }, 400)
-    }, 2600)
-    return () => { clearInterval(cycleTimer); clearTimeout(fadeTimer) }
-  }, [])
-  const n = SALE_NOTIFS[idx]
   return (
-    <div
-      className="absolute -left-3 sm:-left-14 top-1/4 bg-surface border border-border rounded-xl p-3 hidden sm:block"
-      style={{
-        boxShadow: '0 20px 40px -10px rgba(0,0,0,0.4)',
-        minWidth: 194,
-        transition: 'opacity 0.4s ease, transform 0.4s ease',
-        opacity: show ? 1 : 0,
-        transform: show ? 'translateY(0)' : 'translateY(6px)',
-      }}
-    >
-      <div className="flex items-center gap-2.5">
-        <span
-          className="w-7 h-7 rounded-md flex items-center justify-center shrink-0"
-          style={{ background: 'color-mix(in oklab, var(--success) 15%, transparent)', color: 'var(--success)' }}
+    <div className="absolute -left-3 sm:-left-14 top-[4%] hidden sm:flex flex-col gap-2">
+      {SALE_NOTIFS.map((n, i) => (
+        <div
+          key={i}
+          className="bg-surface border border-border rounded-xl p-3"
+          style={{
+            boxShadow: '0 8px 24px -8px rgba(0,0,0,0.35)',
+            minWidth: 200,
+            animation: `revealUp 0.5s ${0.15 + i * 0.18}s both`,
+          }}
         >
-          <CheckCircle2 size={13} />
-        </span>
-        <div>
-          <div className="text-[10px] uppercase tracking-wider font-semibold text-text-subtle">Venda aprovada · {n.buyer}</div>
-          <div className="text-[15px] font-bold tnum text-text">{n.amount}</div>
+          <div className="flex items-center gap-2.5">
+            <span
+              className="w-7 h-7 rounded-md flex items-center justify-center shrink-0"
+              style={{ background: 'color-mix(in oklab, var(--success) 15%, transparent)', color: 'var(--success)' }}
+            >
+              <CheckCircle2 size={13} />
+            </span>
+            <div>
+              <div className="text-[10px] uppercase tracking-wider font-semibold text-text-subtle">Venda aprovada · {n.buyer}</div>
+              <div className="text-[15px] font-bold tnum text-text">{n.amount}</div>
+            </div>
+          </div>
         </div>
-      </div>
+      ))}
     </div>
   )
 }
