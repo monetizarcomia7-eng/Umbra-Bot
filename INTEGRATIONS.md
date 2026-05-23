@@ -123,7 +123,7 @@ Todos os canais usam `postgres_changes` (eventos de banco) ou `presence` (rastre
 | Canal | Evento | Tabela | Consumidor | Função |
 |---|---|---|---|---|
 | `bots-realtime` | `UPDATE` | `bots` | `BotsClient.tsx` | Atualiza status de bots em tempo real (disconnect/reconnect via cron check-bots) |
-| `activity-feed` | `INSERT` | `activity_events` | `ActivityClient.tsx` | Prepend de novos eventos no feed ao vivo |
+| `activity-feed` | `INSERT` | `activity_events` | `ActivityClient.tsx` | Prepend de novos eventos no feed ao vivo; incrementa `unreadCount`; agrupamento 30 min aplicado pós-prepend |
 | `customers-realtime` | `INSERT` + `UPDATE` | `contacts` | `CustomersClient.tsx` | Novos leads e atualizações de perfil em tempo real |
 | `flows-realtime` | `INSERT` + `UPDATE` + `DELETE` | `flows` | `FlowsClient.tsx` | Sincroniza listagem de fluxos entre abas |
 | `broadcasts-realtime` | `INSERT` + `UPDATE` | `broadcasts` | `BroadcastsClient.tsx` | Progresso de envio, status, novos disparos (stale-draft guard incluso) |

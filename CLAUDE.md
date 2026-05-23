@@ -1766,7 +1766,8 @@ Variáveis adicionais documentadas (além do básico):
 ```
 app/dashboard/activity/
   ├── page.tsx            # Server Component — busca initialEvents (25 rows) + bots em paralelo
-  └── ActivityClient.tsx  # Client Component — feed Realtime, filtros, paginação, export, NoDataState
+  └── ActivityClient.tsx  # Client Component — feed Realtime, filtros, paginação, agrupamento,
+  │                         # EventDetailPanel, SummarySidebar, seleção múltipla, export, NoDataState
 ```
 
 ### Fluxo de dados
@@ -1790,12 +1791,31 @@ ActivityClient (Client Component)
   ├── search state: string — busca por título/descrição, persiste em localStorage
   ├── category state: 'all' | 'sales' | ... — persiste em localStorage
   ├── botId state: 'all' | uuid — persiste em localStorage
+  ├── selectedEvent state: ActivityEvent | null — null = sidebar summary; event = EventDetailPanel
+  ├── selectionMode state: boolean — alterna entre navegação e seleção múltipla
+  ├── selectedIds state: Set<string> — IDs dos eventos selecionados para export parcial
   ├── LS helper: thin wrapper sobre localStorage com guard de SSR (typeof window !== 'undefined')
   ├── botMap: Map<uuid, string> — resolve bot_id → '@username' | 'nome' em O(1)
   ├── topSentinelRef + IntersectionObserver:
   │     div invisível (h-px) acima do feed
   │     quando visível (usuário rolou ao topo) → setUnreadCount(0)
   ├── periodRef: useRef espelhando period — evita stale closure em loadMore
+  │
+  ├── type DisplayItem = ActivityEvent | ActivityEvent[]
+  ├── GROUP_WINDOW_MS = 30 * 60 * 1000  (janela de agrupamento de 30 min)
+  ├── groupDayEvents(events): DisplayItem[]
+  │     agrupa consecutivos com mesmo type + bot_id dentro de GROUP_WINDOW_MS
+  │     grupo com ≥ 2 eventos → ActivityEvent[] (renderizado por GroupedEventCard)
+  │     evento único → ActivityEvent (renderizado por EventCard normal)
+  │
+  ├── severityTones: Record<category, { bg, text }>
+  │     sales → bg-success/10, text-success
+  │     leads → bg-primary/10, text-primary
+  │     payments → bg-warning/10, text-warning
+  │     bots → bg-info/10, text-info
+  │     system → bg-danger/10, text-danger
+  │     Badge de severidade aplicado em cada EventCard e GroupedEventCard
+  │
   ├── Supabase Realtime:
   │     canal 'activity-feed', event INSERT, tabela activity_events
   │     payload tipado: (payload: { new: Record<string, unknown> })
@@ -1811,7 +1831,8 @@ ActivityClient (Client Component)
   │     handlePeriodChange / handleSearchChange salvam em localStorage antes de atualizar state
   │     onClear: limpa os 4 itens do localStorage + reseta states
   │     hasFilters: true se algum dos 4 não for o default
-  ├── getPeriodCutoff(period): retorna timestamp (ms) de cutoff ou null para 'all'
+  │     Dropdown de bots renderizado somente quando bots.length > 1
+  ├── getPeriodCutoff(period, now?): retorna timestamp (ms) de cutoff ou null para 'all'
   ├── filtered useMemo:
   │     filtra por category, botId, period (cutoff no created_at) e search (title/description)
   ├── Paginação "Carregar mais":
@@ -1827,11 +1848,26 @@ ActivityClient (Client Component)
   │     period, onPeriodChange, search, onSearchChange, unreadCount
   │     search input: X para limpar, ícone Search
   │     period Dropdown: '7d' / '30d' / '90d' / 'Tudo'
-  ├── Export CSV:
+  │     contador /h: eventsPerHour — tooltip "Eventos registrados na última hora" (cursor-help)
+  ├── Cabeçalho de dia:
+  │     exibe data + contagem de eventos do dia
+  │     dayRevenue > 0 → exibe receita acumulada do dia em verde (vendas + pagamentos)
+  ├── Seleção múltipla:
+  │     toggle selectionMode → cards exibem checkbox (Square / SquareCheck)
+  │     selectedIds: Set<string> — controla quais IDs estão marcados
+  │     export CSV do subconjunto selecionado (se selectedIds.size > 0) ou do total filtrado
   │     campos: Data | Tipo | Título | Descrição | Bot | Valor (R$)
   │     nome do arquivo: atividade_YYYY-MM-DD.csv
   │     track('csv_exported', { section: 'activity', rows })
-  ├── "Configurar alertas": router.push('/dashboard/alerts')
+  ├── EventDetailPanel (sidebar direita — ao clicar em qualquer card):
+  │     substitui SummarySidebar quando selectedEvent !== null
+  │     exibe: ícone categoria, tipo, título, descrição completa, bot, valor, timestamp absoluto
+  │     botão Fechar (X) → selectedEvent = null → restaura SummarySidebar
+  ├── SummarySidebar (sidebar direita — padrão quando selectedEvent === null):
+  │     aceita period prop → stats adaptados ao período via getPeriodCutoff
+  │     cards: distribuição por categoria, top bots por evento (card oculto quando sem bots)
+  │     linhas de severidade com contagem zero ocultadas automaticamente
+  │     rodapé: link "Configurar alertas" → /dashboard/alerts (Bell + ChevronRight icon)
   └── Links "Ver X": next/link → /dashboard/finance | /customers | /bots | /webhooks | etc.
 ```
 

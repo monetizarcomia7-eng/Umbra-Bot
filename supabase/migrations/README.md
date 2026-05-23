@@ -23,6 +23,13 @@ bot_id:      uuid        FK → bots(id)
 contact_id:  uuid        FK → contacts(id)
 ```
 
+**CHECK constraint (migração 098):** `type in ('sale','lead','payment','refund','reconnect','disconnect','limit','newBot','webhookFailed','flowPublished','cancellation','failure','courseCompleted')`
+
+**UI — ActivityClient (sem novas migrações):** badge de severidade por categoria; agrupamento 30 min (GroupedEventCard/DisplayItem); EventDetailPanel ao clicar; SummarySidebar adaptativa ao período; receita do dia no cabeçalho; seleção múltipla + export CSV parcial; contador /h com tooltip; filtro de bots condicional (oculto quando ≤ 1).
+
+**Realtime:** canal `activity-feed`, event INSERT, filtro `user_id=eq.${userId}`.  
+**TTL:** cron `cleanup-activity` (02:00 UTC) deleta eventos > 90 dias.
+
 ---
 
 ## public.affiliate_config
