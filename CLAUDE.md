@@ -4886,12 +4886,144 @@ export const viewport: Viewport = {
 | Features | inline | Grid de 16 funcionalidades em cards |
 | HowItWorks | inline | 3 passos animados |
 | Integrations | inline | Logos das integrações (Telegram, MP, Meta, etc.) |
-| Pricing | inline | Modelo único — R$0 de mensalidade, pay-as-you-sell |
+| Pricing | inline | R$ 1,00 fixo por transação — tabela "Veja na prática" com 4 exemplos |
 | FAQ | inline | 8 perguntas accordion |
 | FinalCTA | inline | Bloco de chamada final + formulário |
 | Footer | inline | Links legais + redes sociais |
 
 **Componente `UmbraLogo`:** renderiza o SVG canônico do símbolo "U" inline — não usa arquivo externo. Aceita `size`, `className` e `style` props.
+
+### Landing page — Scroll-reveal e barra de progresso de leitura
+
+#### `Reveal` — animação de entrada por scroll (IntersectionObserver)
+
+Componente wrapper reutilizável que anima qualquer elemento quando ele entra na viewport. Pode ser usado diretamente como item de grid/flex sem elemento extra no DOM.
+
+```tsx
+function Reveal({
+  children,
+  delay = 0,
+  className,
+  style,
+}: {
+  children: React.ReactNode
+  delay?: number
+  className?: string
+  style?: React.CSSProperties
+}) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [visible, setVisible] = useState(false)
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const obs = new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting) { setVisible(true); obs.disconnect() } },
+      { threshold: 0.12 }
+    )
+    obs.observe(el)
+    return () => obs.disconnect()
+  }, [])
+
+  return (
+    <div
+      ref={ref}
+      className={className}
+      style={{
+        opacity:    visible ? 1 : 0,
+        transform:  visible ? 'translateY(0)' : 'translateY(22px)',
+        transition: `opacity 0.55s ${delay}ms ease, transform 0.55s ${delay}ms ease`,
+        ...style,
+      }}
+    >
+      {children}
+    </div>
+  )
+}
+```
+
+**Seções com Reveal aplicado e delays usados:**
+
+| Seção | Elementos envolvidos | Delays (ms) |
+|---|---|---|
+| BeforeAfter | cabeçalho + tabela | 0 / 180 |
+| Features | cabeçalho + cada card | 0 / (i%4)×70 |
+| HowItWorks | cabeçalho + cada passo + CTA | 0 / i×100 / 300 |
+| Integrations | coluna esquerda + coluna direita | 0 / 150 |
+| Pricing | cabeçalho + card principal + card comparação | 0 / 150 / 250 |
+| FAQ | cabeçalho + lista de perguntas | 0 / 150 |
+| FinalCTA | logo+h2+p + botões+nota | 0 / 200 |
+
+**Regras de implementação:**
+- `threshold: 0.12` — 12% do elemento visível dispara a entrada
+- `obs.disconnect()` após a primeira entrada — anima apenas uma vez
+- Deltas de delay em múltiplos de 70–100 ms para cascata suave em grids
+- 15 pares `<Reveal>...</Reveal>` no total; todos balanceados
+
+#### `ScrollProgress` — barra de leitura fixa
+
+Elemento independente com `position: fixed` que cresce na largura conforme o usuário rola a página. **Não pode estar dentro do `<header>`** pois `position: relative` no header override `position: fixed`.
+
+```tsx
+function ScrollProgress() {
+  const [pct, setPct] = useState(0)
+  useEffect(() => {
+    function onScroll() {
+      const el = document.documentElement
+      const scrolled = el.scrollTop || document.body.scrollTop
+      const total = el.scrollHeight - el.clientHeight
+      setPct(total > 0 ? (scrolled / total) * 100 : 0)
+    }
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => window.removeEventListener('scroll', onScroll)
+  }, [])
+  return (
+    <div
+      aria-hidden
+      style={{
+        position:      'fixed',
+        top:           64,          // exatamente abaixo do header h-16
+        left:          0,
+        height:        2,
+        width:         `${pct}%`,
+        background:    'linear-gradient(90deg, var(--accent), color-mix(in oklab, var(--accent) 70%, #a78bfa))',
+        transition:    'width 0.08s linear',
+        pointerEvents: 'none',
+        zIndex:        51,          // acima do header (z-50)
+      }}
+    />
+  )
+}
+```
+
+**Posição no JSX:** imediatamente após `<Header .../>`, fora do elemento `<header>`:
+```tsx
+<Header theme={currentTheme} toggleTheme={toggleTheme} mounted={mounted} />
+<ScrollProgress />
+<main>
+```
+
+**Bug crítico evitado:** adicionar `relative` ao `<header>` para que um filho `absolute` funcionasse fez o `position: fixed` do header ser sobrescrito por `relative` → navbar desaparecia ao rolar. Solução: `ScrollProgress` usa `position: fixed` independente, e o header **não** tem classe `relative`.
+
+#### Pricing — modelo real (R$ 1,00 fixo por transação)
+
+A seção de preços foi reescrita com o modelo definitivo. **Não usar `[PREÇO/TAXA — PREENCHER]` ou qualquer placeholder de preço.**
+
+**Estrutura do card principal:**
+```
+Badges: "Sem mensalidade" | "Sem cartão de crédito" | "pay-as-you-sell"
+Preço:  R$ 1,00  — exibido com tipografia display (text-[100px] font-black)
+        "fixo por transação / independente do valor da venda"
+
+Tabela "Veja na prática":
+  Venda R$ 47,00  → paga R$ 1,00 → fica 97,9%
+  Venda R$ 97,00  → paga R$ 1,00 → fica 99,0%
+  Venda R$ 197,00 → paga R$ 1,00 → fica 99,5%
+  Venda R$ 997,00 → paga R$ 1,00 → fica 99,9%
+  "Quanto mais vende, mais você economiza em relação a qualquer percentual."
+```
+
+**FAQ atualizado:** a resposta "Vou pagar mensalidade?" agora diz explicitamente "R$ 1,00 fixo por venda, independente do valor que você cobrar" — sem placeholders.
 
 ### Landing page — Animação de conversa do Hero (commit `7bf16a3`)
 
