@@ -99,14 +99,15 @@ function ScrollProgress() {
     <div
       aria-hidden
       style={{
-        position: 'absolute',
-        bottom: 0,
+        position: 'fixed',
+        top: 64,
         left: 0,
         height: 2,
         width: `${pct}%`,
         background: 'linear-gradient(90deg, var(--accent), color-mix(in oklab, var(--accent) 70%, #a78bfa))',
         transition: 'width 0.08s linear',
         pointerEvents: 'none',
+        zIndex: 51,
       }}
     />
   )
@@ -137,10 +138,9 @@ function Header({ theme, toggleTheme, mounted }: {
 
   return (
     <header className={[
-      'fixed top-0 inset-x-0 z-50 transition-all relative',
+      'fixed top-0 inset-x-0 z-50 transition-all',
       scrolled ? 'bg-bg/85 backdrop-blur-md border-b border-border' : 'bg-transparent',
     ].join(' ')}>
-      <ScrollProgress />
       <div className="max-w-6xl mx-auto px-5 md:px-8 h-16 flex items-center justify-between">
         <a href="#top" className="focus-ring rounded">
           <UmbraLogo />
@@ -1263,6 +1263,7 @@ export default function LandingPage() {
   return (
     <div className="lp bg-bg text-text relative overflow-x-hidden">
       <Header theme={currentTheme} toggleTheme={toggleTheme} mounted={mounted} />
+      <ScrollProgress />
       <main>
         <Hero />
         <SaleTickerSection />
