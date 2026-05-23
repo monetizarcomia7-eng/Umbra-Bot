@@ -978,25 +978,59 @@ function Pricing() {
               style={{ background: 'radial-gradient(circle at 50% 0%, var(--accent-soft), transparent 70%)', opacity: 0.5 }}
             />
             <div className="relative bg-surface rounded-xl p-7 md:p-10">
-              <div className="flex items-center justify-between flex-wrap gap-3 mb-2">
-                <div className="text-[10.5px] uppercase tracking-[0.2em] font-semibold" style={{ color: 'var(--accent)' }}>Modelo único · pay-as-you-sell</div>
-                <span
-                  className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10.5px] font-semibold"
-                  style={{ background: 'color-mix(in oklab, var(--success) 15%, transparent)', color: 'var(--success)' }}
-                >
-                  <Check size={10} className="shrink-0" />
-                  Sem cartão de crédito
+              {/* badges */}
+              <div className="flex flex-wrap gap-2 mb-6">
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold" style={{ background: 'color-mix(in oklab, var(--success) 15%, transparent)', color: 'var(--success)' }}>
+                  <Check size={10} className="shrink-0" /> Sem mensalidade
+                </span>
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold" style={{ background: 'color-mix(in oklab, var(--success) 15%, transparent)', color: 'var(--success)' }}>
+                  <Check size={10} className="shrink-0" /> Sem cartão de crédito
+                </span>
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold" style={{ background: 'color-mix(in oklab, var(--accent) 12%, transparent)', color: 'var(--accent)' }}>
+                  Modelo único · pay-as-you-sell
                 </span>
               </div>
-              <div className="flex items-baseline gap-3 flex-wrap">
-                <div className="text-[64px] md:text-[80px] font-black tnum tracking-tighter leading-none text-text">
-                  R$ 0
+
+              {/* preço principal */}
+              <div className="flex items-end gap-4 flex-wrap">
+                <div className="flex items-start leading-none">
+                  <span className="text-[28px] font-bold text-text-muted mt-3 mr-1">R$</span>
+                  <span className="text-[88px] md:text-[100px] font-black tnum tracking-tighter leading-none text-text">1</span>
+                  <span className="text-[36px] font-black tnum text-text mt-4">,00</span>
                 </div>
-                <div className="text-[15px] text-text-muted">
-                  para começar · <span className="font-semibold text-text">[PREÇO/TAXA — PREENCHER]</span> por venda
+                <div className="pb-2">
+                  <div className="text-[17px] font-bold text-text">fixo por transação</div>
+                  <div className="text-[13px] text-text-muted mt-0.5">independente do valor da venda</div>
                 </div>
               </div>
 
+              {/* exemplos */}
+              <div className="mt-6 rounded-xl p-4 space-y-2.5" style={{ background: 'color-mix(in oklab, var(--surface-2) 60%, transparent)', border: '1px solid var(--border)' }}>
+                <div className="text-[10.5px] uppercase tracking-wider font-semibold text-text-subtle mb-3">Veja na prática</div>
+                {[
+                  { sell: 'R$ 47,00',   pay: 'R$ 1,00', keep: 'R$ 46,00',  pct: '97,9%' },
+                  { sell: 'R$ 97,00',   pay: 'R$ 1,00', keep: 'R$ 96,00',  pct: '99,0%' },
+                  { sell: 'R$ 197,00',  pay: 'R$ 1,00', keep: 'R$ 196,00', pct: '99,5%' },
+                  { sell: 'R$ 997,00',  pay: 'R$ 1,00', keep: 'R$ 996,00', pct: '99,9%' },
+                ].map((ex) => (
+                  <div key={ex.sell} className="flex items-center justify-between gap-2 text-[13px]">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="font-semibold text-text shrink-0">Venda de {ex.sell}</span>
+                      <ChevronRight size={13} className="shrink-0 text-text-subtle" />
+                      <span className="text-text-muted shrink-0">paga</span>
+                      <span className="font-bold shrink-0" style={{ color: 'var(--accent)' }}>{ex.pay}</span>
+                    </div>
+                    <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded shrink-0" style={{ background: 'color-mix(in oklab, var(--success) 12%, transparent)', color: 'var(--success)' }}>
+                      fica {ex.pct}
+                    </span>
+                  </div>
+                ))}
+                <div className="pt-2 border-t border-border text-[12px] font-semibold" style={{ color: 'var(--accent)' }}>
+                  Quanto mais vende, mais você economiza em relação a qualquer percentual.
+                </div>
+              </div>
+
+              {/* benefícios */}
               <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-3">
                 {benefits.map((b) => (
                   <div key={b.title} className="flex items-start gap-2.5 p-3 bg-surface-2/50 border border-border rounded-lg">
@@ -1060,10 +1094,10 @@ function Pricing() {
 
 /* ─── FAQ ────────────────────────────────────────────────── */
 const faqs = [
-  { q: 'Vou pagar mensalidade?',                    a: 'Não. A Umbra Bot não tem mensalidade. Você só paga quando uma venda é processada pelo bot — o valor é [PREÇO/TAXA — PREENCHER] por venda. Se não vender, não paga nada.' },
+  { q: 'Vou pagar mensalidade?',                    a: 'Não. A Umbra Bot não tem mensalidade. Você só paga quando uma venda é processada pelo bot — R$ 1,00 fixo por venda, independente do valor que você cobrar. Se não vender, não paga nada.' },
   { q: 'Como eu recebo o dinheiro?',                a: 'Você conecta o seu próprio gateway de PIX dentro do painel. A partir daí, todo pagamento confirmado cai diretamente na sua conta bancária pelo gateway que você escolheu. A Umbra não retém, não intermedia, não cobra markup.' },
   { q: 'Quantos bots eu posso criar?',              a: 'Quantos você quiser. Não há limite no número de bots, leads ou clientes. Você pode conectar um bot por produto, por nicho, por canal — como fizer mais sentido para a sua operação.' },
-  { q: 'Quais gateways de pagamento são suportados?', a: 'A lista atualizada de gateways suportados pode ser consultada dentro do painel após criar conta. Os principais gateways brasileiros que processam PIX para infoprodutores estão integrados — [GATEWAYS — PREENCHER].' },
+  { q: 'Quais gateways de pagamento são suportados?', a: 'A lista atualizada de gateways suportados pode ser consultada dentro do painel após criar conta. Os principais gateways brasileiros que processam PIX para infoprodutores estão integrados.' },
   { q: 'Preciso saber programar?',                  a: 'Não. O editor visual de fluxos foi feito para quem não escreve código. Você arrasta blocos (mensagem, condição, espera, oferta, upsell, tag) e conecta entre si para montar o funil. Em poucos minutos seu primeiro fluxo está no ar.' },
   { q: 'O bot funciona 24 horas mesmo?',            a: 'Sim. Uma vez configurado, o bot atende, cobra, confirma o PIX e libera o acesso sozinho, todos os dias, a qualquer hora. Você só recebe os alertas de venda no seu painel e no canal de notificação que escolher.' },
   { q: 'E se um cliente gerar PIX e não pagar?',   a: 'O Remarketing automático dispara mensagens de lembrete para o cliente que gerou o QR Code mas não pagou. Você define o tempo (1 h, 24 h, etc.) e o que falar em cada etapa.' },
