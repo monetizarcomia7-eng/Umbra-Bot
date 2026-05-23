@@ -131,7 +131,7 @@ function RevenueChart({
                     fontSize: 12,
                     color: 'var(--text)',
                   }}
-                  formatter={(value: number) => [fmtBRLdec(value), 'Receita']}
+                  formatter={(value) => [fmtBRLdec(Number(value ?? 0)), 'Receita']}
                 />
                 <Area
                   type="monotone"
