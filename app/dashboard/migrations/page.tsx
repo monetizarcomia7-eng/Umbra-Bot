@@ -337,7 +337,6 @@ export default function MigrationsPage() {
             ))}
           </div>
         )}
-      </div>
     </div>
   )
 }
