@@ -66,19 +66,15 @@ function Icon({ name, size = 16, className = '' }: { name: string; size?: number
 
 /* ─── Logo ───────────────────────────────────────────────── */
 function UmbraLogo({ size = 28 }: { size?: number }) {
+  const r = Math.round(size * 0.24)
   return (
     <div className="flex items-center gap-2.5 select-none">
-      <svg viewBox="0 0 40 40" width={size} height={size}>
-        <defs>
-          <radialGradient id="umbra-corona" cx="50%" cy="50%" r="50%">
-            <stop offset="50%"  stopColor="var(--accent)" stopOpacity="0" />
-            <stop offset="55%"  stopColor="var(--accent)" stopOpacity="0.6" />
-            <stop offset="100%" stopColor="var(--accent)" stopOpacity="0" />
-          </radialGradient>
-        </defs>
-        <circle cx="20" cy="20" r="18" fill="url(#umbra-corona)" />
-        <circle cx="20" cy="20" r="11" fill="var(--bg)" stroke="var(--accent)" strokeWidth="2" />
-      </svg>
+      <div style={{ width: size, height: size, background: 'var(--accent)', borderRadius: r, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+        <svg viewBox="0 0 100 100" width={Math.round(size * 0.62)} height={Math.round(size * 0.62)}>
+          <path d="M 18 18 V 60 A 32 32 0 0 0 82 60 V 18 H 64 V 60 A 14 14 0 0 1 36 60 V 18 Z" fill="rgba(255,255,255,0.93)" />
+          <rect x="14" y="42" width="72" height="3.5" rx="2" fill="rgba(0,0,0,0.55)" />
+        </svg>
+      </div>
       <span className="text-[15px] font-bold tracking-tight text-text">
         Umbra<span style={{ color: 'var(--accent)' }}>.</span>Bot
       </span>
@@ -148,7 +144,8 @@ function Header({ theme, toggleTheme, mounted }: {
             Login
           </a>
           <a
-            href="/login?mode=signup"
+            href="#precos"
+            onClick={(e) => { e.preventDefault(); document.getElementById('precos')?.scrollIntoView({ behavior: 'smooth' }) }}
             className="inline-flex h-9 px-3.5 items-center rounded-md text-[13px] font-semibold bg-accent text-accent-fg hover:bg-accent-hover focus-ring whitespace-nowrap"
           >
             Criar conta
@@ -207,6 +204,55 @@ function ChatBubble({ side, children, accent, success }: {
         borderColor: 'color-mix(in oklab, var(--success) 30%, transparent)',
       } : undefined}>
         {children}
+      </div>
+    </div>
+  )
+}
+
+/* ─── Sale notification cycling card ────────────────────── */
+const SALE_NOTIFS = [
+  { amount: 'R$ 97,00',  buyer: 'Carlos M.' },
+  { amount: 'R$ 197,00', buyer: 'Ana P.'    },
+  { amount: 'R$ 47,00',  buyer: 'Bruno S.'  },
+]
+
+function SaleNotificationCard() {
+  const [idx, setIdx] = useState(0)
+  const [show, setShow] = useState(true)
+  useEffect(() => {
+    let fadeTimer: ReturnType<typeof setTimeout>
+    const cycleTimer = setInterval(() => {
+      setShow(false)
+      fadeTimer = setTimeout(() => {
+        setIdx((i) => (i + 1) % SALE_NOTIFS.length)
+        setShow(true)
+      }, 400)
+    }, 2600)
+    return () => { clearInterval(cycleTimer); clearTimeout(fadeTimer) }
+  }, [])
+  const n = SALE_NOTIFS[idx]
+  return (
+    <div
+      className="absolute -left-3 sm:-left-14 top-1/4 bg-surface border border-border rounded-xl p-3 hidden sm:block"
+      style={{
+        boxShadow: '0 20px 40px -10px rgba(0,0,0,0.4)',
+        minWidth: 194,
+        transition: 'opacity 0.4s ease, transform 0.4s ease',
+        opacity: show ? 1 : 0,
+        transform: show ? 'translateY(0)' : 'translateY(6px)',
+      }}
+    >
+      <div className="flex items-center gap-2.5">
+        <span
+          className="w-7 h-7 rounded-md flex items-center justify-center shrink-0"
+          style={{ background: 'color-mix(in oklab, var(--success) 15%, transparent)', color: 'var(--success)' }}
+        >
+          <CheckCircle2 size={13} />
+        </span>
+        <div>
+          <div className="text-[10px] uppercase tracking-wider font-semibold text-text-subtle">Venda aprovada · {n.buyer}</div>
+          <div className="text-[15px] font-bold tnum text-text">{n.amount}</div>
+        </div>
       </div>
     </div>
   )
@@ -283,23 +329,7 @@ function HeroVisual() {
           </div>
         </div>
 
-        <div
-          className="absolute -left-3 sm:-left-12 top-1/4 bg-surface border border-border rounded-xl p-3 hidden sm:block"
-          style={{ boxShadow: '0 20px 40px -10px rgba(0,0,0,0.4)', animation: 'revealUp 0.7s 0.3s both' }}
-        >
-          <div className="flex items-center gap-2">
-            <span
-              className="w-7 h-7 rounded-md flex items-center justify-center"
-              style={{ background: 'color-mix(in oklab, var(--success) 15%, transparent)', color: 'var(--success)' }}
-            >
-              <Zap size={13} className="shrink-0" />
-            </span>
-            <div>
-              <div className="text-[10px] uppercase tracking-wider font-semibold text-text-subtle">PIX recebido</div>
-              <div className="text-[14px] font-bold tnum text-text">R$ 97,00</div>
-            </div>
-          </div>
-        </div>
+        <SaleNotificationCard />
 
         <div
           className="absolute -right-3 sm:-right-8 bottom-8 bg-surface border border-border rounded-xl p-3 hidden sm:block"
@@ -391,19 +421,26 @@ function Hero() {
 /* ─── Highlights ─────────────────────────────────────────── */
 function Highlights() {
   const items = [
-    { icon: 'zap',          label: 'PIX instantâneo'          },
+    { icon: 'zap',          label: 'PIX instantâneo'           },
     { icon: 'wallet',       label: 'Sem mensalidade'           },
     { icon: 'rocket',       label: 'Setup em minutos'          },
     { icon: 'landmark',     label: 'Saque direto na sua conta' },
     { icon: 'shield-check', label: 'Sem código, sem técnico'   },
     { icon: 'moon-star',    label: 'Funciona 24/7'             },
+    { icon: 'infinity',     label: 'Bots ilimitados'           },
+    { icon: 'users',        label: 'Leads ilimitados'          },
+    { icon: 'rotate-cw',    label: 'Remarketing automático'    },
+    { icon: 'bar-chart-3',  label: 'Dashboard em tempo real'   },
+    { icon: 'user-plus',    label: 'Programa de afiliados'     },
+    { icon: 'git-branch',   label: 'Fluxos sem código'         },
   ]
+  const doubled = [...items, ...items]
   return (
-    <section className="border-y border-border" style={{ background: 'color-mix(in oklab, var(--surface) 40%, transparent)' }}>
-      <div className="max-w-6xl mx-auto px-5 md:px-8 py-6">
-        <div className="flex items-center justify-center gap-x-10 gap-y-4 flex-wrap">
-          {items.map((it) => (
-            <div key={it.label} className="inline-flex items-center gap-2 text-[13px] text-text-muted">
+    <section className="border-y border-border overflow-hidden" style={{ background: 'color-mix(in oklab, var(--surface) 40%, transparent)' }}>
+      <div className="py-5">
+        <div style={{ display: 'flex', alignItems: 'center', width: 'max-content', gap: '2.5rem', animation: 'marquee-lp 32s linear infinite' }}>
+          {doubled.map((it, i) => (
+            <div key={i} className="inline-flex items-center gap-2 text-[13px] shrink-0">
               <Icon name={it.icon} size={14} className="text-accent" />
               <span className="font-medium text-text">{it.label}</span>
             </div>

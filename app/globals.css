@@ -290,6 +290,11 @@
 }
 .fade-up { animation: fadeUp 0.25s ease both; }
 
+@keyframes marquee-lp {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+
 @layer base {
   * {
     @apply border-border;
