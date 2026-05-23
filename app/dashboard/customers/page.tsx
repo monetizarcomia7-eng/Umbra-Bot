@@ -1,5 +1,4 @@
 import { createClient } from '@/lib/supabase/server'
-import { DashboardLayout } from '@/components/dashboard/Layout'
 import CustomersClient, { type RawContact, type ContactBotOption } from './CustomersClient'
 
 export const dynamic = 'force-dynamic'
@@ -37,16 +36,14 @@ export default async function CustomersPage() {
   const filterOpts = (filterOptsRes.data as { origins: string[] } | null) ?? { origins: [] }
 
   return (
-    <DashboardLayout>
-      <CustomersClient
-        initialContacts={(contactsRes.data ?? []) as unknown as RawContact[]}
-        bots={(botsRes.data ?? []) as unknown as ContactBotOption[]}
-        totalCount={summary.total}
-        buyersCount={summary.buyers}
-        leadsCount={summary.leads}
-        originOptions={filterOpts.origins ?? []}
-        hasMore={(contactsRes.data?.length ?? 0) >= PAGE_SIZE}
-      />
-    </DashboardLayout>
+    <CustomersClient
+      initialContacts={(contactsRes.data ?? []) as unknown as RawContact[]}
+      bots={(botsRes.data ?? []) as unknown as ContactBotOption[]}
+      totalCount={summary.total}
+      buyersCount={summary.buyers}
+      leadsCount={summary.leads}
+      originOptions={filterOpts.origins ?? []}
+      hasMore={(contactsRes.data?.length ?? 0) >= PAGE_SIZE}
+    />
   )
 }

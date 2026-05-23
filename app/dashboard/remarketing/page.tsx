@@ -1,6 +1,5 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
-import { DashboardLayout } from '@/components/dashboard/Layout'
 import RemarketingClient, { type RawCampaign, type RawBotOption } from './RemarketingClient'
 
 const PAGE_SIZE = 50
@@ -28,13 +27,11 @@ export default async function RemarketingPage() {
   const initialCampaigns = (campaignsRes.data ?? []) as unknown as RawCampaign[]
 
   return (
-    <DashboardLayout>
-      <RemarketingClient
-        initialCampaigns={initialCampaigns}
-        bots={(botsRes.data ?? []) as unknown as RawBotOption[]}
-        userId={user.id}
-        initialHasMore={initialCampaigns.length >= PAGE_SIZE}
-      />
-    </DashboardLayout>
+    <RemarketingClient
+      initialCampaigns={initialCampaigns}
+      bots={(botsRes.data ?? []) as unknown as RawBotOption[]}
+      userId={user.id}
+      initialHasMore={initialCampaigns.length >= PAGE_SIZE}
+    />
   )
 }

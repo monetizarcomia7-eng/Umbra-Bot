@@ -15,7 +15,6 @@ import {
   Tag, Percent, DollarSign, ShoppingCart, Users, Globe,
   Gift, TrendingUp, ChevronRight,
 } from 'lucide-react'
-import { DashboardLayout }  from '@/components/dashboard/Layout'
 import { PageHeader }       from '@/components/dashboard/PageHeader'
 import { createClient }     from '@/lib/supabase/client'
 import { useAnalytics }     from '@/hooks/use-analytics'
@@ -2647,7 +2646,7 @@ export default function CheckoutClient({
   const editing = checkouts.find((c) => c.id === editingId) ?? null
 
   return (
-    <DashboardLayout>
+    <>
       {editing ? (
         <CheckoutEditor
           checkout={editing}
@@ -2696,6 +2695,6 @@ export default function CheckoutClient({
 
       {/* Toast */}
       {toast && <Toast msg={toast.msg} type={toast.type} />}
-    </DashboardLayout>
+    </>
   )
 }

@@ -1,7 +1,6 @@
 'use client'
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react'
-import { DashboardLayout } from '@/components/dashboard/Layout'
 import { PageHeader } from '@/components/dashboard/PageHeader'
 import { createClient } from '@/lib/supabase/client'
 import { useAnalytics } from '@/hooks/use-analytics'
@@ -1289,8 +1288,8 @@ export function RedirectsClient({ initialRedirects, userId, appUrl, currClicks, 
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
-    <DashboardLayout>
-      <PageHeader
+    <>
+    <PageHeader
         title="Redirecionadores"
         subtitle="Links curtos rastreáveis para campanhas, bots e anúncios."
         actions={
@@ -1457,6 +1456,6 @@ export function RedirectsClient({ initialRedirects, userId, appUrl, currClicks, 
         open={!!deleteId} onClose={() => setDeleteId(null)}
         onConfirm={deleteLink} deleting={deleting} slug={deleteSlug}
       />
-    </DashboardLayout>
+    </>
   )
 }

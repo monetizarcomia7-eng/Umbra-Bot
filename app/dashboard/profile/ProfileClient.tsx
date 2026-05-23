@@ -1,7 +1,6 @@
 'use client'
 
 import { useState, useEffect, useMemo, useRef } from 'react'
-import { DashboardLayout } from '@/components/dashboard/Layout'
 import { PageHeader } from '@/components/dashboard/PageHeader'
 import { createClient } from '@/lib/supabase/client'
 import { useAnalytics } from '@/hooks/use-analytics'
@@ -1336,8 +1335,8 @@ export default function ProfileClient({
   }
 
   return (
-    <DashboardLayout>
-      <PageHeader title="Perfil" subtitle="Dados da sua conta, segurança e gerenciamento da equipe." />
+    <>
+    <PageHeader title="Perfil" subtitle="Dados da sua conta, segurança e gerenciamento da equipe." />
 
       {toast && (
         <div className="mb-4 flex items-center gap-2.5 bg-success-soft border border-success/30 rounded-lg px-3.5 py-2">
@@ -1397,6 +1396,6 @@ export default function ProfileClient({
           }}
         />
       </div>
-    </DashboardLayout>
+    </>
   )
 }

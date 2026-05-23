@@ -2,7 +2,6 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-import { DashboardLayout } from '@/components/dashboard/Layout'
 import { PageHeader } from '@/components/dashboard/PageHeader'
 import { createClient } from '@/lib/supabase/client'
 import { useAnalytics } from '@/hooks/use-analytics'
@@ -688,8 +687,8 @@ export function AlertsClient({
   const showHappy   = alerts.length === 0 || (allResolved && filters.status !== 'Resolvidos')
 
   return (
-    <DashboardLayout>
-      <PageHeader
+    <>
+    <PageHeader
         title="Alertas Importantes"
         subtitle="Eventos críticos que pedem sua atenção — gateways, bots, integrações e plano."
         actions={
@@ -791,6 +790,6 @@ export function AlertsClient({
           )}
         </>
       )}
-    </DashboardLayout>
+    </>
   )
 }

@@ -1,6 +1,5 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
-import { DashboardLayout } from '@/components/dashboard/Layout'
 import { GatewaysClient } from './GatewaysClient'
 
 export interface RawGateway {
@@ -57,16 +56,14 @@ export default async function GatewaysPage({
   ])
 
   return (
-    <DashboardLayout>
-      <GatewaysClient
-        initialGateways={(gatewaysRes.data ?? []) as RawGateway[]}
-        bankAccounts={(bankAccountsRes.data ?? []) as RawBankAccount[]}
-        gatewayStats={((statsRes.data ?? {}) as GatewayStats)}
-        userId={user.id}
-        hasMpOAuth={!!process.env.MERCADOPAGO_CLIENT_ID}
-        mpConnected={params.mp_connected === '1'}
-        mpError={params.mp_error ?? null}
-      />
-    </DashboardLayout>
+    <GatewaysClient
+      initialGateways={(gatewaysRes.data ?? []) as RawGateway[]}
+      bankAccounts={(bankAccountsRes.data ?? []) as RawBankAccount[]}
+      gatewayStats={((statsRes.data ?? {}) as GatewayStats)}
+      userId={user.id}
+      hasMpOAuth={!!process.env.MERCADOPAGO_CLIENT_ID}
+      mpConnected={params.mp_connected === '1'}
+      mpError={params.mp_error ?? null}
+    />
   )
 }

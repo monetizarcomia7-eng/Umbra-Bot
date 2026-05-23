@@ -1,5 +1,4 @@
 import { createClient } from '@/lib/supabase/server'
-import { DashboardLayout } from '@/components/dashboard/Layout'
 import { DashboardClient } from './_components/DashboardClient'
 
 // Server Component — busca os KPIs iniciais no servidor (período padrão 30d).
@@ -34,13 +33,11 @@ export default async function DashboardPage() {
   ])
 
   return (
-    <DashboardLayout>
-      <DashboardClient
-        transactions={txRes.data ?? []}
-        prevTransactions={prevTxRes.data ?? []}
-        botsActiveCount={activeBotsRes.count ?? 0}
-        botsTotalCount={allBotsRes.count ?? 0}
-      />
-    </DashboardLayout>
+    <DashboardClient
+      transactions={txRes.data ?? []}
+      prevTransactions={prevTxRes.data ?? []}
+      botsActiveCount={activeBotsRes.count ?? 0}
+      botsTotalCount={allBotsRes.count ?? 0}
+    />
   )
 }

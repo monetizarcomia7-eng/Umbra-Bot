@@ -1,5 +1,4 @@
 import { createClient } from '@/lib/supabase/server'
-import { DashboardLayout } from '@/components/dashboard/Layout'
 import ActivityClient, { type RawActivityEvent, type BotOption } from './ActivityClient'
 
 export default async function ActivityPage() {
@@ -18,11 +17,9 @@ export default async function ActivityPage() {
   ])
 
   return (
-    <DashboardLayout>
-      <ActivityClient
-        initialEvents={(eventsRes.data ?? []) as unknown as RawActivityEvent[]}
-        bots={(botsRes.data ?? []) as unknown as BotOption[]}
-      />
-    </DashboardLayout>
+    <ActivityClient
+      initialEvents={(eventsRes.data ?? []) as unknown as RawActivityEvent[]}
+      bots={(botsRes.data ?? []) as unknown as BotOption[]}
+    />
   )
 }

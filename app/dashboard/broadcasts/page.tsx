@@ -1,6 +1,5 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
-import { DashboardLayout } from '@/components/dashboard/Layout'
 import BroadcastsClient, {
   type RawBroadcast,
   type RawBotOption,
@@ -48,14 +47,12 @@ export default async function BroadcastsPage() {
   }
 
   return (
-    <DashboardLayout>
-      <BroadcastsClient
-        initialBroadcasts={initialBroadcasts}
-        bots={bots}
-        audienceCounts={audienceCounts}
-        userId={user.id}
-        initialHasMore={initialBroadcasts.length >= PAGE_SIZE}
-      />
-    </DashboardLayout>
+    <BroadcastsClient
+      initialBroadcasts={initialBroadcasts}
+      bots={bots}
+      audienceCounts={audienceCounts}
+      userId={user.id}
+      initialHasMore={initialBroadcasts.length >= PAGE_SIZE}
+    />
   )
 }

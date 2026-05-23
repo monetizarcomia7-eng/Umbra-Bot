@@ -2,7 +2,6 @@
 
 import React, { useTransition, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { DashboardLayout } from '@/components/dashboard/Layout'
 import { PageHeader } from '@/components/dashboard/PageHeader'
 import { exportCSV } from '@/lib/csv'
 import { cn } from '@/lib/utils'
@@ -123,8 +122,8 @@ export function AnalyticsClient({ summary }: { summary: AnalyticsSummary }) {
   const flowHasRealData = summary.byFlow.some((f) => f.isReal)
 
   return (
-    <DashboardLayout>
-      <PageHeader
+    <>
+    <PageHeader
         title="Análises"
         subtitle="Funis, retenção e desempenho dos seus bots — dados reais."
         actions={
@@ -224,6 +223,6 @@ export function AnalyticsClient({ summary }: { summary: AnalyticsSummary }) {
           <CohortTable rows={summary.cohortRows} />
         </div>
       </div>
-    </DashboardLayout>
+    </>
   )
 }

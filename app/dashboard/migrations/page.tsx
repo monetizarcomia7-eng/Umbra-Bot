@@ -1,7 +1,6 @@
 'use client'
 
 import React, { useState, useEffect, useCallback } from 'react'
-import { DashboardLayout } from '@/components/dashboard/Layout'
 import { PageHeader } from '@/components/dashboard/PageHeader'
 import {
   Database, Copy, Check, Play, ChevronDown, ChevronUp,
@@ -273,8 +272,7 @@ export default function MigrationsPage() {
   const applied = Object.values(results).filter(r => r.status === 'ok').length
 
   return (
-    <DashboardLayout>
-      <div className="p-6 space-y-6 max-w-4xl mx-auto">
+    <div className="p-6 space-y-6 max-w-4xl mx-auto">
         <PageHeader
           title="Migrations SQL"
           subtitle="Execute as migrations do banco de dados sem abrir o Supabase."
@@ -340,6 +338,6 @@ export default function MigrationsPage() {
           </div>
         )}
       </div>
-    </DashboardLayout>
+    </div>
   )
 }

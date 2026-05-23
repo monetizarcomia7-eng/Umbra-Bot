@@ -1,7 +1,6 @@
 import { Suspense } from 'react'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
-import { DashboardLayout } from '@/components/dashboard/Layout'
 import GuideClient from './GuideClient'
 
 export const revalidate = 3600
@@ -50,13 +49,11 @@ export default async function GuidePage() {
   ])
 
   return (
-    <DashboardLayout>
-      <Suspense fallback={null}>
-        <GuideClient
-          initialArticles={(articlesRes.data ?? []) as RawGuideArticle[]}
-          initialFaqs={(faqsRes.data ?? []) as RawGuideFaq[]}
-        />
-      </Suspense>
-    </DashboardLayout>
+    <Suspense fallback={null}>
+      <GuideClient
+        initialArticles={(articlesRes.data ?? []) as RawGuideArticle[]}
+        initialFaqs={(faqsRes.data ?? []) as RawGuideFaq[]}
+      />
+    </Suspense>
   )
 }

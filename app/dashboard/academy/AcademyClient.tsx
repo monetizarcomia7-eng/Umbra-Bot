@@ -1,7 +1,6 @@
 'use client'
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react'
-import { DashboardLayout } from '@/components/dashboard/Layout'
 import { PageHeader } from '@/components/dashboard/PageHeader'
 import {
   Clock, PlayCircle, Play, Pause, CheckCircle2, Check, GraduationCap,
@@ -992,7 +991,7 @@ export function AcademyClient({
 
   if (activeCourse) {
     return (
-      <DashboardLayout>
+      <>
         <PageHeader title={activeCourse.title} subtitle={activeCourse.subtitle} />
         <CourseDetail
           course={activeCourse}
@@ -1001,7 +1000,7 @@ export function AcademyClient({
           onUpdate={updateCourse}
           onProgress={(lessonId, done) => handleProgress(activeCourse.id, lessonId, done)}
         />
-      </DashboardLayout>
+      </>
     )
   }
 
@@ -1015,7 +1014,7 @@ export function AcademyClient({
   const certMap         = new Set(certificates.map(c => c.courseId))
 
   return (
-    <DashboardLayout>
+    <>
       <PageHeader
         title="Sistema Educacional"
         subtitle="Cursos do time Umbra Bot — aprenda enquanto opera."
@@ -1135,6 +1134,6 @@ export function AcademyClient({
           </section>
         </>
       )}
-    </DashboardLayout>
+    </>
   )
 }

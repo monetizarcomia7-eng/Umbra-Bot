@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-import { DashboardLayout } from '@/components/dashboard/Layout'
 import { PageHeader } from '@/components/dashboard/PageHeader'
 import { createClient } from '@/lib/supabase/client'
 import { useAnalytics } from '@/hooks/use-analytics'
@@ -1290,8 +1289,8 @@ export function WebhooksClient({ initialWebhooks, userId }: {
   }
 
   return (
-    <DashboardLayout>
-      <PageHeader
+    <>
+    <PageHeader
         title="Webhooks"
         subtitle="Notificações HTTP em tempo real para integrações externas."
         actions={
@@ -1421,6 +1420,6 @@ export function WebhooksClient({ initialWebhooks, userId }: {
         editing={editing}
         onSaved={handleSaved}
       />
-    </DashboardLayout>
+    </>
   )
 }

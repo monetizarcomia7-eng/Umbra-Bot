@@ -1,5 +1,4 @@
 import { createClient } from '@/lib/supabase/server'
-import { DashboardLayout } from '@/components/dashboard/Layout'
 import AffiliatesClient, { type RawAffiliate, type RawPayment, type RawConfig, type RawBot } from './AffiliatesClient'
 
 export const dynamic = 'force-dynamic'
@@ -68,15 +67,13 @@ export default async function AffiliatesPage() {
   const appUrl = process.env.APP_URL ?? 'https://umbra.bot'
 
   return (
-    <DashboardLayout>
-      <AffiliatesClient
-        initialAffiliates={(affiliatesRes.data ?? []) as unknown as RawAffiliate[]}
-        initialPayments={(paymentsRes.data ?? []) as unknown as RawPayment[]}
-        initialConfig={config}
-        userId={uid}
-        appUrl={appUrl}
-        bots={(botsRes.data ?? []) as unknown as RawBot[]}
-      />
-    </DashboardLayout>
+    <AffiliatesClient
+      initialAffiliates={(affiliatesRes.data ?? []) as unknown as RawAffiliate[]}
+      initialPayments={(paymentsRes.data ?? []) as unknown as RawPayment[]}
+      initialConfig={config}
+      userId={uid}
+      appUrl={appUrl}
+      bots={(botsRes.data ?? []) as unknown as RawBot[]}
+    />
   )
 }

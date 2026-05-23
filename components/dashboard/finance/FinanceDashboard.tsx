@@ -3,7 +3,6 @@
 import React, { useState, useMemo, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { AlertTriangle } from 'lucide-react'
-import { DashboardLayout } from '@/components/dashboard/Layout'
 import { PageHeader } from '@/components/dashboard/PageHeader'
 import { exportCSV } from '@/lib/csv'
 import { useAnalytics } from '@/hooks/use-analytics'
@@ -310,8 +309,8 @@ export function FinanceDashboard({
   }
 
   return (
-    <DashboardLayout>
-      <PageHeader
+    <>
+    <PageHeader
         title="Financeiro"
         subtitle="Receitas, saques e conciliações da sua operação."
         actions={
@@ -395,6 +394,6 @@ export function FinanceDashboard({
         onSuccess={handleWithdrawalSuccess}
         saldoDisponivel={summary.saldoDisponivel}
       />
-    </DashboardLayout>
+    </>
   )
 }

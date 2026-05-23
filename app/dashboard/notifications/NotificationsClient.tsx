@@ -1,7 +1,6 @@
 'use client'
 
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react'
-import { DashboardLayout } from '@/components/dashboard/Layout'
 import { PageHeader } from '@/components/dashboard/PageHeader'
 import { useAnalytics } from '@/hooks/use-analytics'
 import {
@@ -909,8 +908,8 @@ export function NotificationsClient({
   }, [prefs])
 
   return (
-    <DashboardLayout>
-      <PageHeader
+    <>
+    <PageHeader
         title="Notificações"
         subtitle="Escolha quando e como você quer ser avisado pelo Umbra Bot."
         actions={
@@ -1012,6 +1011,6 @@ export function NotificationsClient({
           </div>
         </div>
       )}
-    </DashboardLayout>
+    </>
   )
 }

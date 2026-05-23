@@ -3,7 +3,6 @@
 import React, {
   useState, useMemo, useEffect, useRef, useCallback, useLayoutEffect,
 } from 'react'
-import { DashboardLayout } from '@/components/dashboard/Layout'
 import {
   Send, Key, QrCode, PlayCircle, Upload, Download, Stethoscope, Eraser,
   ArrowUpRight, Bot, CheckCircle2, XCircle, Check, Info, AlertCircle, X,
@@ -1591,7 +1590,7 @@ export function ToolsClient({ bots, flows }: { bots: RawBot[]; flows: RawFlow[] 
   }, [])
 
   return (
-    <DashboardLayout>
+    <>
       <div className="flex items-start justify-between gap-3 mb-6">
         <div>
           <h1 className="text-[20px] font-semibold text-text">Ferramentas</h1>
@@ -1624,6 +1623,6 @@ export function ToolsClient({ bots, flows }: { bots: RawBot[]; flows: RawFlow[] 
         bots={bots}
         flows={flows}
       />
-    </DashboardLayout>
+    </>
   )
 }

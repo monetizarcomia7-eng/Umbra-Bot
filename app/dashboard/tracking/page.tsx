@@ -1,6 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
-import { DashboardLayout } from '@/components/dashboard/Layout'
 import TrackingClient from './TrackingClient'
 
 export interface RawPixelRow {
@@ -44,12 +43,10 @@ export default async function TrackingPage() {
   }
 
   return (
-    <DashboardLayout>
-      <TrackingClient
-        initialPixels={(pixelsRes.data ?? []) as RawPixelRow[]}
-        initialStats={initialStats}
-        userId={user.id}
-      />
-    </DashboardLayout>
+    <TrackingClient
+      initialPixels={(pixelsRes.data ?? []) as RawPixelRow[]}
+      initialStats={initialStats}
+      userId={user.id}
+    />
   )
 }

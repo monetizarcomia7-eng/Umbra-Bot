@@ -1,6 +1,5 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
-import { DashboardLayout } from '@/components/dashboard/Layout'
 import { BioLinkClient } from './BioLinkClient'
 
 export const dynamic = 'force-dynamic'
@@ -36,12 +35,10 @@ export default async function BioLinkPage() {
     .order('created_at', { ascending: false })
 
   return (
-    <DashboardLayout>
-      <BioLinkClient
-        userId={user.id}
-        initialBiolinks={(biolinks as RawBiolink[]) ?? []}
-        appUrl={process.env.APP_URL ?? 'https://umbra.bot'}
-      />
-    </DashboardLayout>
+    <BioLinkClient
+      userId={user.id}
+      initialBiolinks={(biolinks as RawBiolink[]) ?? []}
+      appUrl={process.env.APP_URL ?? 'https://umbra.bot'}
+    />
   )
 }
