@@ -11,6 +11,8 @@ import { getExportRows } from './_actions'
 import type { AnalyticsSummary, Filters } from './_types'
 import { fmtBRL, fmtNum } from './_utils'
 import { FilterBar } from './_components/FilterBar'
+import { KpiSummaryRow } from './_components/KpiSummaryRow'
+import { RevenueLineChart } from './_components/RevenueLineChart'
 import { FunnelChart } from './_components/FunnelChart'
 import { BarListCard } from './_components/BarListCard'
 import { StatusCard } from './_components/StatusCard'
@@ -163,8 +165,12 @@ export function AnalyticsClient({ summary }: { summary: AnalyticsSummary }) {
         onClear={handleClear}
       />
 
+      <KpiSummaryRow kpi={summary.kpi} compare={filters.compare} />
+
       <div className="space-y-5">
         <FunnelChart stages={summary.funnel} compare={filters.compare} />
+
+        <RevenueLineChart data={summary.revenueByDay} />
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <BarListCard

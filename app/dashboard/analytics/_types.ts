@@ -86,10 +86,27 @@ export interface ExportRow {
   utmCampaign: string
 }
 
+export interface KpiSummary {
+  totalRevenue:   number
+  totalSales:     number
+  avgTicket:      number
+  conversionRate: number  // visitou → comprou (%)
+  prevRevenue:    number
+  prevSales:      number
+}
+
+export interface DayRevenue {
+  day:     string  // 'DD/MM'
+  revenue: number
+  sales:   number
+}
+
 // ── Payload completo passado do Server para o Client ─────────
 
 export interface AnalyticsSummary {
   filters: Filters
+  kpi:          KpiSummary
+  revenueByDay: DayRevenue[]
   funnel: FunnelStage[]
   byBot: BotStat[]
   byProduct: ProductStat[]

@@ -4,6 +4,7 @@
 import type {
   BotStat, ProductStat, FlowStat, UtmStat,
   StatusData, FunnelStage, CohortRow, ExportRow,
+  KpiSummary, DayRevenue, Period,
 } from './_types'
 
 // ── Tipos raw vindos do Supabase ─────────────────────────────
@@ -243,6 +244,63 @@ export function computeExportRows(
       utmSource:   tx.utm_source   ?? '(direto)',
       utmCampaign: tx.utm_campaign ?? '',
     }))
+}
+
+// ── KPI summary ──────────────────────────────────────────────
+
+export function computeKpiSummary(
+  curTxs:    RawTx[],
+  prevTxs:   RawTx[],
+  curEvents: RawCheckoutEvent[],
+): KpiSummary {
+  const approved     = curTxs.filter((t) => t.status === 'approved')
+  const prevApproved = prevTxs.filter((t) => t.status === 'approved')
+  const visited      = curEvents.filter((e) => e.event_type === 'visited').length
+
+  const totalRevenue = approved.reduce((s, t) => s + txNet(t), 0)
+  const prevRevenue  = prevApproved.reduce((s, t) => s + txNet(t), 0)
+  const totalSales   = approved.length
+  const prevSales    = prevApproved.length
+  const avgTicket    = totalSales > 0 ? totalRevenue / totalSales : 0
+  const conversionRate = visited > 0 ? (totalSales / visited) * 100 : 0
+
+  return { totalRevenue, totalSales, avgTicket, conversionRate, prevRevenue, prevSales }
+}
+
+// ── Revenue by day ────────────────────────────────────────────
+
+export function computeRevenueByDay(txs: RawTx[], period: Period): DayRevenue[] {
+  const approved = txs.filter((t) => t.status === 'approved')
+
+  let days: number
+  if (period === 'all') {
+    if (approved.length === 0) return []
+    const oldest = approved.reduce((min, t) => {
+      const ts = new Date(t.created_at).getTime()
+      return ts < min ? ts : min
+    }, Date.now())
+    days = Math.min(Math.ceil((Date.now() - oldest) / 86_400_000) + 1, 90)
+  } else {
+    days = period === '7d' ? 7 : period === '30d' ? 30 : 90
+  }
+
+  const byDay: Record<string, { revenue: number; sales: number }> = {}
+  for (const tx of approved) {
+    const key = tx.created_at.slice(0, 10)
+    if (!byDay[key]) byDay[key] = { revenue: 0, sales: 0 }
+    byDay[key].revenue += txNet(tx)
+    byDay[key].sales++
+  }
+
+  return Array.from({ length: days }, (_, i) => {
+    const d   = new Date(Date.now() - (days - 1 - i) * 86_400_000)
+    const key = d.toISOString().slice(0, 10)
+    return {
+      day:     `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`,
+      revenue: byDay[key]?.revenue ?? 0,
+      sales:   byDay[key]?.sales   ?? 0,
+    }
+  })
 }
 
 // ── Cohort RPC → CohortRow[] ─────────────────────────────────

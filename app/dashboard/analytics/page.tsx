@@ -6,7 +6,7 @@ import { getDateRange } from './_utils'
 import {
   computeFunnel, computeByBot, computeByProduct,
   computeByFlow, computeByUtm, computeStatusBreakdown,
-  transformCohortRpc,
+  transformCohortRpc, computeKpiSummary, computeRevenueByDay,
 } from './_server'
 import type { RawTx, RawCheckoutEvent, RawBot, RawFlow, CohortRpcRow } from './_server'
 
@@ -146,6 +146,8 @@ export default async function AnalyticsPage({
 
   const summary: AnalyticsSummary = {
     filters,
+    kpi:             computeKpiSummary(curTxs, prevTxs, curEvts),
+    revenueByDay:    computeRevenueByDay(curTxs, period),
     funnel:          computeFunnel(curTxs, curConts, curEvts, prevTxs, prevConts, prevEvts),
     byBot:           computeByBot(curTxs, bots),
     byProduct:       computeByProduct(curTxs),
