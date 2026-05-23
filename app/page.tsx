@@ -933,22 +933,28 @@ function FinalCTA() {
   return (
     <section className="py-20 md:py-32 relative overflow-hidden">
       <div className="corona" style={{ width: 1000, height: 1000, top: -200, left: '50%', transform: 'translateX(-50%)', opacity: 0.7 }} />
-      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-        <div className="eclipse" style={{ width: 60, height: 60 }} />
-      </div>
-
       <div className="relative max-w-3xl mx-auto px-5 md:px-8 text-center">
+        <div className="mb-6 flex justify-center">
+          <div className="inline-flex items-center gap-2.5 rounded-2xl px-5 py-2.5"
+            style={{
+              background: '#0E0F13',
+              border: '1px solid rgba(124,92,255,0.30)',
+              boxShadow: '0 0 32px -8px rgba(124,92,255,0.35)',
+            }}>
+            <svg viewBox="0 0 100 100" width="26" height="26" aria-hidden="true">
+              <path d="M 18 18 V 60 A 32 32 0 0 0 82 60 V 18 H 64 V 60 A 14 14 0 0 1 36 60 V 18 Z" fill="#f4f4f8" />
+              <rect x="14" y="42" width="72" height="3.5" rx="2" fill="#7C5CFF" />
+            </svg>
+            <span style={{ fontWeight: 700, fontSize: '19px', letterSpacing: '-0.5px', color: '#f4f4f8', lineHeight: 1 }}>
+              umbra<span style={{ color: '#7C5CFF' }}>.</span>bot
+            </span>
+          </div>
+        </div>
         <h2 className="text-[32px] md:text-[52px] font-bold tracking-tight leading-[1.05]">
           Pare de operar.<br />
           <span className="text-grad">Comece a faturar.</span>
         </h2>
-        <div className="mt-5 flex justify-center">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="48" height="48" aria-label="Umbra Bot">
-            <path d="M 18 18 V 60 A 32 32 0 0 0 82 60 V 18 H 64 V 60 A 14 14 0 0 1 36 60 V 18 Z" fill="currentColor" opacity="0.9" />
-            <rect x="14" y="42" width="72" height="3.5" rx="2" fill="#7C5CFF" />
-          </svg>
-        </div>
-        <p className="mt-4 text-[16px] md:text-[17px] text-text-muted max-w-xl mx-auto leading-relaxed">
+        <p className="mt-5 text-[16px] md:text-[17px] text-text-muted max-w-xl mx-auto leading-relaxed">
           O Umbra Bot atende, cobra e entrega — você fica livre pra criar, vender mais e dormir tranquilo. Crie sua conta agora, é grátis.
         </p>
 
