@@ -287,7 +287,77 @@ function SaleTickerSection() {
   )
 }
 
+function TypingIndicator({ side }: { side: 'left' | 'right' }) {
+  const isRight = side === 'right'
+  return (
+    <div className={`flex ${isRight ? 'justify-end' : 'justify-start'}`}
+      style={{ animation: 'chatIn 0.18s ease both' }}>
+      <div
+        className="rounded-2xl px-3 py-2.5"
+        style={isRight
+          ? { background: 'var(--accent)' }
+          : { background: 'var(--surface-2)', border: '1px solid var(--border)' }
+        }
+      >
+        <div className="flex gap-1 items-center" style={{ height: 12 }}>
+          {[0, 1, 2].map(i => (
+            <span
+              key={i}
+              style={{
+                display: 'block',
+                width: 6,
+                height: 6,
+                borderRadius: '50%',
+                background: isRight ? 'var(--accent-fg)' : 'var(--text-muted)',
+                animation: `typingDot 1.1s ${i * 0.18}s ease-in-out infinite`,
+              }}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const CHAT_STEPS: Array<{ side: 'left' | 'right'; typingMs: number; pauseAfter: number }> = [
+  { side: 'left',  typingMs: 950,  pauseAfter: 450 },
+  { side: 'right', typingMs: 480,  pauseAfter: 380 },
+  { side: 'left',  typingMs: 1150, pauseAfter: 380 },
+  { side: 'left',  typingMs: 1050, pauseAfter: 380 },
+  { side: 'right', typingMs: 680,  pauseAfter: 380 },
+  { side: 'left',  typingMs: 920,  pauseAfter: 3800 },
+]
+
 function HeroVisual() {
+  const [visibleCount, setVisibleCount] = useState(0)
+  const [typing, setTyping] = useState<'left' | 'right' | null>(null)
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>
+
+    function runStep(stepIndex: number) {
+      if (stepIndex >= CHAT_STEPS.length) {
+        // pauseAfter of last step already elapsed before this call — just reset
+        setVisibleCount(0)
+        setTyping(null)
+        timer = setTimeout(() => runStep(0), 500)
+        return
+      }
+      const step = CHAT_STEPS[stepIndex]
+      setTyping(step.side)
+      timer = setTimeout(() => {
+        setTyping(null)
+        setVisibleCount(stepIndex + 1)
+        timer = setTimeout(() => runStep(stepIndex + 1), step.pauseAfter)
+      }, step.typingMs)
+    }
+
+    timer = setTimeout(() => runStep(0), 600)
+    return () => clearTimeout(timer)
+  }, [])
+
+  const chatStyle: React.CSSProperties = { animation: 'chatIn 0.22s cubic-bezier(.2,.8,.3,1) both' }
+
   return (
     <div className="relative">
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
@@ -317,38 +387,63 @@ function HeroVisual() {
             <MoreVertical size={14} className="text-text-muted shrink-0" />
           </div>
 
-          <div className="py-3 space-y-2 text-[12px]">
-            <ChatBubble side="left">Olá! Quer entrar no grupo VIP? 🟣</ChatBubble>
-            <ChatBubble side="right">Quero sim</ChatBubble>
-            <ChatBubble side="left">
-              <div className="font-semibold mb-0.5">Acesso VIP — 30 dias</div>
-              <div className="text-[16px] font-bold tnum" style={{ color: 'var(--accent)' }}>R$ 97,00</div>
-              <div className="text-[10.5px] opacity-70 mt-0.5">Pagamento via PIX · instantâneo</div>
-            </ChatBubble>
-            <ChatBubble side="left">
-              <div className="flex items-center gap-2">
-                <div className="w-12 h-12 bg-bg rounded border border-border flex items-center justify-center">
-                  <QrCode size={24} className="text-text" />
-                </div>
-                <div className="text-[10.5px]">
-                  <div className="font-semibold">QR Code PIX</div>
-                  <div className="opacity-70">Toque para copiar</div>
-                </div>
+          <div className="py-3 space-y-2 text-[12px]" style={{ minHeight: 220 }}>
+            {visibleCount >= 1 && (
+              <div style={chatStyle}>
+                <ChatBubble side="left">Olá! Quer entrar no grupo VIP? 🟣</ChatBubble>
               </div>
-            </ChatBubble>
-            <ChatBubble side="right" success>
-              <div className="inline-flex items-center gap-1.5">
-                <CheckCircle2 size={11} className="shrink-0" />
-                Pagamento confirmado
+            )}
+            {visibleCount >= 2 && (
+              <div style={chatStyle}>
+                <ChatBubble side="right">Quero sim</ChatBubble>
               </div>
-            </ChatBubble>
-            <ChatBubble side="left" accent>
-              <div className="font-semibold mb-1">🎉 Acesso liberado!</div>
-              <div className="text-[11px] opacity-90">Clique para entrar no grupo VIP:</div>
-              <div className="mt-1.5 inline-flex items-center gap-1.5 px-2 py-1 bg-white/15 backdrop-blur rounded text-[11px] font-mono">
-                t.me/+abc123…
+            )}
+            {visibleCount >= 3 && (
+              <div style={chatStyle}>
+                <ChatBubble side="left">
+                  <div className="font-semibold mb-0.5">Acesso VIP — 30 dias</div>
+                  <div className="text-[16px] font-bold tnum" style={{ color: 'var(--accent)' }}>R$ 97,00</div>
+                  <div className="text-[10.5px] opacity-70 mt-0.5">Pagamento via PIX · instantâneo</div>
+                </ChatBubble>
               </div>
-            </ChatBubble>
+            )}
+            {visibleCount >= 4 && (
+              <div style={chatStyle}>
+                <ChatBubble side="left">
+                  <div className="flex items-center gap-2">
+                    <div className="w-12 h-12 bg-bg rounded border border-border flex items-center justify-center">
+                      <QrCode size={24} className="text-text" />
+                    </div>
+                    <div className="text-[10.5px]">
+                      <div className="font-semibold">QR Code PIX</div>
+                      <div className="opacity-70">Toque para copiar</div>
+                    </div>
+                  </div>
+                </ChatBubble>
+              </div>
+            )}
+            {visibleCount >= 5 && (
+              <div style={chatStyle}>
+                <ChatBubble side="right" success>
+                  <div className="inline-flex items-center gap-1.5">
+                    <CheckCircle2 size={11} className="shrink-0" />
+                    Pagamento confirmado
+                  </div>
+                </ChatBubble>
+              </div>
+            )}
+            {visibleCount >= 6 && (
+              <div style={chatStyle}>
+                <ChatBubble side="left" accent>
+                  <div className="font-semibold mb-1">🎉 Acesso liberado!</div>
+                  <div className="text-[11px] opacity-90">Clique para entrar no grupo VIP:</div>
+                  <div className="mt-1.5 inline-flex items-center gap-1.5 px-2 py-1 bg-white/15 backdrop-blur rounded text-[11px] font-mono">
+                    t.me/+abc123…
+                  </div>
+                </ChatBubble>
+              </div>
+            )}
+            {typing && <TypingIndicator side={typing} />}
           </div>
 
           <div className="pt-3 border-t border-border flex items-center gap-2 text-text-subtle">
