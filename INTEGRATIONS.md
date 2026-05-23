@@ -85,7 +85,7 @@ Ambos usam `Authorization: Bearer CRON_SECRET`.
   - `lib/supabase/server.ts` — `createClient()` com anon key + cookies (Server Components, API Routes autenticadas)
   - `lib/supabase/client.ts` — `createClient()` browser (Client Components)
   - `lib/supabase/admin.ts` — `createAdminClient()` com service role key (webhooks externos, cron jobs — bypassa RLS)
-- **Total de arquivos de migração:** 92 arquivos `.sql` (numerados 000–091 + timestamps)
+- **Total de arquivos de migração:** 97 arquivos `.sql` (numerados 000–097 + timestamps)
 - **Migrações auxiliares (não executáveis diretamente):** `_combined.sql`, `_pending_analytics_037_to_041.sql`, `_pending_run_now.sql`
 
 ### Supabase Auth
@@ -114,7 +114,7 @@ Ambos usam `Authorization: Bearer CRON_SECRET`.
 - **Estado geral:** habilitado em todas as tabelas com dados de usuário
 - **Política padrão:** `auth.uid() = user_id` para leitura e escrita
 - **Exceção documentada:** tabelas acessadas por `createAdminClient()` (service role bypassa RLS) — usado em webhook Telegram, cron check-bots, cron process-remarketing, cron process-broadcasts, checkout pay (busca dados do dono do checkout), route `/r/[slug]`
-- **Funções com `security definer`:** `track_checkout_event`, `track_affiliate_click`, `submit_affiliate_application`, `get_public_affiliate_program`, `credit_affiliate_sale`, `record_redirect_click`, `redirect_analytics`, `validate_and_apply_coupon`, `checkout_tx_status`, `record_biolink_visit`, `record_biolink_link_click`
+- **Funções com `security definer`:** `track_checkout_event`, `track_affiliate_click`, `submit_affiliate_application`, `get_public_affiliate_program`, `credit_affiliate_sale`, `record_redirect_click`, `redirect_analytics`, `validate_and_apply_coupon`, `checkout_tx_status`, `record_biolink_visit`, `record_biolink_link_click`, `enroll_in_course`, `upsert_lesson_progress`, `get_course_progress`, `issue_certificate`, `get_user_certificates`, `get_course_with_modules`
 
 ---
 
@@ -943,7 +943,12 @@ Total de migrações: **92 arquivos** (numeradas de 000 a 091, mais arquivos de 
 | `guide_article_votes` | Votos de utilidade por artigo (UNIQUE article_id + user_id; toggle via RPC vote_article) |
 | `guide_faqs` | FAQs da plataforma (SSR + accordion no GuideClient) |
 | `guide_search_logs` | Logs de busca no guia (telemetria — INSERT via logGuideSearchAction) |
-| `courses` | Cursos (busca global — sem CRUD) |
+| `courses` | Cursos da academia (RLS SELECT-only para autenticados — migração 094) |
+| `course_enrollments` | Matrículas de usuários em cursos (PK composta user_id+course_id; RPC `enroll_in_course`) |
+| `course_progress` | Progresso por aula (user_id, course_id, lesson_id PK; done, watched_sec, done_at; RPC `upsert_lesson_progress`) |
+| `course_certificates` | Certificados emitidos (UNIQUE user_id+course_id; RPC `issue_certificate` verifica 100% conclusão) |
+| `course_modules` | Módulos relacionais dos cursos (tabela normalizada; fallback JSONB via RPC `get_course_with_modules`) |
+| `course_lessons` | Aulas relacionais por módulo (video_url, duration_min, order_num; FK → course_modules + courses) |
 | `audit_log` | Log de auditoria (tabela criada, uso limitado) |
 | `cron_log` | Log de execução dos cron jobs (job, status, processed, error_message) |
 

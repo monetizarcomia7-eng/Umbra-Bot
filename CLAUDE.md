@@ -336,7 +336,7 @@ umbra-bot/
 │       │   └── GuideClient.tsx   # Client Component: busca + filtros por categoria + ArticlePanel com body lazy,
 │       │                         # TOC (table of contents), votos (helpful/not helpful), views, FAQ accordion,
 │       │                         # suporte CTAs (WhatsApp/Telegram), 5 PostHog eventos
-│       └── academy/              # Academia (mock)
+│       └── academy/              # Academia (SSR + AcademyClient, dados reais, migrações 094–097)
 ├── components/
 │   ├── ReCaptchaWidget.tsx       # Widget reCAPTCHA v2 reutilizável (react-google-recaptcha)
 │   │                             # Renderiza null se NEXT_PUBLIC_RECAPTCHA_SITE_KEY não configurada (dev-safe)
@@ -967,6 +967,16 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Guia da Plataforma — RPC increment_article_views (fire-and-forget via void .then({error})) | ✅ Implementado |
 | Guia da Plataforma — RPC vote_article (toggle: insert/delete + atualiza helpful_yes/no) | ✅ Implementado |
 | Guia da Plataforma — RPC get_article_vote (retorna boolean\|null para estado do voto do usuário) | ✅ Implementado |
+| Academia — Server Component SSR + AcademyClient (dados reais, sem mock) | ✅ Funcional |
+| Academia — 4 queries paralelas no SSR: courses + enrollments + progress + certificates | ✅ Implementado |
+| Academia — RLS corrigida em courses: SELECT-only para authenticated (migração 094) | ✅ Implementado |
+| Academia — course_enrollments: matrícula automática ao abrir curso via RPC enroll_in_course | ✅ Implementado |
+| Academia — course_progress: progresso real por aula (done + watched_sec) via RPC upsert_lesson_progress | ✅ Implementado |
+| Academia — course_certificates: certificado automático ao 100% via RPC issue_certificate | ✅ Implementado |
+| Academia — camada relacional course_modules + course_lessons (opcional; fallback JSONB via RPC) | ✅ Tabelas e RPCs criadas |
+| Academia — progressPct: calculado localmente a partir dos dados do SSR e atualizado otimisticamente | ✅ Implementado |
+| Academia — badge "Meus certificados" com contagem real + CertificatesPanel modal | ✅ Implementado |
+| Academia — empty state quando sem cursos (sem mock) | ✅ Implementado |
 | Testes (unit/e2e) | ❌ Não iniciado |
 | CI/CD | ❌ Não iniciado |
 
@@ -4753,3 +4763,324 @@ created_at    timestamptz not null default now()
 - `logGuideSearchAction`: silencia qualquer exceção (try/catch vazio) — operação de telemetria não crítica
 - fire-and-forget de `increment_article_views`: usa `void .then({error})` em vez de `.catch()` — `PostgrestFilterBuilder` não implementa `.catch()` nativo
 - Artigos: RLS `authenticated` garante que visitantes sem sessão (anon key direta) não acessam
+
+---
+
+## 29. MÓDULO SISTEMA EDUCACIONAL (ACADEMY)
+
+### Arquivos
+
+```
+app/dashboard/academy/
+  ├── page.tsx          # Server Component — SSR courses + enrollments + progress + certificates em paralelo
+  │                     # export const dynamic = 'force-dynamic'
+  └── AcademyClient.tsx # Client Component — toda a UI, modais, progresso real, certificados
+
+supabase/migrations/
+  ├── 094_courses_rls_and_enrollments.sql  # RLS corrigida em courses + tabela course_enrollments + RPC enroll_in_course
+  ├── 095_course_progress.sql              # Tabela course_progress + RPCs upsert_lesson_progress + get_course_progress
+  ├── 096_course_certificates.sql          # Tabela course_certificates + RPCs issue_certificate + get_user_certificates
+  └── 097_course_modules_lessons.sql       # Tabelas course_modules + course_lessons + RPCs get/import modules
+```
+
+### Fluxo de dados
+
+```
+AcademyPage (Server Component)
+  ├── Auth guard: if (!user) redirect('/login')
+  ├── Promise.all com 4 queries em paralelo:
+  │     ├── courses: todos os campos, order: featured desc
+  │     ├── course_enrollments: course_id, enrolled_at — filtrado por user_id
+  │     ├── course_progress: course_id, lesson_id, done, watched_sec, done_at — filtrado por user_id
+  │     └── course_certificates: course_id, issued_at, certificate_url — filtrado por user_id
+  └── passa como props via as unknown as Type[] (tabelas não no Supabase generated types):
+        initialCourses: RawDbCourse[]
+        initialEnrollments: RawDbEnrollment[]
+        initialProgress: RawDbProgress[]
+        initialCertificates: RawDbCertificate[]
+
+AcademyClient (Client Component)
+  ├── mapCourses(courses, enrollments, progress, certificates): Course[]
+  │     Monta estrutura completa: done por lesson_id, enrolledAt, progressPct, hasCert
+  │     modules[].lessons[].done derivado do progressMap (Record<lesson_id, boolean>)
+  ├── courses state: mapCourses(props) — nunca usa MOCK_COURSES
+  ├── activeCourse state: Course | null — null = grade; Course = detalhe/player
+  ├── certsOpen state: boolean — abre CertificatesPanel modal
+  ├── certs state: Certificate[] — mapeado de initialCertificates
+  │
+  ├── ensureEnrolled(courseId): async
+  │     supabase.rpc('enroll_in_course', { p_course_id }) — idempotente (ON CONFLICT DO NOTHING)
+  │     atualiza enrolledAt no courses state local
+  │
+  ├── handleProgress(courseId, lessonId, done): async
+  │     fire-and-forget: supabase.rpc('upsert_lesson_progress', { p_course_id, p_lesson_id, p_done })
+  │     atualiza lesson.done no courses state local (otimista)
+  │     recalcula progressPct: doneCount / totalLessons * 100
+  │     se done=true: chama issue_certificate(courseId) → se issued: adiciona cert ao certs state
+  │
+  ├── openCourse(courseId): seta activeCourse + chama ensureEnrolled
+  │
+  ├── "Meus certificados" badge: certs.length como contador real
+  │     abre CertificatesPanel (modal com lista de certificados emitidos)
+  │
+  ├── Grade de cursos (activeCourse === null):
+  │     CourseCard: título, thumbnail, progresso, hasCert (Award icon quando certificado)
+  │     FeaturedCard: mostra curso em andamento (tem enrolledAt + progressPct > 0 + progressPct < 100)
+  │     Estado vazio quando courses.length === 0 (sem mock)
+  │
+  ├── CourseDetail (activeCourse !== null):
+  │     Módulos accordion + aulas com checkbox
+  │     toggleDone(): muda done local + chama handleProgress
+  │     markDoneAndNext(): marca done + navega para próxima aula + chama handleProgress
+  │     Banner de certificado quando hasCertificate = true
+  │     Descrição da aula exibida quando disponível
+  │
+  ├── CertificatesPanel: modal com lista de Certificate[] (name, issuedAt, courseTitle)
+  │     Botão "Baixar" quando certificate_url definido
+  │
+  └── VideoPlayer: player básico (iframe) para video_url da aula selecionada
+```
+
+### Interfaces TypeScript exportadas
+
+```typescript
+// De AcademyClient.tsx — usadas pelo page.tsx como tipos dos props
+export interface RawDbCourse {
+  id: string; title: string; subtitle: string; description: string
+  thumbnail: string; duration_h: number; level: string; language: string
+  instructor_name: string; instructor_bio: string; instructor_avatar: string
+  featured: boolean; status: string
+  modules: Array<{          // JSONB — estrutura monolítica (migração pré-097)
+    id: string; title: string
+    lessons: Array<{
+      id: string; title: string; description: string
+      duration_min: number; video_url: string
+    }>
+  }>
+}
+
+export interface RawDbEnrollment { course_id: string; enrolled_at: string }
+export interface RawDbProgress   { course_id: string; lesson_id: string; done: boolean; watched_sec: number; done_at: string | null }
+export interface RawDbCertificate { course_id: string; issued_at: string; certificate_url: string | null }
+
+// Tipos internos do AcademyClient
+interface Lesson       { id: string; title: string; description: string; duration_min: number; video_url: string; done: boolean }
+interface Module       { id: string; title: string; lessons: Lesson[] }
+interface Course       { /* todos os campos de RawDbCourse */ modules: Module[]; progressPct: number; enrolledAt: string | null }
+interface FlatLesson   { lesson: Lesson; module: Module; lessonIndex: number; moduleIndex: number }
+interface Certificate  { courseId: string; courseTitle: string; issuedAt: string; certificateUrl: string | null }
+```
+
+### Tabelas do banco
+
+```sql
+-- courses (existente — migração 001)
+-- RLS CORRIGIDA na migração 094:
+--   ANTES: "courses_open" using (true) — qualquer auth (e anon via admin) lia tudo
+--   DEPOIS: "courses_select" for select using (auth.role() = 'authenticated')
+-- Dados gerenciados pelo admin via Supabase Dashboard ou SQL
+
+-- course_enrollments (migração 094)
+create table public.course_enrollments (
+  user_id      uuid        not null references auth.users(id)    on delete cascade,
+  course_id    text        not null references public.courses(id) on delete cascade,
+  enrolled_at  timestamptz not null default now(),
+  primary key (user_id, course_id)
+);
+-- RLS: enrollments_owner (auth.uid() = user_id)
+
+-- course_progress (migração 095)
+create table public.course_progress (
+  user_id      uuid        not null references auth.users(id)    on delete cascade,
+  course_id    text        not null references public.courses(id) on delete cascade,
+  lesson_id    text        not null,   -- ID da aula (vem do JSONB modules para cursos legados)
+  done         boolean     not null default false,
+  watched_sec  integer     not null default 0,
+  done_at      timestamptz,
+  updated_at   timestamptz not null default now(),
+  primary key (user_id, course_id, lesson_id)
+);
+-- RLS: progress_owner (auth.uid() = user_id)
+-- Trigger: course_progress_updated_at (chama set_updated_at())
+
+-- course_certificates (migração 096)
+create table public.course_certificates (
+  id              text        primary key default gen_random_uuid()::text,
+  user_id         uuid        not null references auth.users(id)    on delete cascade,
+  course_id       text        not null references public.courses(id) on delete cascade,
+  issued_at       timestamptz not null default now(),
+  certificate_url text,
+  unique (user_id, course_id)
+);
+-- RLS: certificates_owner (auth.uid() = user_id)
+
+-- course_modules (migração 097 — camada relacional opcional)
+create table public.course_modules (
+  id         text        primary key default gen_random_uuid()::text,
+  course_id  text        not null references public.courses(id) on delete cascade,
+  title      text        not null default '',
+  order_num  integer     not null default 0,
+  created_at timestamptz not null default now()
+);
+-- RLS: modules_select for select using (auth.role() = 'authenticated')
+
+-- course_lessons (migração 097 — camada relacional opcional)
+create table public.course_lessons (
+  id           text        primary key default gen_random_uuid()::text,
+  module_id    text        not null references public.course_modules(id) on delete cascade,
+  course_id    text        not null references public.courses(id)        on delete cascade,
+  title        text        not null default '',
+  description  text        not null default '',
+  duration_min integer     not null default 5,
+  video_url    text        not null default '',
+  order_num    integer     not null default 0,
+  created_at   timestamptz not null default now()
+);
+-- RLS: lessons_select for select using (auth.role() = 'authenticated')
+
+-- course_progress (migração 097 — campo adicional)
+-- lesson_db_id text references public.course_lessons(id) on delete set null
+-- Nullable: ID relacional da aula (null para cursos com dados apenas em JSONB)
+```
+
+### RPCs do módulo
+
+```sql
+-- enroll_in_course(p_course_id text) → void
+-- security definer, grant to authenticated
+-- INSERT em course_enrollments ON CONFLICT DO NOTHING — idempotente
+-- Garante matrícula antes de salvar progresso; chamado ao abrir qualquer curso
+
+-- upsert_lesson_progress(p_course_id, p_lesson_id, p_done, p_watched_sec default 0) → void
+-- security definer, grant to authenticated
+-- Chama enroll_in_course internamente (garante matrícula)
+-- ON CONFLICT: done = excluded.done
+--              watched_sec = GREATEST(atual, novo) — nunca retrocede
+--              done_at: seta apenas ao marcar como done pela primeira vez; limpa ao desmarcar
+
+-- get_course_progress(p_course_id text) → table(lesson_id, done, watched_sec, done_at)
+-- security definer, grant to authenticated
+-- SELECT de course_progress WHERE user_id = auth.uid() AND course_id = p_course_id
+-- Usado para carregar progresso de um curso específico (lazy, sob demanda)
+
+-- issue_certificate(p_course_id text) → json
+-- security definer, grant to authenticated
+-- Conta aulas totais via JSONB: SUM(jsonb_array_length(m -> 'lessons')) FROM courses.modules
+-- Conta aulas done em course_progress WHERE user_id=auth.uid() AND course_id AND done=true
+-- Se done_count >= total_count > 0 AND sem certificado: INSERT em course_certificates
+-- Retorna: { issued: bool, certificate_id: text|null, already_existed: bool }
+-- Também retorna { progress, total } quando não elegível (debug)
+
+-- get_user_certificates() → table(certificate_id, course_id, course_title, course_subtitle, issued_at, certificate_url)
+-- security definer, grant to authenticated
+-- JOIN course_certificates + courses para o usuário logado, order by issued_at desc
+
+-- get_course_with_modules(p_course_id text) → json
+-- security definer, grant to authenticated
+-- Tenta buscar dados das tabelas relacionais course_modules + course_lessons
+-- Se course_modules está vazio para o curso: faz fallback para JSONB em courses.modules
+-- Retorna: { source: 'relational'|'jsonb', modules: [...] }
+
+-- import_course_modules_from_jsonb(p_course_id text) → json
+-- security definer, SEM grant to authenticated — apenas service role (admin)
+-- Lê JSONB de courses.modules e popula course_modules + course_lessons relacionais
+-- Retorna: { modules_imported: N, lessons_imported: N }
+-- Usar via Supabase SQL Editor (admin) para migrar cursos existentes para a camada relacional
+```
+
+### Lógica de progressPct
+
+```typescript
+function calcProgress(course: Course): number {
+  const flat = course.modules.flatMap(m => m.lessons)
+  if (flat.length === 0) return 0
+  return Math.round(flat.filter(l => l.done).length / flat.length * 100)
+}
+// Atualizado no state local após cada handleProgress
+// Atualizado pelo mapCourses na montagem (dados do SSR)
+```
+
+### Emissão de certificado — fluxo completo
+
+```
+1. Usuário marca última aula como done (checkbox ou "Próxima aula")
+2. AcademyClient: handleProgress(courseId, lessonId, true) →
+   a. Atualiza lesson.done=true no state local (otimista)
+   b. fire-and-forget: upsert_lesson_progress (grava no banco)
+   c. supabase.rpc('issue_certificate', { p_course_id })
+3. Se result.issued === true: certs state recebe novo Certificate → badge "Meus certificados" incrementa
+4. CourseDetail: hasCertificate=true → banner verde "🎓 Certificado disponível!" exibido
+
+Verificação anti-fraude (no SQL):
+- issue_certificate conta aulas done DIRETAMENTE da tabela course_progress (não do state React)
+- Só emite se v_total_lessons > 0 AND v_done_lessons >= v_total_lessons AND NOT v_exists
+- Idempotente: segundo clique retorna already_existed=true sem duplicar
+```
+
+### Abordagem JSONB vs Relacional — decisão de arquitetura
+
+| Camada | Quando usar | Status |
+|---|---|---|
+| JSONB (`courses.modules`) | Cursos legados ou inseridos manualmente via Dashboard | ✅ Padrão atual |
+| Relacional (`course_modules` + `course_lessons`) | Cursos novos gerenciados por admin panel futuro | ✅ Tabelas criadas (populáveis via RPC admin) |
+| RPC `get_course_with_modules` | Leitura unificada (tenta relacional → fallback JSONB) | ✅ Implementada |
+
+O `AcademyClient` usa `courses.modules` (JSONB) diretamente (vem no SSR com `select('*')`). A camada relacional é usada quando o admin migrar os dados via `import_course_modules_from_jsonb`.
+
+### Segurança
+
+- Auth check em `page.tsx`: `if (!user) redirect('/login')`
+- Todas as RPCs: `security definer` + `auth.uid()` para IDOR-safe — usuário só acessa/modifica dados próprios
+- Nenhum dado de progresso ou certificado de outros usuários é exposto (RLS `auth.uid() = user_id`)
+- `import_course_modules_from_jsonb`: sem `grant to authenticated` — exclusivo para service role (admin)
+- `courses`: RLS corrigida de `open` (qualquer auth) para `authenticated SELECT only` — sem modificação pelo usuário
+
+### Seeding de cursos
+
+A tabela `courses` é gerenciada pelo admin (sem painel de CRUD no dashboard do usuário). Para adicionar cursos:
+
+```sql
+-- Via Supabase SQL Editor ou Dashboard:
+INSERT INTO public.courses (id, title, subtitle, description, thumbnail, duration_h, level, language,
+  instructor_name, instructor_bio, instructor_avatar, featured, status, modules)
+VALUES (
+  'curso-exemplo',
+  'Título do Curso',
+  'Subtítulo curto',
+  'Descrição completa...',
+  'https://url-da-thumbnail.com/img.jpg',
+  4, 'Iniciante', 'pt-BR',
+  'Nome do Instrutor', 'Bio do instrutor', 'https://avatar-url.com/img.jpg',
+  true, 'published',
+  '[
+    {
+      "id": "modulo-1", "title": "Módulo 1 — Introdução",
+      "lessons": [
+        { "id": "aula-1-1", "title": "Aula 1", "description": "Descrição", "duration_min": 10, "video_url": "https://..." },
+        { "id": "aula-1-2", "title": "Aula 2", "description": "Descrição", "duration_min": 15, "video_url": "https://..." }
+      ]
+    }
+  ]'::jsonb
+);
+```
+
+### Estado do módulo
+
+| Funcionalidade | Status |
+|---|---|
+| SSR courses + enrollments + progress + certs (4 queries paralelas) | ✅ Implementado |
+| RLS corrigida em `courses` (SELECT-only autenticados) | ✅ Implementado (migração 094) |
+| `course_enrollments` — matrícula automática ao abrir curso | ✅ Implementado |
+| `course_progress` — progresso real por aula (done + watched_sec) | ✅ Implementado |
+| `course_certificates` — emissão automática ao 100% | ✅ Implementado |
+| Camada relacional `course_modules` + `course_lessons` (opcional) | ✅ Tabelas e RPCs criadas |
+| RPC `get_course_with_modules` (relacional com fallback JSONB) | ✅ Implementada |
+| RPC `import_course_modules_from_jsonb` (utilitário admin) | ✅ Implementada |
+| Progresso persistido otimisticamente (estado local primeiro) | ✅ Implementado |
+| Certificado emitido ao completar 100% (fire-and-forget RPC) | ✅ Implementado |
+| Badge "Meus certificados" com contagem real | ✅ Implementado |
+| Empty state quando sem cursos cadastrados (sem mock) | ✅ Implementado |
+| Seeding de cursos via Supabase Dashboard (JSONB) | ⏳ Manual (não há painel de admin) |
+| Player de vídeo avançado (controles, tempo assistido real) | ⏳ Não iniciado |
+| Supabase Realtime para progresso (múltiplas abas) | ⏳ Não iniciado |
+| PostHog events (course_opened, lesson_completed, certificate_issued) | ⏳ Não iniciado |
