@@ -184,9 +184,15 @@ umbra-bot/
 │   └── dashboard/
 │       ├── layout.tsx            # Shared layout — envolve todas as rotas /dashboard/** com DashboardLayout
 │       │                         # Garante que DashboardProvider monte uma única vez e persista entre navegações
-│       ├── page.tsx              # Server Component async — busca KPIs 30d no servidor, passa initialData ao DashboardClient
+│       ├── page.tsx              # Server Component async — 9 queries paralelas: transactions (30d) + bots (online count) +
+│       │                         # bots (total count) + prevTransactions (30-60d) + profiles.balance + contacts (30d count) +
+│       │                         # contacts (prev 30-60d count) + activity_events (6) + bots list (6)
+│       │                         # Bug fix: bots.status='online' (não 'active' — inválido no CHECK constraint)
 │       ├── _components/
-│       │   └── DashboardClient.tsx  # Client Component — KPIs reais + deltas + gráfico + top produtos
+│       │   └── DashboardClient.tsx  # Client Component — 5 KPIs reais + deltas + gráfico + top produtos
+│       │                            # Row 2: Saldo Disponível (profiles.balance) + lista dos 6 bots com BotStatusBadge
+│       │                            # Row 4: Atividade Recente (activity_events) + Ações Rápidas (links diretos)
+│       │                            # Interfaces exportadas: ActivityEvent, BotSummary, InitialDashboardData
 │       ├── bots/                 # Gerenciar bots — dados reais (SSR + Realtime)
 │       │   ├── page.tsx          # Server Component: SSR bots (sem token) + flows em paralelo
 │       │   └── BotsClient.tsx    # Client Component: CRUD, Realtime, AddBotModal, tabs, TokenReveal
@@ -205,12 +211,14 @@ umbra-bot/
 │       │   ├── _utils.ts         # Formatadores (fmtBRL, fmtNum, fmtPct) + getDateRange + PERIOD_LABELS
 │       │   ├── _actions.ts       # Server Action: getExportRows(filters) — CSV export sob demanda
 │       │   ├── _server.ts        # Funções de computação Node.js-only: computeFunnel, computeByBot, etc.
-│       │   └── _components/      # 5 componentes isolados
-│       │       ├── FilterBar.tsx     # Barra com 5 selects + toggle Comparar + Limpar
-│       │       ├── FunnelChart.tsx   # Funil 4 etapas + conv. total + deltas de período
-│       │       ├── BarListCard.tsx   # Genérico <T>: bot | produto | fluxo | UTM
-│       │       ├── StatusCard.tsx    # Pizza Recharts — distribuição por status
-│       │       └── CohortTable.tsx   # Coorte semanal S0–S5 com heatmap color-mix
+│       │   └── _components/      # 7 componentes isolados
+│       │       ├── FilterBar.tsx        # Barra com 5 selects + toggle Comparar + Limpar
+│       │       ├── KpiSummaryRow.tsx    # 4 KPI cards com delta badges (compare mode) — Receita/Vendas/Ticket/Conv.
+│       │       ├── RevenueLineChart.tsx # AreaChart diário Receita/Vendas com toggle (mounted pattern SSR-safe)
+│       │       ├── FunnelChart.tsx      # Funil 4 etapas + conv. total + deltas de período
+│       │       ├── BarListCard.tsx      # Genérico <T>: bot | produto | fluxo | UTM
+│       │       ├── StatusCard.tsx       # Pizza Recharts — distribuição por status
+│       │       └── CohortTable.tsx      # Coorte semanal S0–S5 com heatmap color-mix
 │       ├── alerts/               # Alertas Importantes — dados reais do Supabase (SSR + Realtime)
 │       │   ├── page.tsx          # Server Component: SSR 50 alertas + userName do auth — sem mock, sem flash
 │       │   └── AlertsClient.tsx  # Client Component: Realtime INSERT+UPDATE filtrado por user_id,
@@ -517,7 +525,18 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Dashboard top produtos reais (agrupado por product_name) | ✅ Funcional |
 | Seletor de período no Dashboard (7d/30d/90d) + cache useRef | ✅ Funcional |
 | DashboardProvider (contexto global, 1 fetch para user+alerts+bots) | ✅ Funcional |
+| Dashboard — bug fix: bots.status='online' (era 'active' — violava CHECK constraint, activeCount sempre 0) | ✅ Corrigido |
+| Dashboard — 5º KPI card: Leads capturados (contacts count 30d) com delta vs período anterior | ✅ Implementado |
+| Dashboard — saldo disponível via profiles.balance (Row 2, exato por trigger atômico) | ✅ Implementado |
+| Dashboard — lista dos 6 bots (Row 2) com BotStatusBadge (online/offline/banned/paused) | ✅ Implementado |
+| Dashboard — atividade recente (activity_events, últimos 6 eventos) na Row 4 | ✅ Implementado |
+| Dashboard — Ações Rápidas (Row 4): links diretos para Bots/Broadcast/Financeiro/Análises | ✅ Implementado |
+| Dashboard — 9 queries em paralelo no page.tsx (txs+bots+prevTx+profile+leads+prevLeads+activity+botsList) | ✅ Implementado |
 | Análises — módulo modular: filtros SQL server-side, coorte via RPC, cliente fino | ✅ Funcional |
+| Análises — KpiSummaryRow: 4 KPI cards (Receita/Vendas/Ticket médio/Conversão) com DeltaBadge em compare mode | ✅ Implementado |
+| Análises — RevenueLineChart: AreaChart diário Recharts com toggle Receita/Vendas (mounted SSR-safe) | ✅ Implementado |
+| Análises — computeKpiSummary() + computeRevenueByDay() em _server.ts (zero queries extras) | ✅ Implementado |
+| Análises — KpiSummary + DayRevenue interfaces em _types.ts; kpi + revenueByDay no AnalyticsSummary | ✅ Implementado |
 | Análises — checkout_events populado (cart_added via PIX, paid via MP, conversation_started via TG) | ✅ Implementado |
 | Análises — transactions gravando UTM + flow_id (aceitos no POST /api/payments/pix) | ✅ Implementado |
 | Análises — flows com user_id + RLS correta (migração 021 + 040) | ✅ Implementado |
@@ -1323,18 +1342,21 @@ app/dashboard/analytics/
   │                       # paralelismo total (prev queries kickoff antes do await main)
   ├── AnalyticsClient.tsx # Client Component fino (~130 linhas) — useTransition + router.replace
   │                       # + PostHog tracking (filter_changed, csv_exported)
-  ├── _types.ts           # Period, Filters, AnalyticsSummary, BotStat, FlowStat, CohortRow, etc.
+  ├── _types.ts           # Period, Filters, AnalyticsSummary, KpiSummary, DayRevenue, BotStat, FlowStat, CohortRow, etc.
   ├── _utils.ts           # fmtBRL, fmtNum, fmtPct, getDateRange, PERIOD_LABELS
   ├── _actions.ts         # 'use server' — getExportRows(filters): busca aprovadas sob demanda (CSV)
-  ├── _server.ts          # computeFunnel(curTxs, curContactCount, ...) | computeByBot |
+  ├── _server.ts          # computeKpiSummary(curTxs, prevTxs, curEvts) | computeRevenueByDay(curTxs, period) |
+  │                       # computeFunnel(curTxs, curContactCount, ...) | computeByBot |
   │                       # computeByProduct | computeByFlow | computeByUtm |
   │                       # computeStatusBreakdown | computeExportRows | transformCohortRpc
   └── _components/
-      ├── FilterBar.tsx   # 5 selects + toggle Comparar + Limpar — desabilita ao navegar (isPending)
-      ├── FunnelChart.tsx # 4 etapas + % entre etapas + conv. total + deltas vs. anterior
-      ├── BarListCard.tsx # Genérico <T> — bot | produto | fluxo | UTM (barra horizontal)
-      ├── StatusCard.tsx  # PieChart Recharts (donut) — status dos pagamentos
-      └── CohortTable.tsx # Tabela semanal S0–S5 com heatmap color-mix(oklab)
+      ├── FilterBar.tsx        # 5 selects + toggle Comparar + Limpar — desabilita ao navegar (isPending)
+      ├── KpiSummaryRow.tsx    # 4 KPI cards com DeltaBadge (compare mode) — Receita/Vendas/Ticket/Conv.
+      ├── RevenueLineChart.tsx # AreaChart diário Recharts com toggle Receita/Vendas (mounted SSR-safe)
+      ├── FunnelChart.tsx      # 4 etapas + % entre etapas + conv. total + deltas vs. anterior
+      ├── BarListCard.tsx      # Genérico <T> — bot | produto | fluxo | UTM (barra horizontal)
+      ├── StatusCard.tsx       # PieChart Recharts (donut) — status dos pagamentos
+      └── CohortTable.tsx      # Tabela semanal S0–S5 com heatmap color-mix(oklab)
 ```
 
 ### Fluxo de dados
@@ -1361,41 +1383,79 @@ AnalyticsPage (Server Component)
   │     ├── contacts      (período anterior, count-only)
   │     └── checkout_events (período anterior)
   ├── Computa server-side via _server.ts:
+  │     computeKpiSummary(curTxs, prevTxs, curEvts) | computeRevenueByDay(curTxs, period) |
   │     computeFunnel(curTxs, curContactCount, ...) | computeByBot | computeByProduct |
   │     computeByFlow | computeByUtm | computeStatusBreakdown | transformCohortRpc
   └── Passa AnalyticsSummary (objeto serializado) para <AnalyticsClient summary={...} />
 
-AnalyticsClient (Client Component — ~130 linhas)
+AnalyticsClient (Client Component — ~135 linhas)
   ├── Recebe summary: AnalyticsSummary — nenhuma computação client-side
   ├── useTransition + router.replace → atualiza URL ao mudar filtro (sem reload)
   ├── PostHog: track('analytics_filter_changed') a cada mudança de filtro ou Limpar
   ├── handleExport → chama Server Action getExportRows(filters) sob demanda → exportCSV()
   │     track('csv_exported', { section: 'analytics', rows, period })
   ├── FilterBar: isPending=true desabilita interação durante navegação
-  └── Renderiza: FunnelChart | BarListCard×4 | StatusCard | CohortTable
+  └── Renderiza: KpiSummaryRow | FunnelChart | RevenueLineChart | BarListCard×4 | StatusCard | CohortTable
 ```
 
 ### AnalyticsSummary — contrato Server → Client
 
 ```ts
 interface AnalyticsSummary {
-  filters: Filters               // estado atual dos filtros (lido da URL)
-  funnel: FunnelStage[]          // 4 etapas do funil
-  byBot: BotStat[]               // top 5 bots por receita
-  byProduct: ProductStat[]       // top 5 produtos por receita
-  byFlow: FlowStat[]             // top 5 fluxos (isReal=true: dados reais; false: executions estático)
-  byUtm: UtmStat[]               // top 6 origens UTM por receita
-  statusBreakdown: StatusData[]  // distribuição por status (approved/pending/etc.)
-  cohortRows: CohortRow[]        // resultado da RPC analytics_cohort_weekly
-  botOptions: BotOption[]        // opções para o dropdown de bots
-  productOptions: string[]       // opções para o dropdown de produtos (via analytics_filter_options)
-  flowOptions: FlowOption[]      // opções para o dropdown de fluxos
-  utmOptions: string[]           // opções para o dropdown de origens (via analytics_filter_options)
+  filters:       Filters          // estado atual dos filtros (lido da URL)
+  kpi:           KpiSummary       // 4 KPIs + valores de comparação (computeKpiSummary)
+  revenueByDay:  DayRevenue[]     // série diária de receita/vendas (computeRevenueByDay)
+  funnel:        FunnelStage[]    // 4 etapas do funil
+  byBot:         BotStat[]        // top 5 bots por receita
+  byProduct:     ProductStat[]    // top 5 produtos por receita
+  byFlow:        FlowStat[]       // top 5 fluxos (isReal=true: dados reais; false: executions estático)
+  byUtm:         UtmStat[]        // top 6 origens UTM por receita
+  statusBreakdown: StatusData[]   // distribuição por status (approved/pending/etc.)
+  cohortRows:    CohortRow[]      // resultado da RPC analytics_cohort_weekly
+  botOptions:    BotOption[]      // opções para o dropdown de bots
+  productOptions: string[]        // opções para o dropdown de produtos (via analytics_filter_options)
+  flowOptions:   FlowOption[]     // opções para o dropdown de fluxos
+  utmOptions:    string[]         // opções para o dropdown de origens (via analytics_filter_options)
   // exportRows REMOVIDO — fetched on-demand via getExportRows() Server Action (_actions.ts)
-  error: string | null
-  limitReached: boolean
-  queryLimit: number             // 5000
+  error:         string | null
+  limitReached:  boolean
+  queryLimit:    number           // 5000
 }
+
+// Interfaces adicionadas em _types.ts
+interface KpiSummary {
+  totalRevenue:   number   // receita líquida aprovada no período
+  totalSales:     number   // vendas aprovadas no período
+  avgTicket:      number   // totalRevenue / totalSales
+  conversionRate: number   // (totalSales / visited) * 100 — 0 se sem eventos visited
+  prevRevenue:    number   // receita do período anterior (só quando compare=true)
+  prevSales:      number   // vendas do período anterior (só quando compare=true)
+}
+
+interface DayRevenue {
+  day:     string   // 'DD/MM'
+  revenue: number   // receita líquida aprovada nesse dia
+  sales:   number   // número de vendas aprovadas nesse dia
+}
+```
+
+### computeKpiSummary e computeRevenueByDay (_server.ts)
+
+```typescript
+// computeKpiSummary(curTxs, prevTxs, curEvents): KpiSummary
+// Reusa arrays já buscados — zero queries extras ao Supabase
+// approved  = curTxs.filter(t => t.status === 'approved')
+// visited   = curEvents.filter(e => e.event_type === 'visited').length
+// avgTicket = totalSales > 0 ? totalRevenue / totalSales : 0
+// conversionRate = visited > 0 ? (totalSales / visited) * 100 : 0
+// prevRevenue/prevSales = calculados de prevTxs (só preenchidos quando compare=true)
+
+// computeRevenueByDay(txs, period): DayRevenue[]
+// period 'all': detecta dia mais antigo dos approved → máximo 90 dias
+// period '7d'|'30d'|'90d': usa N dias fixos
+// Agrupa por tx.created_at.slice(0,10) (chave YYYY-MM-DD)
+// Retorna array de N entradas na ordem cronológica (sem buracos — 0 em dias sem vendas)
+// day: formato 'DD/MM' (ex: '23/05')
 ```
 
 ### Funil de conversão — fontes de dados
