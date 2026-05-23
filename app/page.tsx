@@ -58,10 +58,10 @@ const iconMap: Record<string, LucideIcon> = {
   'search': Search,
 }
 
-function Icon({ name, size = 16, className = '' }: { name: string; size?: number; className?: string }) {
+function Icon({ name, size = 16, className = '', style }: { name: string; size?: number; className?: string; style?: React.CSSProperties }) {
   const Comp = iconMap[name]
   if (!Comp) return null
-  return <Comp size={size} className={`shrink-0 ${className}`.trim()} />
+  return <Comp size={size} className={`shrink-0 ${className}`.trim()} style={style} />
 }
 
 /* ─── Logo ───────────────────────────────────────────────── */
@@ -304,15 +304,15 @@ function HeroVisual() {
         >
           <div className="flex items-center gap-2.5 pb-3 border-b border-border">
             <div
-              className="relative w-8 h-8 rounded-full flex items-center justify-center text-accent-fg font-bold text-[12px]"
-              style={{ background: 'var(--accent)' }}
+              className="relative w-8 h-8 rounded-full flex items-center justify-center font-bold text-[12px]"
+              style={{ background: 'var(--accent)', color: 'var(--accent-fg)' }}
             >
               U
-              <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-success ring-2 ring-surface" />
+              <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full ring-2 ring-surface" style={{ background: 'var(--success)' }} />
             </div>
             <div className="min-w-0 flex-1">
               <div className="text-[12.5px] font-semibold text-text">Mentoria VIP Bot</div>
-              <div className="text-[10.5px] text-success">online</div>
+              <div className="text-[10.5px]" style={{ color: 'var(--success)' }}>online</div>
             </div>
             <MoreVertical size={14} className="text-text-muted shrink-0" />
           </div>
@@ -424,9 +424,9 @@ function Hero() {
             </div>
 
             <div className="mt-6 flex items-center gap-5 text-[12px] text-text-muted flex-wrap">
-              <span className="inline-flex items-center gap-1.5"><Check size={12} className="text-success shrink-0" /> Sem cartão de crédito</span>
-              <span className="inline-flex items-center gap-1.5"><Check size={12} className="text-success shrink-0" /> Setup em minutos</span>
-              <span className="inline-flex items-center gap-1.5"><Check size={12} className="text-success shrink-0" /> Sem código</span>
+              <span className="inline-flex items-center gap-1.5"><Check size={12} className="shrink-0" style={{ color: 'var(--success)' }} /> Sem cartão de crédito</span>
+              <span className="inline-flex items-center gap-1.5"><Check size={12} className="shrink-0" style={{ color: 'var(--success)' }} /> Setup em minutos</span>
+              <span className="inline-flex items-center gap-1.5"><Check size={12} className="shrink-0" style={{ color: 'var(--success)' }} /> Sem código</span>
             </div>
           </div>
 
@@ -462,7 +462,7 @@ function Highlights() {
         <div style={{ display: 'flex', alignItems: 'center', width: 'max-content', gap: '2.5rem', animation: 'marquee-lp 16s linear infinite' }}>
           {doubled.map((it, i) => (
             <div key={i} className="inline-flex items-center gap-2 text-[13px] shrink-0">
-              <Icon name={it.icon} size={14} className="text-accent" />
+              <Icon name={it.icon} size={14} style={{ color: 'var(--accent)' }} />
               <span className="font-medium text-text">{it.label}</span>
             </div>
           ))}
@@ -475,8 +475,8 @@ function Highlights() {
 /* ─── SectionEyebrow ─────────────────────────────────────── */
 function SectionEyebrow({ children }: { children: React.ReactNode }) {
   return (
-    <div className="inline-flex items-center gap-2 text-[10.5px] uppercase tracking-[0.2em] font-semibold text-accent">
-      <span className="w-6 h-px bg-accent" />
+    <div className="inline-flex items-center gap-2 text-[10.5px] uppercase tracking-[0.2em] font-semibold" style={{ color: 'var(--accent)' }}>
+      <span className="w-6 h-px" style={{ background: 'var(--accent)' }} />
       {children}
     </div>
   )
@@ -514,10 +514,10 @@ function BeforeAfter() {
         <div className="mt-10 rounded-2xl border border-border overflow-hidden">
           <div className="grid grid-cols-1 md:grid-cols-[180px_1fr_1fr] bg-surface-2 border-b border-border">
             <div className="hidden md:block px-5 py-3 text-[10.5px] uppercase tracking-wider font-semibold text-text-subtle">Etapa</div>
-            <div className="px-5 py-3 text-[10.5px] uppercase tracking-wider font-semibold text-danger border-l border-border flex items-center gap-2">
+            <div className="px-5 py-3 text-[10.5px] uppercase tracking-wider font-semibold border-l border-border flex items-center gap-2" style={{ color: 'var(--danger)' }}>
               <XCircle size={12} className="shrink-0" /> Venda manual hoje
             </div>
-            <div className="px-5 py-3 text-[10.5px] uppercase tracking-wider font-semibold text-accent border-l border-border flex items-center gap-2">
+            <div className="px-5 py-3 text-[10.5px] uppercase tracking-wider font-semibold border-l border-border flex items-center gap-2" style={{ color: 'var(--accent)' }}>
               <CheckCircle2 size={12} className="shrink-0" /> Com Umbra Bot
             </div>
           </div>
@@ -528,14 +528,14 @@ function BeforeAfter() {
                 {r.label}
               </div>
               <div className="px-5 py-3 md:py-4 text-[13.5px] text-text-muted leading-snug border-l border-border bg-surface/30">
-                <X size={12} className="inline-block text-danger -mt-0.5 mr-1.5 shrink-0" />
+                <X size={12} className="inline-block -mt-0.5 mr-1.5 shrink-0" style={{ color: 'var(--danger)' }} />
                 {r.before}
               </div>
               <div
                 className="px-5 py-3 md:py-4 text-[13.5px] text-text font-medium leading-snug border-l border-border"
                 style={{ background: 'color-mix(in oklab, var(--accent) 4%, transparent)' }}
               >
-                <Check size={12} className="inline-block text-accent -mt-0.5 mr-1.5 shrink-0" />
+                <Check size={12} className="inline-block -mt-0.5 mr-1.5 shrink-0" style={{ color: 'var(--accent)' }} />
                 {r.after}
               </div>
             </div>
@@ -584,10 +584,10 @@ function Features() {
           {features.map((f) => (
             <div
               key={f.title}
-              className="group relative bg-surface border border-border rounded-xl p-5 hover:border-accent/40 transition-colors"
+              className="group relative bg-surface border border-border rounded-xl p-5 transition-colors"
             >
               <div
-                className="w-9 h-9 rounded-lg flex items-center justify-center mb-4 group-hover:bg-accent/15 transition-colors"
+                className="w-9 h-9 rounded-lg flex items-center justify-center mb-4 transition-colors"
                 style={{
                   color: 'var(--accent)',
                   border: '1px solid color-mix(in oklab, var(--accent) 20%, transparent)',
@@ -702,7 +702,7 @@ function TrackingRow({ icon, name, sub }: { icon: string; name: string; sub: str
         <div className="text-[13px] font-semibold text-text">{name}</div>
         <div className="text-[11px] text-text-muted truncate">{sub}</div>
       </div>
-      <CheckCircle2 size={14} className="text-success ml-auto shrink-0" />
+      <CheckCircle2 size={14} className="ml-auto shrink-0" style={{ color: 'var(--success)' }} />
     </div>
   )
 }
@@ -794,7 +794,7 @@ function Pricing() {
             />
             <div className="relative bg-surface rounded-xl p-7 md:p-10">
               <div className="flex items-center justify-between flex-wrap gap-3 mb-2">
-                <div className="text-[10.5px] uppercase tracking-[0.2em] font-semibold text-accent">Modelo único · pay-as-you-sell</div>
+                <div className="text-[10.5px] uppercase tracking-[0.2em] font-semibold" style={{ color: 'var(--accent)' }}>Modelo único · pay-as-you-sell</div>
                 <span
                   className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10.5px] font-semibold"
                   style={{ background: 'color-mix(in oklab, var(--success) 15%, transparent)', color: 'var(--success)' }}
@@ -815,7 +815,7 @@ function Pricing() {
               <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-3">
                 {benefits.map((b) => (
                   <div key={b.title} className="flex items-start gap-2.5 p-3 bg-surface-2/50 border border-border rounded-lg">
-                    <Icon name={b.icon} size={14} className="text-accent shrink-0 mt-0.5" />
+                    <Icon name={b.icon} size={14} className="shrink-0 mt-0.5" style={{ color: 'var(--accent)' }} />
                     <div className="min-w-0">
                       <div className="text-[13px] font-semibold text-text">{b.title}</div>
                       <div className="text-[11.5px] text-text-muted leading-snug">{b.desc}</div>
@@ -841,26 +841,26 @@ function Pricing() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
             <div>
               <div className="flex items-center gap-2 mb-2">
-                <XCircle size={14} className="text-danger shrink-0" />
+                <XCircle size={14} className="shrink-0" style={{ color: 'var(--danger)' }} />
                 <div className="text-[13px] font-semibold text-text">O modelo das outras ferramentas</div>
               </div>
               <ul className="space-y-2 text-[12.5px] text-text-muted leading-relaxed">
-                <li className="flex items-start gap-2"><X size={11} className="text-danger shrink-0 mt-1" /> Cobram mensalidade fixa, vendendo ou não</li>
-                <li className="flex items-start gap-2"><X size={11} className="text-danger shrink-0 mt-1" /> Retêm percentual + cobram mensalidade junto</li>
-                <li className="flex items-start gap-2"><X size={11} className="text-danger shrink-0 mt-1" /> Travam recursos atrás de planos avançados</li>
-                <li className="flex items-start gap-2"><X size={11} className="text-danger shrink-0 mt-1" /> Mistura confusa de taxas — você nunca sabe quanto sobra</li>
+                <li className="flex items-start gap-2"><X size={11} className="shrink-0 mt-1" style={{ color: 'var(--danger)' }} /> Cobram mensalidade fixa, vendendo ou não</li>
+                <li className="flex items-start gap-2"><X size={11} className="shrink-0 mt-1" style={{ color: 'var(--danger)' }} /> Retêm percentual + cobram mensalidade junto</li>
+                <li className="flex items-start gap-2"><X size={11} className="shrink-0 mt-1" style={{ color: 'var(--danger)' }} /> Travam recursos atrás de planos avançados</li>
+                <li className="flex items-start gap-2"><X size={11} className="shrink-0 mt-1" style={{ color: 'var(--danger)' }} /> Mistura confusa de taxas — você nunca sabe quanto sobra</li>
               </ul>
             </div>
             <div>
               <div className="flex items-center gap-2 mb-2">
-                <CheckCircle2 size={14} className="text-accent shrink-0" />
+                <CheckCircle2 size={14} className="shrink-0" style={{ color: 'var(--accent)' }} />
                 <div className="text-[13px] font-semibold text-text">O modelo Umbra</div>
               </div>
               <ul className="space-y-2 text-[12.5px] text-text leading-relaxed">
-                <li className="flex items-start gap-2"><Check size={11} className="text-accent shrink-0 mt-1" /> Sem mensalidade — começar é R$ 0</li>
-                <li className="flex items-start gap-2"><Check size={11} className="text-accent shrink-0 mt-1" /> Você paga só quando uma venda acontece</li>
-                <li className="flex items-start gap-2"><Check size={11} className="text-accent shrink-0 mt-1" /> Todos os recursos liberados desde o dia 1</li>
-                <li className="flex items-start gap-2"><Check size={11} className="text-accent shrink-0 mt-1" /> Dinheiro vai direto pro seu gateway — sem markup</li>
+                <li className="flex items-start gap-2"><Check size={11} className="shrink-0 mt-1" style={{ color: 'var(--accent)' }} /> Sem mensalidade — começar é R$ 0</li>
+                <li className="flex items-start gap-2"><Check size={11} className="shrink-0 mt-1" style={{ color: 'var(--accent)' }} /> Você paga só quando uma venda acontece</li>
+                <li className="flex items-start gap-2"><Check size={11} className="shrink-0 mt-1" style={{ color: 'var(--accent)' }} /> Todos os recursos liberados desde o dia 1</li>
+                <li className="flex items-start gap-2"><Check size={11} className="shrink-0 mt-1" style={{ color: 'var(--accent)' }} /> Dinheiro vai direto pro seu gateway — sem markup</li>
               </ul>
             </div>
           </div>
