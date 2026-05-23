@@ -1,0 +1,22 @@
+:root {
+  /* Brand */
+  --accent:         #7C5CFF;
+  --accent-hover:   #6242ff;
+  --accent-soft:    rgba(124,92,255,0.18);
+  --accent-fg:      #0a0b0e;
+
+  /* Dark theme */
+  --bg:             #0E0F13;
+  --surface:        #15171C;
+  --surface-2:      #1d1f26;
+  --text:           #f4f4f8;
+  --text-muted:     #a0a0ab;
+  --text-subtle:    #6b6b76;
+  --border:         #25262d;
+  --border-strong:  #2d2d3a;
+
+  /* Light theme */
+  --bg-light:       #F7F8FA;
+  --surface-light:  #ffffff;
+  --text-dark:      #0E0F13;
+}

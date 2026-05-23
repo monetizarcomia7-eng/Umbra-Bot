@@ -85,7 +85,7 @@ Ambos usam `Authorization: Bearer CRON_SECRET`.
   - `lib/supabase/server.ts` — `createClient()` com anon key + cookies (Server Components, API Routes autenticadas)
   - `lib/supabase/client.ts` — `createClient()` browser (Client Components)
   - `lib/supabase/admin.ts` — `createAdminClient()` com service role key (webhooks externos, cron jobs — bypassa RLS)
-- **Total de arquivos de migração:** 97 arquivos `.sql` (numerados 000–097 + timestamps)
+- **Total de arquivos de migração:** 98 arquivos `.sql` (numerados 000–098 + timestamps)
 - **Migrações auxiliares (não executáveis diretamente):** `_combined.sql`, `_pending_analytics_037_to_041.sql`, `_pending_run_now.sql`
 
 ### Supabase Auth
@@ -221,6 +221,12 @@ Ambos usam `Authorization: Bearer CRON_SECRET`.
 - `public/sw.js` — Service Worker que exibe a notificação e trata cliques
 
 **Rate limit:** 30 notificações/min por usuário.
+
+**Payload de notificação** (`app/api/push/notify/route.ts`, linha 51–56):
+```json
+{ "title": "Umbra Bot", "body": "...", "url": "/dashboard", "icon": "/favicon.svg" }
+```
+> O campo `icon` usa `/favicon.svg` (SVG da marca — não `/favicon.ico`).
 
 **Variáveis de ambiente:**
 
@@ -394,6 +400,11 @@ Ambos usam `Authorization: Bearer CRON_SECRET`.
 | `guide_search_performed` | GuideClient — ao realizar busca ≥ 2 chars (query, results_count) |
 | `guide_support_clicked` | GuideClient — ao clicar em CTA de suporte (action: 'whatsapp'\|'telegram') |
 | `guide_category_viewed` | GuideClient — ao filtrar por categoria (category: string) |
+| `course_opened` | AcademyClient — ao abrir curso (course_id, course_title, is_enrolled) |
+| `lesson_completed` | AcademyClient — ao marcar aula como concluída (course_id, lesson_id, lesson_title, progress_pct) |
+| `certificate_issued` | AcademyClient — ao emitir certificado ao concluir 100% (course_id, course_title) |
+| `course_searched` | AcademyClient — ao digitar no campo de busca (query, results_count) |
+| `course_filtered` | AcademyClient — ao filtrar cursos por nível (level) |
 | `tool_opened` | (EventMap — módulo Ferramentas, não iniciado) |
 | `test_message_sent` | (EventMap — módulo Ferramentas, não iniciado) |
 | `token_validated` | (EventMap — não iniciado) |
@@ -904,7 +915,7 @@ Fonte: `.env.example` na raiz do repositório.
 
 ## 11. TABELAS DO BANCO
 
-Total de migrações: **92 arquivos** (numeradas de 000 a 091, mais arquivos de timestamp).
+Total de migrações: **99 arquivos** (numeradas de 000 a 098, mais arquivos de timestamp).
 
 | Tabela | Função |
 |---|---|
@@ -929,7 +940,7 @@ Total de migrações: **92 arquivos** (numeradas de 000 a 091, mais arquivos de 
 | `redirects` | Links de redirecionamento (slug, destination, cloaking, utm) |
 | `redirect_click_events` | Eventos de clique em redirecionadores (ip_hash, device_type, referrer) |
 | `alerts` | Alertas do dashboard (type, severity, source, context, resolved_by_id) |
-| `activity_events` | Feed de atividade (type, title, description, bot_id, contact_id) |
+| `activity_events` | Feed de atividade (type, title, description, bot_id, contact_id) — tipos: sale/lead/payment/refund/reconnect/disconnect/limit/newBot/webhookFailed/flowPublished/cancellation/failure/team_invite/courseCompleted (migração 098) |
 | `notification_prefs` | Preferências de notificação por canal (email, panel, telegram) |
 | `push_subscriptions` | Subscriptions WebPush por usuário |
 | `invoices` | Faturas de billing (period, value, due_date, status) |

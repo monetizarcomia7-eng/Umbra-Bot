@@ -3,6 +3,9 @@
 Schema extraído diretamente do banco Supabase (projeto: `aoycxcepjvpmeptdafxn`).
 **38 tabelas** no schema `public`.
 
+> **Última migração aplicada:** 098 (seed curso Academia + CHECK courseCompleted em activity_events).
+> **Próximas migrações pendentes:** nenhuma — identidade visual (logos, favicon, og-image) não requer migração de banco.
+
 ---
 
 ## public.activity_events
@@ -462,6 +465,114 @@ modules:           jsonb       NOT NULL  default '[]'
 created_at:        timestamptz NOT NULL  default now()
 updated_at:        timestamptz NOT NULL  default now()
 ```
+
+RLS: `courses_select` for select using `auth.role() = 'authenticated'` (migração 094 — substituiu `courses_open` que usava `using true`)
+
+Conteúdo gerenciado pelo admin via Supabase Dashboard. `video_url` de cada aula deve ser URL de vídeo válida (YouTube, Vimeo, Bunny.net ou URL direta).
+Seed "Dominando o Umbra Bot" inserido via migração 098 (`ON CONFLICT (id) DO NOTHING` — idempotente).
+
+**RPC `get_course_with_modules(p_course_id text)`** — security definer, grant to authenticated:
+- Tenta dados relacionais (`course_modules` + `course_lessons`); fallback JSONB em `courses.modules`
+- Retorna: `{ source: 'relational'|'jsonb', modules: [...] }`
+
+---
+
+## public.course_enrollments
+
+```
+user_id:     uuid        NOT NULL  FK → auth.users(id)  ON DELETE CASCADE
+course_id:   text        NOT NULL  FK → courses(id)      ON DELETE CASCADE
+enrolled_at: timestamptz NOT NULL  default now()
+PRIMARY KEY (user_id, course_id)
+```
+
+RLS: `enrollments_owner` → `auth.uid() = user_id` (migração 094)
+
+**RPC `enroll_in_course(p_course_id text)`** — security definer, grant to authenticated:
+- `INSERT ON CONFLICT DO NOTHING` — idempotente; chamada ao abrir qualquer curso
+
+---
+
+## public.course_progress
+
+```
+user_id:     uuid        NOT NULL  FK → auth.users(id)  ON DELETE CASCADE
+course_id:   text        NOT NULL  FK → courses(id)      ON DELETE CASCADE
+lesson_id:   text        NOT NULL  (ID da aula do JSONB modules)
+done:        boolean     NOT NULL  default false
+watched_sec: integer     NOT NULL  default 0
+done_at:     timestamptz           (preenchido ao done=true; limpo ao desmarcar)
+updated_at:  timestamptz NOT NULL  default now()
+PRIMARY KEY (user_id, course_id, lesson_id)
+```
+
+RLS: `progress_owner` → `auth.uid() = user_id` (migração 095)
+Trigger: `course_progress_updated_at` (chama `set_updated_at()`)
+
+**RPC `upsert_lesson_progress(p_course_id, p_lesson_id, p_done, p_watched_sec default 0)`** — security definer:
+- Chama `enroll_in_course` internamente; `watched_sec = GREATEST(atual, novo)` (nunca retrocede)
+
+**RPC `get_course_progress(p_course_id text)`** → table(lesson_id, done, watched_sec, done_at):
+- SELECT WHERE `user_id = auth.uid() AND course_id = p_course_id`
+
+---
+
+## public.course_certificates
+
+```
+id:              text        NOT NULL  default gen_random_uuid()::text
+user_id:         uuid        NOT NULL  FK → auth.users(id)  ON DELETE CASCADE
+course_id:       text        NOT NULL  FK → courses(id)      ON DELETE CASCADE
+issued_at:       timestamptz NOT NULL  default now()
+certificate_url: text                  (URL do certificado — null enquanto não disponível)
+UNIQUE (user_id, course_id)
+```
+
+RLS: `certificates_owner` → `auth.uid() = user_id` (migração 096)
+
+**RPC `issue_certificate(p_course_id text)`** → json — security definer, grant to authenticated:
+- Conta aulas totais via JSONB `SUM(jsonb_array_length(m -> 'lessons'))` + aulas done em `course_progress`
+- Emite certificado se `done_count >= total_count > 0` AND sem certificado existente
+- Retorna: `{ issued: bool, certificate_id: text|null, already_existed: bool }` — idempotente
+
+**RPC `get_user_certificates()`** → table — security definer, grant to authenticated:
+- JOIN `course_certificates` + `courses` ORDER BY `issued_at desc`
+
+---
+
+## public.course_modules
+
+```
+id:         text        NOT NULL  default gen_random_uuid()::text
+course_id:  text        NOT NULL  FK → courses(id)  ON DELETE CASCADE
+title:      text        NOT NULL  default ''
+order_num:  integer     NOT NULL  default 0
+created_at: timestamptz NOT NULL  default now()
+```
+
+RLS: `modules_select` for select using `auth.role() = 'authenticated'` (migração 097 — camada relacional opcional)
+
+---
+
+## public.course_lessons
+
+```
+id:           text        NOT NULL  default gen_random_uuid()::text
+module_id:    text        NOT NULL  FK → course_modules(id)  ON DELETE CASCADE
+course_id:    text        NOT NULL  FK → courses(id)          ON DELETE CASCADE
+title:        text        NOT NULL  default ''
+description:  text        NOT NULL  default ''
+duration_min: integer     NOT NULL  default 5
+video_url:    text        NOT NULL  default ''
+order_num:    integer     NOT NULL  default 0
+created_at:   timestamptz NOT NULL  default now()
+```
+
+RLS: `lessons_select` for select using `auth.role() = 'authenticated'` (migração 097)
+
+**RPC `import_course_modules_from_jsonb(p_course_id text)`** — sem grant to authenticated (service role apenas):
+- Popula `course_modules` + `course_lessons` a partir do JSONB em `courses.modules`
+- Retorna: `{ modules_imported: N, lessons_imported: N }`
 
 ---
 
@@ -1035,4 +1146,23 @@ guide_articles  (sem user_id — conteúdo global compartilhado)
 
 guide_faqs          (sem user_id — conteúdo global)
 guide_search_logs   (user_id → auth.users(id))  [telemetria]
+
+courses  (sem user_id — conteúdo global gerenciado pelo admin)
+  ├── course_enrollments  (user_id → auth.users(id), course_id → courses(id))  [mig 094]
+  ├── course_progress     (user_id → auth.users(id), course_id → courses(id))  [mig 095]
+  ├── course_certificates (user_id → auth.users(id), course_id → courses(id))  [mig 096]
+  └── course_modules      (course_id → courses(id))  [mig 097]
+        └── course_lessons (module_id → course_modules(id), course_id → courses(id))  [mig 097]
 ```
+
+---
+
+## Migrações da Academia (094–098)
+
+| Migração | O que fez |
+|---|---|
+| 094 | Corrigiu RLS em `courses` (SELECT-only para `authenticated`); criou `course_enrollments` + RPC `enroll_in_course` |
+| 095 | Criou `course_progress` (PK composta user_id+course_id+lesson_id) + RPCs `upsert_lesson_progress` + `get_course_progress` |
+| 096 | Criou `course_certificates` (UNIQUE user_id+course_id) + RPCs `issue_certificate` + `get_user_certificates` |
+| 097 | Criou camada relacional `course_modules` + `course_lessons`; RPCs `get_course_with_modules` (fallback JSONB) + `import_course_modules_from_jsonb` (admin) |
+| 098 | DROP/ADD `activity_events_type_check` para incluir `'courseCompleted'`; seed curso "Dominando o Umbra Bot" (4 módulos, 13 aulas, `ON CONFLICT DO NOTHING`) |

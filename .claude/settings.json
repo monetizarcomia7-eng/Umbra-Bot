@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(New-Item -ItemType Directory -Force \"c:\\\\Users\\\\Usuario\\\\Downloads\\\\umbra-bot\\\\app\\\\api\\\\affiliates\\\\apply\")",
+      "Bash(New-Item -ItemType Directory -Force \"c:\\\\Users\\\\Usuario\\\\Downloads\\\\umbra-bot\\\\app\\\\r\\\\[slug]\")",
+      "Bash(Write-Output \"ok\")"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\Usuario\\Downloads\\umbra-bot\\app\\afiliar"
+    ]
+  }
+}

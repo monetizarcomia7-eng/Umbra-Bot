@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 140" width="200" height="140">
+  <g transform="translate(68 14)">
+    <path d="M 18 18 V 60 A 32 32 0 0 0 82 60 V 18 H 64 V 60 A 14 14 0 0 1 36 60 V 18 Z" fill="#f4f4f8" transform="scale(0.64)"/>
+    <rect x="14" y="42" width="72" height="3.5" rx="2" fill="#7C5CFF" transform="scale(0.64)"/>
+  </g>
+  <text x="100" y="120" font-family="Space Grotesk, sans-serif" font-weight="600" font-size="22" letter-spacing="-0.9" fill="#f4f4f8" text-anchor="middle">umbra<tspan fill="#7C5CFF">.</tspan>bot</text>
+</svg>

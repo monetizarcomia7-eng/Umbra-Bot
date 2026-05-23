@@ -182,6 +182,8 @@ umbra-bot/
 │   │                             #    record_redirect_click RPC (migração 065) + 301/302 conforme redirect_type
 │   │                             # Não está no matcher do middleware → público por padrão
 │   └── dashboard/
+│       ├── layout.tsx            # Shared layout — envolve todas as rotas /dashboard/** com DashboardLayout
+│       │                         # Garante que DashboardProvider monte uma única vez e persista entre navegações
 │       ├── page.tsx              # Server Component async — busca KPIs 30d no servidor, passa initialData ao DashboardClient
 │       ├── _components/
 │       │   └── DashboardClient.tsx  # Client Component — KPIs reais + deltas + gráfico + top produtos
@@ -336,7 +338,9 @@ umbra-bot/
 │       │   └── GuideClient.tsx   # Client Component: busca + filtros por categoria + ArticlePanel com body lazy,
 │       │                         # TOC (table of contents), votos (helpful/not helpful), views, FAQ accordion,
 │       │                         # suporte CTAs (WhatsApp/Telegram), 5 PostHog eventos
-│       └── academy/              # Academia (SSR + AcademyClient, dados reais, migrações 094–097)
+│       └── academy/              # Academia (SSR + AcademyClient, dados reais, migrações 094–098)
+│                                 # VideoPlayer real (YouTube/Vimeo/Bunny.net/direct/placeholder)
+│                                 # Busca + filtro por nível, 5 PostHog events, courseCompleted activity event
 ├── components/
 │   ├── ReCaptchaWidget.tsx       # Widget reCAPTCHA v2 reutilizável (react-google-recaptcha)
 │   │                             # Renderiza null se NEXT_PUBLIC_RECAPTCHA_SITE_KEY não configurada (dev-safe)
@@ -4766,6 +4770,131 @@ created_at    timestamptz not null default now()
 
 ---
 
+## 30. IDENTIDADE VISUAL E ASSETS ⏳ Em progresso
+
+### Marca — SVG path canônico
+
+```svg
+<!-- Símbolo "U" em viewBox 0 0 100 100 -->
+<path d="M 18 18 V 60 A 32 32 0 0 0 82 60 V 18 H 64 V 60 A 14 14 0 0 1 36 60 V 18 Z" fill="#f4f4f8"/>
+<rect x="14" y="42" width="72" height="3.5" rx="2" fill="#7C5CFF"/>  <!-- barra accent -->
+```
+
+Variantes da barra accent por contexto:
+- `fill="#7C5CFF"` — ícone isolado (fundo escuro transparente)
+- `fill="rgba(0,0,0,0.65)"` — ícone com fundo roxo sólido (sidebar, changelog)
+- `fill="rgba(0,0,0,0.6)"` — ícone em badge pequeno dentro de div roxa (auth pages)
+
+Cores da marca:
+- Accent: `#7C5CFF` (alias: `var(--primary)`)
+- Fundo escuro: `#0E0F13`
+- Surface escuro: `#15171C`
+- Texto claro: `#f4f4f8`
+
+### Arquivos criados
+
+#### `app/` — detecção automática pelo Next.js
+
+| Arquivo | Uso |
+|---|---|
+| `app/icon.svg` | Favicon detectado automaticamente pelo App Router |
+| `app/apple-icon.svg` | Apple Touch Icon 180×180 |
+
+#### `public/` — assets estáticos
+
+| Arquivo | Uso |
+|---|---|
+| `favicon.svg` | Fallback favicon + referenciado em `app/layout.tsx` e `public/sw.js` |
+| `og-image.svg` | Open Graph 1200×630 (fundo escuro + glow + headline) |
+| `logo.svg` | Lockup horizontal — fundo escuro |
+| `logo-dark.svg` | Lockup horizontal — fundo claro |
+| `logo-mark.svg` | Símbolo isolado |
+| `logo-mark-purple.svg` | Símbolo em círculo roxo |
+| `android-chrome-192x192.svg` | PWA icon 192px |
+| `android-chrome-512x512.svg` | PWA icon 512px |
+| `site.webmanifest` | PWA manifest (theme `#0E0F13`, display `standalone`) |
+
+### Componentes atualizados
+
+Todos os 7 locais que usavam o path errado (estrela/diamante `M16 6.5 L18 13.5…`) foram corrigidos para o símbolo "U" canônico:
+
+| Arquivo | Contexto |
+|---|---|
+| `components/dashboard/Sidebar.tsx` | Logo na sidebar (28×28, fundo `var(--primary)`) |
+| `app/(auth)/login/page.tsx` | Logo no cabeçalho da auth (18×18, dentro de div roxa) |
+| `app/(auth)/register/page.tsx` | Logo no cabeçalho da auth |
+| `app/(auth)/forgot-password/page.tsx` | Logo no cabeçalho da auth |
+| `app/auth/reset-password/page.tsx` | Logo no cabeçalho da auth |
+| `app/changelog/page.tsx` | Logo no header público (24×24, com rounded rect + fundo primary) |
+| `app/api/push/notify/route.ts` | `icon` no payload push: `/favicon.ico` → `/favicon.svg` |
+
+### `app/layout.tsx` — metadata completo
+
+```tsx
+export const metadata: Metadata = {
+  metadataBase: new URL(APP_URL),
+  title: { default: 'Umbra Bot — Venda no Telegram no automático', template: '%s — Umbra Bot' },
+  icons: { icon: [{ url: '/favicon.svg', type: 'image/svg+xml' }],
+           apple: [{ url: '/apple-touch-icon.svg', type: 'image/svg+xml', sizes: '180x180' }],
+           shortcut: '/favicon.svg' },
+  manifest: '/site.webmanifest',
+  openGraph: { type: 'website', locale: 'pt_BR', siteName: 'Umbra Bot',
+               images: [{ url: '/og-image.svg', width: 1200, height: 630 }] },
+  twitter: { card: 'summary_large_image', images: ['/og-image.svg'] },
+}
+export const viewport: Viewport = {
+  themeColor: [{ media: '(prefers-color-scheme: dark)',  color: '#0E0F13' },
+               { media: '(prefers-color-scheme: light)', color: '#F7F8FA' }],
+}
+```
+
+### Status ⏳ Em progresso
+
+- Atualizações adicionais de ícones ainda serão feitas nesta área
+- Possíveis próximos passos: ícones nas páginas públicas de checkout e bio link, favicon.png para compatibilidade máxima
+
+### Landing page (`app/page.tsx`) — Tailwind v4 color fix
+
+**IMPORTANTE:** Dentro do wrapper `.lp` em `app/page.tsx`, **não usar classes Tailwind de cor** como `text-accent`, `bg-accent`, `text-success`, `text-danger`, `text-accent-fg`. Usar sempre **inline `style`** com variáveis CSS diretas.
+
+**Motivo:** O Tailwind v4 indirece `text-accent` → `color: var(--color-accent)` → `var(--accent)`. O `.lp` sobrescreve `--accent` para roxo (`oklch(0.55 0.22 292)`), mas essa cadeia de indireção pode falhar em alguns contextos, tornando elementos invisíveis em modo claro ou escuro.
+
+**Padrão correto dentro de `.lp`:**
+```tsx
+// ✅ Correto — resolve direto pelo cascade CSS
+<span style={{ color: 'var(--accent)' }}>texto</span>
+<span style={{ background: 'var(--success)' }}>badge</span>
+<Icon style={{ color: 'var(--danger)' }} />
+
+// ❌ Errado — pode falhar dentro de .lp
+<span className="text-accent">texto</span>
+<span className="bg-success">badge</span>
+<Icon className="text-danger" />
+```
+
+**Fix aplicado no commit `6e3cdc1`:** 20+ instâncias substituídas — avatares, ícones, SectionEyebrow, comparação Before/After, checkmarks, badges de pricing. O componente `Icon` recebeu prop `style?: React.CSSProperties` para repassar ao Lucide.
+
+**Estrutura de seções da landing page (`app/page.tsx`):**
+
+| Seção | Componente / função | Descrição |
+|---|---|---|
+| Header | inline | Navbar com logo + links + CTA "Criar conta grátis" |
+| Hero | inline | Chat widget animado, dois CTAs, preview de bot |
+| SaleTickerSection | inline | Ticker de vendas em tempo real (animação marquee) |
+| Highlights | inline | Marquee de 16 highlights em loop (ícones + texto) |
+| BeforeAfter | inline | Comparação colunada "Antes do Umbra" vs "Com o Umbra" |
+| Features | inline | Grid de 16 funcionalidades em cards |
+| HowItWorks | inline | 3 passos animados |
+| Integrations | inline | Logos das integrações (Telegram, MP, Meta, etc.) |
+| Pricing | inline | Modelo único — R$0 de mensalidade, pay-as-you-sell |
+| FAQ | inline | 8 perguntas accordion |
+| FinalCTA | inline | Bloco de chamada final + formulário |
+| Footer | inline | Links legais + redes sociais |
+
+**Componente `UmbraLogo`:** renderiza o SVG canônico do símbolo "U" inline — não usa arquivo externo. Aceita `size`, `className` e `style` props.
+
+---
+
 ## 29. MÓDULO SISTEMA EDUCACIONAL (ACADEMY)
 
 ### Arquivos
@@ -5080,7 +5209,13 @@ VALUES (
 | Certificado emitido ao completar 100% (fire-and-forget RPC) | ✅ Implementado |
 | Badge "Meus certificados" com contagem real | ✅ Implementado |
 | Empty state quando sem cursos cadastrados (sem mock) | ✅ Implementado |
-| Seeding de cursos via Supabase Dashboard (JSONB) | ⏳ Manual (não há painel de admin) |
-| Player de vídeo avançado (controles, tempo assistido real) | ⏳ Não iniciado |
+| Seeding de cursos via migração 098 (seed "Dominando o Umbra Bot", 4 módulos, 13 aulas, `ON CONFLICT DO NOTHING`) | ✅ Implementado |
+| Player de vídeo real: YouTube iframe / Vimeo iframe / Bunny.net iframe / direct `<video>` tag / placeholder "Vídeo em breve" | ✅ Implementado |
+| VideoPlayer: `getVideoKind(url)` detecta tipo → extrai ID YouTube/Vimeo → URL de embed correta | ✅ Implementado |
+| Busca de cursos: input de texto filtra por título/instrutor — `course_searched` PostHog via useEffect | ✅ Implementado |
+| Filtro por nível (Todos + dinâmico dos dados) — `course_filtered` PostHog ao clicar | ✅ Implementado |
+| 5 PostHog events: course_opened / lesson_completed / certificate_issued / course_searched / course_filtered | ✅ Implementado |
+| activity_event `courseCompleted` inserido ao emitir certificado (migração 098 adicionou ao CHECK constraint) | ✅ Implementado |
+| CHECK constraint `activity_events_type_check` inclui `courseCompleted` (migração 098 — DROP + ADD) | ✅ Implementado |
+| Conteúdo gerenciado pelo admin: cursos criados no Supabase Dashboard; vídeos no YouTube → video_url no JSONB | ✅ Documentado |
 | Supabase Realtime para progresso (múltiplas abas) | ⏳ Não iniciado |
-| PostHog events (course_opened, lesson_completed, certificate_issued) | ⏳ Não iniciado |
