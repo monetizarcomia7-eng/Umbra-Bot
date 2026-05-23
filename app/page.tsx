@@ -82,6 +82,36 @@ function UmbraLogo({ size = 28 }: { size?: number }) {
   )
 }
 
+/* ─── ScrollProgress ─────────────────────────────────────── */
+function ScrollProgress() {
+  const [pct, setPct] = useState(0)
+  useEffect(() => {
+    function onScroll() {
+      const el = document.documentElement
+      const scrolled = el.scrollTop || document.body.scrollTop
+      const total = el.scrollHeight - el.clientHeight
+      setPct(total > 0 ? (scrolled / total) * 100 : 0)
+    }
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => window.removeEventListener('scroll', onScroll)
+  }, [])
+  return (
+    <div
+      aria-hidden
+      style={{
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        height: 2,
+        width: `${pct}%`,
+        background: 'linear-gradient(90deg, var(--accent), color-mix(in oklab, var(--accent) 70%, #a78bfa))',
+        transition: 'width 0.08s linear',
+        pointerEvents: 'none',
+      }}
+    />
+  )
+}
+
 /* ─── Header ─────────────────────────────────────────────── */
 function Header({ theme, toggleTheme, mounted }: {
   theme: string
@@ -107,9 +137,10 @@ function Header({ theme, toggleTheme, mounted }: {
 
   return (
     <header className={[
-      'fixed top-0 inset-x-0 z-50 transition-all',
+      'fixed top-0 inset-x-0 z-50 transition-all relative',
       scrolled ? 'bg-bg/85 backdrop-blur-md border-b border-border' : 'bg-transparent',
     ].join(' ')}>
+      <ScrollProgress />
       <div className="max-w-6xl mx-auto px-5 md:px-8 h-16 flex items-center justify-between">
         <a href="#top" className="focus-ring rounded">
           <UmbraLogo />
