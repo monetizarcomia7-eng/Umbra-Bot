@@ -8,7 +8,7 @@ import {
   MoonStar, XCircle, X, Bot, GitBranch, RotateCw, Send, BarChart3,
   Users, Link, Target, ShoppingCart, Link2, Webhook, AlertTriangle,
   CreditCard, Infinity, MessageSquare, Sun, Moon, Menu, Plus, Minus,
-  ChevronRight, Music, Search, Facebook,
+  ChevronRight, Music, Search, Facebook, DollarSign,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
@@ -229,40 +229,60 @@ function ChatBubble({ side, children, accent, success }: {
   )
 }
 
-/* ─── Sale notification cycling card ────────────────────── */
-const SALE_NOTIFS = [
-  { amount: 'R$ 97,00',  buyer: 'Carlos M.' },
-  { amount: 'R$ 197,00', buyer: 'Ana P.'    },
-  { amount: 'R$ 47,00',  buyer: 'Bruno S.'  },
+/* ─── Sale ticker strip ──────────────────────────────────── */
+const SALE_NOTIFS_FULL = [
+  { amount: 'R$ 97,00',  buyer: 'Carlos M.'  },
+  { amount: 'R$ 197,00', buyer: 'Ana P.'     },
+  { amount: 'R$ 47,00',  buyer: 'Bruno S.'   },
+  { amount: 'R$ 297,00', buyer: 'Fernanda L.'},
+  { amount: 'R$ 37,00',  buyer: 'Lucas T.'   },
+  { amount: 'R$ 497,00', buyer: 'Mariana C.' },
+  { amount: 'R$ 67,00',  buyer: 'Pedro V.'   },
+  { amount: 'R$ 147,00', buyer: 'Juliana M.' },
+  { amount: 'R$ 997,00', buyer: 'Rafael B.'  },
 ]
 
-function SaleNotificationCard() {
+function SaleTickerSection() {
+  const doubled = [...SALE_NOTIFS_FULL, ...SALE_NOTIFS_FULL]
   return (
-    <div className="absolute -left-3 sm:-left-14 top-[4%] hidden sm:flex flex-col gap-2">
-      {SALE_NOTIFS.map((n, i) => (
-        <div
-          key={i}
-          className="bg-surface border border-border rounded-xl p-3"
-          style={{
-            boxShadow: '0 8px 24px -8px rgba(0,0,0,0.35)',
-            minWidth: 200,
-            animation: `revealUp 0.5s ${0.15 + i * 0.18}s both`,
-          }}
-        >
-          <div className="flex items-center gap-2.5">
+    <div
+      className="relative overflow-hidden py-3 border-y border-border"
+      style={{ background: 'color-mix(in oklab, var(--success) 5%, var(--bg))' }}
+    >
+      {/* fade masks left/right */}
+      <div className="pointer-events-none absolute inset-y-0 left-0 w-16 z-10"
+        style={{ background: 'linear-gradient(to right, var(--bg), transparent)' }} />
+      <div className="pointer-events-none absolute inset-y-0 right-0 w-16 z-10"
+        style={{ background: 'linear-gradient(to left, var(--bg), transparent)' }} />
+
+      <div style={{ display: 'flex', width: 'max-content', gap: '0.75rem', animation: 'marquee-lp 24s linear infinite' }}>
+        {doubled.map((n, i) => (
+          <div
+            key={i}
+            className="inline-flex items-center gap-2.5 bg-surface border border-border rounded-xl px-3 py-2 shrink-0"
+            style={{ boxShadow: '0 2px 12px -4px rgba(0,0,0,0.2)' }}
+          >
             <span
               className="w-7 h-7 rounded-md flex items-center justify-center shrink-0"
-              style={{ background: 'color-mix(in oklab, var(--success) 15%, transparent)', color: 'var(--success)' }}
+              style={{
+                background: 'color-mix(in oklab, var(--success) 15%, transparent)',
+                color: 'var(--success)',
+                animation: `moneyPing 2.4s ${(i % 9) * 0.27}s ease-in-out infinite`,
+              }}
             >
-              <CheckCircle2 size={13} />
+              <DollarSign size={13} />
             </span>
             <div>
-              <div className="text-[10px] uppercase tracking-wider font-semibold text-text-subtle">Venda aprovada · {n.buyer}</div>
-              <div className="text-[15px] font-bold tnum text-text">{n.amount}</div>
+              <div className="text-[9.5px] uppercase tracking-wider font-semibold text-text-subtle">
+                Venda aprovada · {n.buyer}
+              </div>
+              <div className="text-[14px] font-bold tnum" style={{ color: 'var(--success)' }}>
+                {n.amount}
+              </div>
             </div>
           </div>
-        </div>
-      ))}
+        ))}
+      </div>
     </div>
   )
 }
@@ -338,8 +358,6 @@ function HeroVisual() {
           </div>
         </div>
 
-        <SaleNotificationCard />
-
         <div
           className="absolute -right-3 sm:-right-8 bottom-8 bg-surface border border-border rounded-xl p-3 hidden sm:block"
           style={{ boxShadow: '0 20px 40px -10px rgba(0,0,0,0.4)', animation: 'revealUp 0.7s 0.5s both' }}
@@ -365,8 +383,9 @@ function HeroVisual() {
 function Hero() {
   return (
     <section id="top" className="relative pt-32 pb-20 md:pt-40 md:pb-28 overflow-hidden noise">
-      <div className="corona" style={{ width: 900, height: 900, top: -300, left: '50%', transform: 'translateX(-50%)' }} />
-      <div className="corona" style={{ width: 500, height: 500, top: 100, right: -100, opacity: 0.6 }} />
+      <div className="corona" style={{ width: 1000, height: 1000, top: -320, left: '50%', animation: 'pulseBgA 9s ease-in-out infinite' }} />
+      <div className="corona" style={{ width: 600, height: 600, top: 80, right: -120, opacity: 0.7, animation: 'pulseBgB 12s ease-in-out infinite' }} />
+      <div className="corona" style={{ width: 450, height: 450, bottom: -80, left: -80, opacity: 0.5, animation: 'pulseBgC 15s ease-in-out infinite' }} />
 
       <div className="relative max-w-6xl mx-auto px-5 md:px-8">
         <div className="grid grid-cols-1 lg:grid-cols-[1.05fr_1fr] gap-10 lg:gap-14 items-center">
@@ -401,13 +420,6 @@ function Hero() {
               >
                 Criar Conta Grátis
                 <ArrowRight size={16} className="shrink-0" />
-              </a>
-              <a
-                href="#como-funciona"
-                className="inline-flex h-12 px-5 items-center justify-center gap-2 rounded-md bg-surface-2 border border-border text-text text-[14.5px] font-medium hover:bg-surface-3 hover:border-border-strong focus-ring transition-colors"
-              >
-                <PlayCircle size={16} className="shrink-0" />
-                Ver como funciona
               </a>
             </div>
 
@@ -447,7 +459,7 @@ function Highlights() {
   return (
     <section className="border-y border-border overflow-hidden" style={{ background: 'color-mix(in oklab, var(--surface) 40%, transparent)' }}>
       <div className="py-5">
-        <div style={{ display: 'flex', alignItems: 'center', width: 'max-content', gap: '2.5rem', animation: 'marquee-lp 32s linear infinite' }}>
+        <div style={{ display: 'flex', alignItems: 'center', width: 'max-content', gap: '2.5rem', animation: 'marquee-lp 16s linear infinite' }}>
           {doubled.map((it, i) => (
             <div key={i} className="inline-flex items-center gap-2 text-[13px] shrink-0">
               <Icon name={it.icon} size={14} className="text-accent" />
@@ -1045,6 +1057,7 @@ export default function LandingPage() {
       <Header theme={currentTheme} toggleTheme={toggleTheme} mounted={mounted} />
       <main>
         <Hero />
+        <SaleTickerSection />
         <Highlights />
         <BeforeAfter />
         <Features />

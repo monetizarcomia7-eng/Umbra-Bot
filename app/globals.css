@@ -295,6 +295,30 @@
   to   { transform: translateX(-50%); }
 }
 
+@keyframes pulseBgA {
+  0%, 100% { transform: translateX(-50%) scale(1);   opacity: 0.85; }
+  50%       { transform: translateX(-50%) scale(1.22); opacity: 1;   }
+}
+@keyframes pulseBgB {
+  0%, 100% { transform: scale(1) translate(0, 0);            opacity: 0.55; }
+  50%       { transform: scale(1.35) translate(-20px, -35px); opacity: 1;    }
+}
+@keyframes pulseBgC {
+  0%, 100% { transform: scale(1) translate(0, 0);            opacity: 0.4;  }
+  40%       { transform: scale(1.3)  translate(25px, -20px); opacity: 0.75; }
+  70%       { transform: scale(0.85) translate(-10px, 15px); opacity: 0.3;  }
+}
+
+@keyframes salePop {
+  0%   { opacity: 0; transform: translateY(8px) scale(0.96); }
+  100% { opacity: 1; transform: translateY(0)   scale(1);    }
+}
+@keyframes moneyPing {
+  0%   { transform: scale(1);   opacity: 1; }
+  60%  { transform: scale(1.35); opacity: 0.6; }
+  100% { transform: scale(1);   opacity: 1; }
+}
+
 @layer base {
   * {
     @apply border-border;
