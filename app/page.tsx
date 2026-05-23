@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { useTheme } from 'next-themes'
 import {
   ArrowRight, PlayCircle, Check, MoreVertical, QrCode, CheckCircle2,
@@ -577,6 +577,47 @@ function SectionEyebrow({ children }: { children: React.ReactNode }) {
   )
 }
 
+/* ─── Reveal (scroll-triggered fade-up) ─────────────────── */
+function useReveal(threshold = 0.1) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [visible, setVisible] = useState(false)
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const obs = new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting) { setVisible(true); obs.disconnect() } },
+      { threshold }
+    )
+    obs.observe(el)
+    return () => obs.disconnect()
+  }, [threshold])
+  return { ref, visible }
+}
+
+function Reveal({ children, delay = 0, className = '', style }: {
+  children: React.ReactNode
+  delay?: number
+  className?: string
+  style?: React.CSSProperties
+}) {
+  const { ref, visible } = useReveal()
+  return (
+    <div
+      ref={ref}
+      className={className}
+      style={{
+        opacity: visible ? 1 : 0,
+        transform: visible ? 'none' : 'translateY(22px)',
+        transition: `opacity 0.55s ease ${delay}ms, transform 0.55s ease ${delay}ms`,
+        willChange: 'opacity, transform',
+        ...style,
+      }}
+    >
+      {children}
+    </div>
+  )
+}
+
 /* ─── BeforeAfter ────────────────────────────────────────── */
 function BeforeAfter() {
   const rows = [
@@ -592,20 +633,23 @@ function BeforeAfter() {
     <section className="py-20 md:py-28 relative">
       <div className="corona" style={{ width: 700, height: 700, top: -100, left: -200, opacity: 0.4 }} />
       <div className="relative max-w-6xl mx-auto px-5 md:px-8">
-        <SectionEyebrow>O contraste</SectionEyebrow>
-        <h2 className="mt-2 text-[28px] md:text-[40px] font-bold tracking-tight leading-tight max-w-3xl">
-          Da venda manual{' '}
-          <span
-            className="line-through text-text-subtle"
-            style={{ textDecorationColor: 'color-mix(in oklab, var(--danger) 60%, transparent)' }}
-          >caótica</span>
-          <br className="hidden sm:block" />
-          {' '}para o piloto automático.
-        </h2>
-        <p className="mt-3 text-[15px] text-text-muted max-w-2xl">
-          A diferença não está em vender mais. Está em parar de operar o seu próprio produto.
-        </p>
+        <Reveal>
+          <SectionEyebrow>O contraste</SectionEyebrow>
+          <h2 className="mt-2 text-[28px] md:text-[40px] font-bold tracking-tight leading-tight max-w-3xl">
+            Da venda manual{' '}
+            <span
+              className="line-through text-text-subtle"
+              style={{ textDecorationColor: 'color-mix(in oklab, var(--danger) 60%, transparent)' }}
+            >caótica</span>
+            <br className="hidden sm:block" />
+            {' '}para o piloto automático.
+          </h2>
+          <p className="mt-3 text-[15px] text-text-muted max-w-2xl">
+            A diferença não está em vender mais. Está em parar de operar o seu próprio produto.
+          </p>
+        </Reveal>
 
+        <Reveal delay={180}>
         <div className="mt-10 rounded-2xl border border-border overflow-hidden">
           <div className="grid grid-cols-1 md:grid-cols-[180px_1fr_1fr] bg-surface-2 border-b border-border">
             <div className="hidden md:block px-5 py-3 text-[10.5px] uppercase tracking-wider font-semibold text-text-subtle">Etapa</div>
@@ -636,6 +680,7 @@ function BeforeAfter() {
             </div>
           ))}
         </div>
+        </Reveal>
       </div>
     </section>
   )
@@ -665,20 +710,23 @@ function Features() {
   return (
     <section id="recursos" className="py-20 md:py-28 relative">
       <div className="max-w-6xl mx-auto px-5 md:px-8">
-        <div className="text-center max-w-2xl mx-auto">
-          <SectionEyebrow>Tudo numa só ferramenta</SectionEyebrow>
-          <h2 className="mt-2 text-[28px] md:text-[40px] font-bold tracking-tight leading-tight">
-            Cada peça da sua operação, no automático.
-          </h2>
-          <p className="mt-3 text-[15px] text-text-muted">
-            Atendimento, cobrança, entrega, tráfego, financeiro e tudo o mais que você precisaria amarrar com 5 ferramentas diferentes.
-          </p>
-        </div>
+        <Reveal>
+          <div className="text-center max-w-2xl mx-auto">
+            <SectionEyebrow>Tudo numa só ferramenta</SectionEyebrow>
+            <h2 className="mt-2 text-[28px] md:text-[40px] font-bold tracking-tight leading-tight">
+              Cada peça da sua operação, no automático.
+            </h2>
+            <p className="mt-3 text-[15px] text-text-muted">
+              Atendimento, cobrança, entrega, tráfego, financeiro e tudo o mais que você precisaria amarrar com 5 ferramentas diferentes.
+            </p>
+          </div>
+        </Reveal>
 
         <div className="mt-12 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          {features.map((f) => (
-            <div
+          {features.map((f, i) => (
+            <Reveal
               key={f.title}
+              delay={(i % 4) * 70}
               className="group relative bg-surface border border-border rounded-xl p-5 transition-colors"
             >
               <div
@@ -693,7 +741,7 @@ function Features() {
               </div>
               <h3 className="text-[14px] font-semibold text-text leading-snug">{f.title}</h3>
               <p className="text-[12.5px] text-text-muted mt-1.5 leading-relaxed">{f.desc}</p>
-            </div>
+            </Reveal>
           ))}
         </div>
       </div>
@@ -714,19 +762,21 @@ function HowItWorks() {
     <section id="como-funciona" className="py-20 md:py-28 relative border-y border-border" style={{ background: 'color-mix(in oklab, var(--surface) 40%, transparent)' }}>
       <div className="corona" style={{ width: 800, height: 800, top: -200, right: -200, opacity: 0.5 }} />
       <div className="relative max-w-6xl mx-auto px-5 md:px-8">
-        <div className="text-center max-w-2xl mx-auto">
-          <SectionEyebrow>Em 4 passos</SectionEyebrow>
-          <h2 className="mt-2 text-[28px] md:text-[40px] font-bold tracking-tight leading-tight">
-            Do zero ao primeiro PIX, hoje.
-          </h2>
-          <p className="mt-3 text-[15px] text-text-muted">
-            Sem técnico. Sem código. Sem mensalidade.
-          </p>
-        </div>
+        <Reveal>
+          <div className="text-center max-w-2xl mx-auto">
+            <SectionEyebrow>Em 4 passos</SectionEyebrow>
+            <h2 className="mt-2 text-[28px] md:text-[40px] font-bold tracking-tight leading-tight">
+              Do zero ao primeiro PIX, hoje.
+            </h2>
+            <p className="mt-3 text-[15px] text-text-muted">
+              Sem técnico. Sem código. Sem mensalidade.
+            </p>
+          </div>
+        </Reveal>
 
         <div className="mt-14 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 relative">
           {steps.map((s, i) => (
-            <div key={s.n} className="relative">
+            <Reveal key={s.n} delay={i * 100} className="relative">
               <div className="bg-surface border border-border rounded-xl p-5 h-full">
                 <div className="flex items-start justify-between mb-4">
                   <span className="text-[42px] font-black tnum tracking-tighter text-grad leading-none">{s.n}</span>
@@ -749,10 +799,11 @@ function HowItWorks() {
                   <ChevronRight size={16} className="text-text-subtle shrink-0" />
                 </div>
               )}
-            </div>
+            </Reveal>
           ))}
         </div>
 
+        <Reveal delay={300}>
         <div className="mt-10 text-center">
           <a
             href="/login?mode=signup"
@@ -763,6 +814,7 @@ function HowItWorks() {
             <ArrowRight size={16} className="shrink-0" />
           </a>
         </div>
+        </Reveal>
       </div>
     </section>
   )
@@ -807,6 +859,7 @@ function Integrations() {
     <section id="gateways" className="py-20 md:py-28">
       <div className="max-w-6xl mx-auto px-5 md:px-8">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-10 lg:gap-14 items-center">
+          <Reveal>
           <div>
             <SectionEyebrow>Gateways de pagamento</SectionEyebrow>
             <h2 className="mt-2 text-[28px] md:text-[36px] font-bold tracking-tight leading-tight">
@@ -829,7 +882,9 @@ function Integrations() {
               </div>
             </div>
           </div>
+          </Reveal>
 
+          <Reveal delay={150}>
           <div>
             <SectionEyebrow>Trackeamento</SectionEyebrow>
             <h2 className="mt-2 text-[28px] md:text-[36px] font-bold tracking-tight leading-tight">
@@ -846,6 +901,7 @@ function Integrations() {
               <TrackingRow icon="link-2"   name="UTMs"   sub="Captura no clique, persiste até a venda" />
             </div>
           </div>
+          </Reveal>
         </div>
       </div>
     </section>
@@ -867,6 +923,7 @@ function Pricing() {
     <section id="precos" className="py-20 md:py-28 relative">
       <div className="corona" style={{ width: 800, height: 800, top: -100, left: '50%', transform: 'translateX(-50%)', opacity: 0.6 }} />
       <div className="relative max-w-4xl mx-auto px-5 md:px-8">
+        <Reveal>
         <div className="text-center">
           <SectionEyebrow>Preços</SectionEyebrow>
           <h2 className="mt-2 text-[32px] md:text-[44px] font-bold tracking-tight leading-tight">
@@ -877,7 +934,9 @@ function Pricing() {
             Você não paga nada para criar conta, conectar bots ou configurar funis. A Umbra cobra apenas quando uma venda é processada — e o dinheiro continua caindo direto na sua conta.
           </p>
         </div>
+        </Reveal>
 
+        <Reveal delay={150}>
         <div className="mt-12">
           <div
             className="relative bg-surface rounded-2xl p-1"
@@ -930,7 +989,9 @@ function Pricing() {
             </div>
           </div>
         </div>
+        </Reveal>
 
+        <Reveal delay={250}>
         <div className="mt-12 bg-surface border border-border rounded-2xl p-6 md:p-7">
           <div className="text-[10.5px] uppercase tracking-wider font-semibold text-text-subtle mb-3">Por que isso muda o jogo</div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
@@ -960,6 +1021,7 @@ function Pricing() {
             </div>
           </div>
         </div>
+        </Reveal>
       </div>
     </section>
   )
@@ -982,13 +1044,16 @@ function FAQ() {
   return (
     <section id="faq" className="py-20 md:py-28 border-y border-border" style={{ background: 'color-mix(in oklab, var(--surface) 40%, transparent)' }}>
       <div className="max-w-3xl mx-auto px-5 md:px-8">
+        <Reveal>
         <div className="text-center">
           <SectionEyebrow>Perguntas frequentes</SectionEyebrow>
           <h2 className="mt-2 text-[28px] md:text-[40px] font-bold tracking-tight leading-tight">
             As dúvidas que todo mundo tem.
           </h2>
         </div>
+        </Reveal>
 
+        <Reveal delay={150}>
         <div className="mt-10 space-y-2">
           {faqs.map((f, i) => {
             const isOpen = open === i
@@ -1018,6 +1083,7 @@ function FAQ() {
             )
           })}
         </div>
+        </Reveal>
       </div>
     </section>
   )
@@ -1029,6 +1095,7 @@ function FinalCTA() {
     <section className="py-20 md:py-32 relative overflow-hidden">
       <div className="corona" style={{ width: 1000, height: 1000, top: -200, left: '50%', transform: 'translateX(-50%)', opacity: 0.7 }} />
       <div className="relative max-w-3xl mx-auto px-5 md:px-8 text-center">
+        <Reveal>
         <div className="mb-6 flex justify-center">
           <div className="inline-flex items-center gap-2.5 rounded-2xl px-5 py-2.5"
             style={{
@@ -1052,7 +1119,9 @@ function FinalCTA() {
         <p className="mt-5 text-[16px] md:text-[17px] text-text-muted max-w-xl mx-auto leading-relaxed">
           O Umbra Bot atende, cobra e entrega — você fica livre pra criar, vender mais e dormir tranquilo. Crie sua conta agora, é grátis.
         </p>
+        </Reveal>
 
+        <Reveal delay={200}>
         <div className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-3">
           <a
             href="/login?mode=signup"
@@ -1073,6 +1142,7 @@ function FinalCTA() {
         <div className="mt-5 text-[12px] text-text-muted">
           Sem cartão de crédito · Sem mensalidade · Cancela quando quiser
         </div>
+        </Reveal>
       </div>
     </section>
   )

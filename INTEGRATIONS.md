@@ -513,7 +513,7 @@ Ambos usam `Authorization: Bearer CRON_SECRET`.
   - Fallback: `'o vendedor'` quando `profiles.name` está vazio
 - `CheckoutPageClient` exibe rodapé legal abaixo do botão Pagar:
   - Declaração citando **Umbra Bot** e o **nome do vendedor** (dinâmico)
-  - Links para Termos de Compra, Termos de Uso e Política de Privacidade (`umbra.bot/*`)
+  - Links para Termos de Compra, Termos de Uso e Política de Privacidade (`umbrabot.com.br/*`)
   - Link "Denunciar esse produto" (`mailto:contato@umbra.bot?subject=...`)
   - Nota de parcelamento com acréscimo (visível apenas quando `installments > 1`)
   - Aviso Google reCAPTCHA com links oficiais das políticas do Google

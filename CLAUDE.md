@@ -688,7 +688,7 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Checkout — handleImageUpload: remove imagem anterior do Storage antes de novo upload (sem órfãos) | ✅ Corrigido |
 | Checkout — deleteCheckout: remove product_image do Storage ao apagar checkout | ✅ Corrigido |
 | Checkout — botão Reativar no menu de checkouts arquivados (retorna para status draft) | ✅ Implementado |
-| Checkout — botão Copiar link no menu do CheckoutCard (copia umbra.bot/c/slug) | ✅ Implementado |
+| Checkout — botão Copiar link no menu do CheckoutCard (copia umbrabot.com.br/c/slug) | ✅ Implementado |
 | Checkout — validação de protocolo em success_url (http/https) no handleSave e handlePublish | ✅ Implementado |
 | Checkout — fmtCountdown suporta dias (ex: "1d 02:30:15") no checkout público | ✅ Corrigido |
 | Checkout — order_bump: produto adicional (JSONB) oferecido antes do botão de pagamento — migração 085 | ✅ Implementado |
@@ -1943,7 +1943,7 @@ AffiliatesPage (Server Component)
         initialPayments: RawPayment[]
         initialConfig: RawConfig
         userId: string
-        appUrl: string  ← process.env.APP_URL ?? 'https://umbra.bot'
+        appUrl: string  ← process.env.APP_URL ?? 'https://www.umbrabot.com.br'
         bots: RawBot[]  ← export interface RawBot { id, name, username }
 
 AffiliatesClient (Client Component)
@@ -2131,7 +2131,7 @@ app/r/[slug]/route.ts
 ```
 
 **Ciclo completo de atribuição:**
-1. Afiliado compartilha `umbra.bot/r/seu-slug`
+1. Afiliado compartilha `umbrabot.com.br/r/seu-slug`
 2. Visitante acessa → clique registrado atomicamente (clicks++) + cookie 'umbra_aff' setado
 3. Visitante compra → PIX route lê cookie, valida IDOR (.eq user_id + status active), salva `affiliate_id` na transação
 4. Mercado Pago confirma pagamento → webhook lê `affiliate_id`, busca `commission_pct`, chama `credit_affiliate_sale` (sales++ + commission+=)
