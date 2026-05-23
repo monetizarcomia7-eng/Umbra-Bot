@@ -124,7 +124,7 @@ Todos os canais usam `postgres_changes` (eventos de banco) ou `presence` (rastre
 |---|---|---|---|---|
 | `bots-realtime` | `UPDATE` | `bots` | `BotsClient.tsx` | Atualiza status de bots em tempo real (disconnect/reconnect via cron check-bots) |
 | `activity-feed` | `INSERT` | `activity_events` | `ActivityClient.tsx` | Prepend de novos eventos no feed ao vivo; incrementa `unreadCount`; agrupamento 30 min aplicado pós-prepend |
-| `customers-realtime` | `INSERT` + `UPDATE` | `contacts` | `CustomersClient.tsx` | Novos leads e atualizações de perfil em tempo real |
+| `customers-realtime` | `INSERT` + `UPDATE` | `contacts` | `CustomersClient.tsx` | Novos leads (prepend) e atualizações de perfil em tempo real; inclui colunas city, state, flow_vars, notes, telegram_id |
 | `flows-realtime` | `INSERT` + `UPDATE` + `DELETE` | `flows` | `FlowsClient.tsx` | Sincroniza listagem de fluxos entre abas |
 | `broadcasts-realtime` | `INSERT` + `UPDATE` | `broadcasts` | `BroadcastsClient.tsx` | Progresso de envio, status, novos disparos (stale-draft guard incluso) |
 | `alerts-feed` | `INSERT` + `UPDATE` | `alerts` | `AlertsClient.tsx` | Novos alertas e atualizações de status filtrados por `user_id` |
@@ -952,14 +952,14 @@ Fonte: `.env.example` na raiz do repositório.
 
 ## 11. TABELAS DO BANCO
 
-Total de migrações: **99 arquivos** (numeradas de 000 a 098, mais arquivos de timestamp).
+Total de migrações: **100 arquivos** (numeradas de 000 a 099, mais arquivos de timestamp).
 
 | Tabela | Função |
 |---|---|
 | `profiles` | Perfil público do usuário (nome, plano, saldo, avatar) |
 | `bots` | Bots Telegram cadastrados (token criptografado, webhook_secret, status) |
 | `flows` | Fluxos de automação (nodes, edges, trigger_type, keywords) |
-| `contacts` | Leads/compradores capturados pelos bots (flow_id, flow_node_id, flow_vars) |
+| `contacts` | Leads/compradores capturados pelos bots (city, state, flow_vars, notes, telegram_id; RPCs: contacts_kpis, contacts_filter_options v2, find_duplicate_contacts — migração 099) |
 | `transactions` | Transações financeiras (PIX, status, customer, UTMs, affiliate_id, checkout_id, customer_device) |
 | `withdrawals` | Solicitações de saque (amount, status, account_id, notes, payout_tx_id) |
 | `bank_accounts` | Contas bancárias dos usuários (pix_key, kind, label) |

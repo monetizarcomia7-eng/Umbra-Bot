@@ -999,6 +999,24 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Clientes — 5 eventos PostHog: filter_changed, profile_opened, tag_added, added, imported | ✅ Implementado |
 | Clientes — ordenação clicável em todas as colunas (persiste em localStorage) | ✅ Implementado |
 | Clientes — apagar cliente com confirmação inline no painel lateral (DELETE → contacts) | ✅ Implementado |
+| Clientes — KpiRow 4 cards: avg_ticket global, LTV total, taxa de conversão, novos 30d + delta vs 30-60d | ✅ Implementado |
+| Clientes — RPC contacts_kpis: avg_ticket, ltv, new_30d, new_prev_30d, conversion_rate (mig 099) | ✅ Implementado |
+| Clientes — RPC contacts_filter_options v2: origins + tags[{tag,count}] + states (mig 099) | ✅ Implementado |
+| Clientes — RPC find_duplicate_contacts: banner de duplicata no ProfilePanel (mig 099) | ✅ Implementado |
+| Clientes — tag filter com contagens reais: dropdown exibe "tag (N)" via TagOption[] | ✅ Implementado |
+| Clientes — filtro por estado: dropdown stateOptions do banco | ✅ Implementado |
+| Clientes — segmentação RFM: computeRfm() client-side, 7 segmentos, dropdown no FilterBar | ✅ Implementado |
+| Clientes — ProfilePanel 3 abas: Linha do tempo / Compras reais (lazy transactions) / Anotações | ✅ Implementado |
+| Clientes — campo notes (mig 099): auto-save 1,5s debounce (noteTimerRef) na aba Anotações | ✅ Implementado |
+| Clientes — dados geográficos: city + state exibidos no ProfilePanel quando presentes | ✅ Implementado |
+| Clientes — flow_vars: grid de pares chave/valor (JSON parse de JSONB) no ProfilePanel | ✅ Implementado |
+| Clientes — histórico de compras real: lazy query transactions WHERE contact_id = customer.id | ✅ Implementado |
+| Clientes — engagement metrics: totalInteractions + lastInteraction (lazy via activity_events) | ✅ Implementado |
+| Clientes — busca inclui email, phone e telegram_id além de name/username | ✅ Implementado |
+| Clientes — bulk delete (BulkDeleteModal) + bulk update origin (BulkOriginModal) IDOR-safe | ✅ Implementado |
+| Clientes — IDOR fix: loadMore + deleteCustomer + bulkDeleteCustomers + bulkUpdateOrigin usam .eq('user_id', userId) | ✅ Corrigido |
+| Clientes — CSV 22 colunas (+ ID Telegram, Segmento RFM, Cidade, Estado, Ticket médio, Anotações, Variáveis do fluxo) | ✅ Implementado |
+| Clientes — SELECT inclui city, state, flow_vars, notes, telegram_id; CONTACTS_SELECT constante centralizada | ✅ Implementado |
 | Documentação para usuários — /docs/ (30 artigos Markdown, 11 seções) | ✅ Completo |
 | Documentação — renderizador /dashboard/docs (sidebar + artigo + paginação) | ✅ Funcional |
 | Documentação — toggle dark/light na sidebar da docs | ✅ Implementado |
@@ -1975,54 +1993,153 @@ O campo `bot` (string legada) serve de fallback para eventos inseridos antes da 
 ```
 app/dashboard/customers/
   ├── page.tsx            # Server Component — SSR: contacts (25 rows) + bots + contacts_summary RPC
-  │                       # + contacts_filter_options RPC — tudo em Promise.all
-  └── CustomersClient.tsx # Client Component — Realtime, filtros, sort, paginação, modais, timeline
+  │                       # + contacts_filter_options v2 RPC + contacts_kpis RPC — 5 queries em Promise.all
+  │                       # SELECT inclui: city, state, flow_vars, notes, telegram_id (migração 099)
+  │                       # Passa: tagOptions, stateOptions, kpiData, userId ao Client
+  └── CustomersClient.tsx # Client Component — Realtime, filtros+sort persistidos, paginação server-side,
+                          # KpiRow (4 cards), RFM segmentation, ProfilePanel 3 abas, bulk ops expandidas,
+                          # notes auto-save, purchase history real, engagement metrics, dedup warning
+```
+
+### Interfaces TypeScript exportadas
+
+```typescript
+// TagOption — do contacts_filter_options v2 (inclui contagem de contatos por tag)
+export interface TagOption {
+  tag:   string
+  count: number
+}
+
+// ContactKpis — do contacts_kpis RPC (migração 099)
+export interface ContactKpis {
+  avg_ticket:      number   // ticket médio global (total_spent / purchases para compradores)
+  ltv:             number   // LTV total = soma de total_spent de todos os contatos
+  new_30d:         number   // novos contatos nos últimos 30d
+  new_prev_30d:    number   // novos contatos nos 30d anteriores (base para delta)
+  conversion_rate: number   // (buyers / total) * 100
+}
+
+// RfmSegment — tipo interno, nunca exportado
+type RfmSegment = 'champion' | 'at_risk' | 'lost' | 'cold_lead' | 'regular' | 'new_buyer' | 'lead'
+
+// CustomerPatch — usado pelo updateCustomer()
+type CustomerPatch = Partial<Pick<Customer, 'tags' | 'notes'>>
 ```
 
 ### Fluxo de dados
 
 ```
 CustomersPage (Server Component)
-  ├── Promise.all em paralelo:
+  ├── Promise.all com 5 queries em paralelo:
   │     ├── contacts: id, name, username, email, phone, origin, bot, bot_id,
   │     │   purchases, total_spent, avg_ticket, tags, first_contact, last_contact,
-  │     │   first_purchase, last_purchase (limit 25, order last_contact desc)
+  │     │   first_purchase, last_purchase, city, state, flow_vars, notes, telegram_id
+  │     │   (limit 25, order last_contact desc)
   │     ├── bots: id, name, username  (para dropdown de bot e resolução de nome)
   │     ├── RPC contacts_summary(p_user_id): { total, buyers, leads }
-  │     └── RPC contacts_filter_options(p_user_id): { origins: string[] }
+  │     ├── RPC contacts_filter_options(p_user_id): { origins: string[], tags: TagOption[], states: string[] }
+  │     └── RPC contacts_kpis(p_user_id): ContactKpis
   └── passa como props:
-        initialContacts: RawContact[]   hasMore: boolean
-        bots: ContactBotOption[]        originOptions: string[]
+        initialContacts: RawContact[]       hasMore: boolean
+        bots: ContactBotOption[]            userId: string
         totalCount / buyersCount / leadsCount: number
+        originOptions: string[]             tagOptions: TagOption[]
+        stateOptions: string[]              kpiData: ContactKpis
 
 CustomersClient (Client Component)
   ├── customers state: initialContacts.map(mapRaw) — nunca usa mock
+  ├── CONTACTS_SELECT: constante com todos os campos (evita divergência entre loadMore e SSR)
   ├── mapRaw: status = purchases > 0 ? 'buyer' : 'lead'  (não lê status do DB)
   ├── relTime: usa Date.now() — nunca timestamp congelado
+  │
+  ├── KpiRow (4 cards no topo):
+  │     Ticket médio global (kpiData.avg_ticket)
+  │     LTV total (kpiData.ltv)
+  │     Taxa de conversão (kpiData.conversion_rate %)
+  │     Novos 30d (kpiData.new_30d) + delta vs new_prev_30d (badge ± %)
+  │
   ├── Supabase Realtime:
   │     canal 'customers-realtime', INSERT → prepend + incrementa contadores
-  │     UPDATE → atualiza inline no array
+  │     UPDATE → atualiza inline no array (novos campos: city, state, notes, flow_vars)
+  │
   ├── Filtros persistidos em localStorage (prefixo 'umbra_cust_'):
-  │     search (debounce 300ms), status, origin, tag, period
+  │     search (debounce 300ms — busca name, username, email, phone, telegram_id)
+  │     status, origin, tag, period, state (filtro por estado — novo), rfm (segmento RFM — novo)
   │     getPeriodCutoff(period) usa Date.now() como base
+  │
+  ├── FilterBar estendida:
+  │     Dropdown Origem (originOptions)
+  │     Dropdown Tag: exibe "tag (N)" a partir de TagOption[] com contagem real
+  │     Dropdown Estado: stateOptions (SELECT DISTINCT state do banco)
+  │     Dropdown Segmento RFM: 7 opções derivadas de computeRfm()
+  │
+  ├── RFM segmentation (computeRfm() — client-side, sem queries extras):
+  │     Entradas: purchases, lastPurchase, lastContact — dados já carregados
+  │     7 segmentos:
+  │       'champion'   → compradores recentes (< 30d) com múltiplas compras
+  │       'regular'    → compradores com compra entre 30–90d
+  │       'at_risk'    → compradores sem compra há 90–180d
+  │       'lost'       → compradores sem compra há > 180d
+  │       'new_buyer'  → primeira compra recente (< 30d, purchases = 1)
+  │       'cold_lead'  → lead sem interação há > 90d
+  │       'lead'       → lead com interação recente (< 90d)
+  │     RFM_LABELS: mapa de rótulos em português por segmento
+  │
   ├── Sort: SortField × SortDir — sortCustomers() com localeCompare pt-BR
   │     6 colunas clicáveis: name | origin | status | purchases | totalSpent | lastContact
   │     Sort + direção persistidos em localStorage (umbra_cust_sort, umbra_cust_sort_dir)
+  │
   ├── Paginação:
   │     client-side: 10/pág sobre dados já carregados
-  │     server-side: "Carregar mais" → .range(offset, offset+24) acumula em customers
-  ├── bulkAddTag: RPC contacts_bulk_add_tag(p_ids, p_tag) — 1 UPDATE atômico
-  ├── Timeline (ProfilePanel):
-  │     lazy load via activity_events WHERE contact_id = customer.id
-  │     só executa ao abrir o painel — sem dados pré-carregados
+  │     server-side: "Carregar mais" → .range(offset, offset+24).eq('user_id', userId) — IDOR fix
+  │     usa CONTACTS_SELECT para manter consistência de campos com o SSR
+  │
+  ├── Bulk operations (BulkActionsBar — visível quando selectedIds.size > 0):
+  │     Adicionar tag: RPC contacts_bulk_add_tag(p_ids, p_tag) — 1 UPDATE atômico
+  │     Apagar selecionados: BulkDeleteModal → DELETE .in('id', [...]).eq('user_id', userId) — IDOR fix
+  │     Atualizar origem: BulkOriginModal → UPDATE .in('id', [...]).eq('user_id', userId) — IDOR fix
+  │
+  ├── updateCustomer(id, patch: CustomerPatch): UPDATE com .eq('user_id', userId)
+  │     Lida com CustomerPatch = Partial<Pick<Customer, 'tags' | 'notes'>>
+  │     Atualiza state local otimisticamente
+  │
+  ├── deleteCustomer(id): DELETE .eq('id', id).eq('user_id', userId) — IDOR fix
+  │     ProfilePanel footer: botão "Apagar cliente" → confirmação inline → fecha painel
+  │
   ├── AddCustomerModal: INSERT em contacts com user_id do auth
-  ├── ImportCSVModal: FileReader + parseCSV + batch INSERT (lotes 50)
-  │     Colunas CSV: Nome*, Username, E-mail, Telefone, Origem, Tags (sep. ;)
-  └── deleteCustomer(id): DELETE em contacts → remove do estado local + atualiza contadores
-        ProfilePanel footer: botão "Apagar cliente" → confirmação inline → fecha painel
+  └── ImportCSVModal: FileReader + parseCSV + batch INSERT (lotes 50)
+        Colunas CSV: Nome*, Username, E-mail, Telefone, Origem, Tags (sep. ;)
+
+ProfilePanel (painel lateral — 3 abas)
+  ├── Linha do tempo (aba padrão):
+  │     lazy load via activity_events WHERE contact_id = customer.id
+  │     só executa ao abrir o painel
+  │
+  ├── Compras (aba real — migração 079 contact_id em transactions):
+  │     lazy query: transactions WHERE contact_id = customer.id ORDER BY created_at desc
+  │     Exibe: data, produto, valor, status badge
+  │     Estado vazio quando sem compras (sem mock)
+  │
+  ├── Anotações (aba — migração 099 notes column):
+  │     Textarea com auto-save 1.5s debounce via noteTimerRef
+  │     noteTimerRef: useRef<ReturnType<typeof setTimeout>>
+  │     ao digitar → clearTimeout + setTimeout(1500) → updateCustomer(id, { notes })
+  │     Feedback: "Salvo ✓" / "Erro ao salvar"
+  │
+  ├── Dados geográficos: city + state exibidos quando presentes (migração 099)
+  ├── flow_vars: exibido como grid de pares chave/valor (JSON parse de JSONB)
+  │     Título "Variáveis do fluxo" quando flow_vars não vazio
+  ├── Telegram quick-link: t.me/{username} quando username presente
+  ├── CopyButton: copia e-mail, telefone e Telegram ID com feedback visual
+  ├── Engagement strip: totalInteractions + lastInteraction
+  │     lazy query: activity_events WHERE contact_id = customer.id (count + MAX created_at)
+  └── Duplicate warning banner:
+        lazy RPC find_duplicate_contacts(p_user_id, p_contact_id, p_email, p_phone, p_telegram_id)
+        banner amarelo "Possível duplicata" com link para abrir o outro contato
+        exibido apenas quando RPC retorna > 0 resultados
 ```
 
-### Schema contacts — colunas relevantes (migration 052)
+### Schema contacts — colunas relevantes (migração 052 + 099)
 
 ```sql
 -- Colunas adicionadas na migração 052
@@ -2034,9 +2151,13 @@ avg_ticket     numeric(10,2) default 0       -- total_spent / purchases (mantido
 -- Trigger: trg_sync_contact_stats (migration 052)
 -- Dispara após INSERT/UPDATE/DELETE em transactions WHERE contact_id IS NOT NULL
 -- Recalcula: purchases, orders_count, total_spent, avg_ticket, first_purchase, last_purchase
+
+-- Colunas adicionadas na migração 099
+notes          text                          -- anotações internas do operador (auto-save 1.5s)
+-- (city, state, flow_vars, telegram_id já existiam em versões anteriores)
 ```
 
-### RPCs do módulo (migration 052)
+### RPCs do módulo
 
 ```sql
 -- contacts_summary(p_user_id): retorna { total, buyers, leads }
@@ -2047,8 +2168,27 @@ avg_ticket     numeric(10,2) default 0       -- total_spent / purchases (mantido
 -- array_append com NOT (tags @> ARRAY[p_tag]) — idempotente, sem duplicatas
 -- Substitui N queries paralelas (race condition eliminada)
 
--- contacts_filter_options(p_user_id): retorna { origins: string[] }
--- SELECT DISTINCT origin — populado no server-side para o dropdown Origem
+-- contacts_filter_options v2 (p_user_id): retorna { origins: string[], tags: TagOption[], states: string[] }
+-- v1 retornava apenas { origins: string[] }
+-- v2 adicionada na migração 099:
+--   tags: array de { tag, count } — SELECT DISTINCT tag + COUNT por tag (unnest)
+--   states: SELECT DISTINCT state WHERE state IS NOT NULL
+-- grant execute to authenticated
+
+-- contacts_kpis(p_user_id): retorna ContactKpis — migração 099
+-- avg_ticket:      AVG(total_spent / purchases) WHERE purchases > 0
+-- ltv:             SUM(total_spent)
+-- new_30d:         COUNT WHERE first_contact >= now() - 30d
+-- new_prev_30d:    COUNT WHERE first_contact BETWEEN now()-60d AND now()-30d
+-- conversion_rate: (COUNT buyers / COUNT total) * 100
+-- grant execute to authenticated
+
+-- find_duplicate_contacts(p_user_id, p_contact_id, p_email, p_phone, p_telegram_id)
+--   → table (id, name, email, phone, telegram_id) LIMIT 5 — migração 099
+-- Busca contatos do mesmo usuário com e-mail, telefone OU telegram_id coincidentes
+-- Exclui o próprio contato (p_contact_id)
+-- Retorna IDs para exibir banner de duplicata no ProfilePanel
+-- grant execute to authenticated
 ```
 
 ### Status buyer/lead — lógica correta
@@ -2060,11 +2200,61 @@ status: Number(row.purchases ?? 0) > 0 ? 'buyer' : 'lead'
 // A classificação visual é sempre derivada do campo purchases
 ```
 
+### IDOR — correções aplicadas na migração 099
+
+Todas as operações de escrita e leitura paginada foram corrigidas para incluir `.eq('user_id', userId)`:
+
+```typescript
+// loadMore (ANTES: sem .eq user_id — qualquer UUID na URL poderia ler contatos de outro usuário)
+supabase.from('contacts').select(CONTACTS_SELECT)
+  .eq('user_id', userId)          // ← IDOR fix
+  .range(offset, offset + 24)
+
+// deleteCustomer
+supabase.from('contacts').delete()
+  .eq('id', id).eq('user_id', userId)  // ← IDOR fix
+
+// bulkDeleteCustomers
+supabase.from('contacts').delete()
+  .in('id', [...ids]).eq('user_id', userId)  // ← IDOR fix
+
+// bulkUpdateOrigin
+supabase.from('contacts').update({ origin })
+  .in('id', [...ids]).eq('user_id', userId)  // ← IDOR fix
+```
+
+### CSV export — 22 colunas
+
+| Coluna | Campo |
+|---|---|
+| ID | id |
+| Nome | name |
+| Username | username |
+| E-mail | email |
+| Telefone | phone |
+| ID Telegram | telegramId ← **novo** |
+| Origem | origin |
+| Status | Comprador / Lead |
+| Segmento RFM | rfm label ← **novo** |
+| Compras | purchases |
+| Total gasto | totalSpent |
+| Ticket médio | avgTicket ← **novo** |
+| Tags | tags.join('; ') |
+| Cidade | city ← **novo** |
+| Estado | state ← **novo** |
+| Primeiro contato | firstContact |
+| Último contato | lastContact |
+| Primeira compra | firstPurchase |
+| Última compra | lastPurchase |
+| Bot | bot |
+| Anotações | notes ← **novo** |
+| Variáveis do fluxo | JSON.stringify(flowVars) ← **novo** |
+
 ### Eventos PostHog do módulo
 
 | Evento | Quando |
 |---|---|
-| `customer_filter_changed` | ao mudar qualquer filtro (inclui status, origin_filtered, tag_filtered, period) |
+| `customer_filter_changed` | ao mudar qualquer filtro (inclui status, origin_filtered, tag_filtered, state_filtered, rfm_filtered, period) |
 | `customer_profile_opened` | ao abrir painel lateral (inclui status: 'buyer'\|'lead') |
 | `customer_tag_added` | ao adicionar tag individual ou bulk (inclui tag, bulk, count?) |
 | `customer_added` | ao criar cliente via modal "Adicionar cliente" |

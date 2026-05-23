@@ -3,8 +3,8 @@
 Schema extraído diretamente do banco Supabase (projeto: `aoycxcepjvpmeptdafxn`).
 **38 tabelas** no schema `public`.
 
-> **Última migração aplicada:** 098 (seed curso Academia + CHECK courseCompleted em activity_events).
-> **Próximas migrações pendentes:** nenhuma — identidade visual (logos, favicon, og-image) não requer migração de banco.
+> **Última migração aplicada:** 099 (contacts: notes column + RPCs contacts_kpis, contacts_filter_options v2 com tags+counts+states, find_duplicate_contacts).
+> **Próximas migrações pendentes:** nenhuma.
 
 ---
 
@@ -447,9 +447,12 @@ avg_ticket:     numeric     NOT NULL  default 0
 flow_id:        uuid        FK → flows(id)
 flow_node_id:   text
 flow_vars:      jsonb       NOT NULL  default '{}'
+notes:          text                            [migração 099]
 ```
 
 CONSTRAINT: `contacts_bot_telegram_key UNIQUE (bot_id, telegram_id)`
+
+**Coluna `notes` (migração 099):** campo de anotações livres por contato; editado diretamente no `ProfilePanel` com auto-save de 1,5 s (debounce via `useRef`). Nunca exposta no CSV sem consentimento implícito — incluída nas 22 colunas do CSV de exportação.
 
 ---
 
@@ -1173,3 +1176,31 @@ courses  (sem user_id — conteúdo global gerenciado pelo admin)
 | 096 | Criou `course_certificates` (UNIQUE user_id+course_id) + RPCs `issue_certificate` + `get_user_certificates` |
 | 097 | Criou camada relacional `course_modules` + `course_lessons`; RPCs `get_course_with_modules` (fallback JSONB) + `import_course_modules_from_jsonb` (admin) |
 | 098 | DROP/ADD `activity_events_type_check` para incluir `'courseCompleted'`; seed curso "Dominando o Umbra Bot" (4 módulos, 13 aulas, `ON CONFLICT DO NOTHING`) |
+
+---
+
+## Migração 099 — Melhorias da aba de Clientes
+
+| Migração | O que fez |
+|---|---|
+| 099 | `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS notes text`; RPC `contacts_kpis`; RPC `contacts_filter_options` (v2 com tags+counts+states); RPC `find_duplicate_contacts` |
+
+### RPC `contacts_kpis(p_user_id uuid)` → json — security invoker, grant to authenticated
+
+Retorna KPIs globais do módulo de Clientes:
+- `avg_ticket`: ticket médio (total_spent / purchases, para quem tem compras > 0)
+- `ltv`: lifetime value total (SUM de total_spent de todos os contatos)
+- `new_30d`: novos contatos nos últimos 30 dias (via `first_contact >= now() - 30 days`)
+- `new_prev_30d`: novos contatos nos 30 dias anteriores (para calcular delta %)
+- `conversion_rate`: taxa de conversão lead→comprador (purchases > 0 / total × 100)
+
+### RPC `contacts_filter_options(p_user_id uuid)` → json (v2) — security invoker, grant to authenticated
+
+Versão atualizada que retorna 3 arrays:
+- `origins`: `string[]` — origens distintas (SELECT DISTINCT origin)
+- `tags`: `Array<{ tag: string; count: number }>` — tags com contagem de contatos por tag (agrupamento via `unnest(tags)`)
+- `states`: `string[]` — estados/UFs distintos (SELECT DISTINCT state)
+
+### RPC `find_duplicate_contacts(p_user_id, p_contact_id, p_email, p_phone, p_telegram_id)` → table — security invoker, grant to authenticated
+
+Detecta contatos duplicados por e-mail, telefone ou telegram_id (qualquer combinação). Retorna até 5 linhas: `id, name, email, phone, telegram_id`. Parâmetros opcionais: passa `null` para campos não aplicáveis. Exclui o próprio `p_contact_id` dos resultados.
