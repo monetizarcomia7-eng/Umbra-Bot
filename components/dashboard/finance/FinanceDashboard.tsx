@@ -1,22 +1,27 @@
 'use client'
 
-import React, { useState, useMemo, useCallback } from 'react'
+import React, { useState, useMemo, useCallback, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { AlertTriangle } from 'lucide-react'
+import { AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react'
+import {
+  AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
+} from 'recharts'
 import { PageHeader } from '@/components/dashboard/PageHeader'
 import { exportCSV } from '@/lib/csv'
 import { useAnalytics } from '@/hooks/use-analytics'
+import { createClient } from '@/lib/supabase/client'
 import type {
   RawTransaction, RawWithdrawal, RawFinanceBot, RawFinanceFlow, RawInvoice,
   RawFinanceSummary, Transaction, Withdrawal, Invoice, TxDetail, FinanceSummary,
 } from './types'
 
-import { txTypeMap, txStatusMap, wdStatusMap, invStatusMap } from './constants'
-import { SummaryCard, Tabs, Btn, Spinner } from './atoms'
+import { txTypeMap, txStatusMap, wdStatusMap, invStatusMap, GATEWAY_LABEL } from './constants'
+import { SummaryCard, Tabs, Btn, Spinner, Icon } from './atoms'
 import { TransactionsSection } from './TransactionsSection'
 import { WithdrawalsSection } from './WithdrawalsSection'
 import { InvoicesSection } from './InvoicesSection'
 import { WithdrawModal } from './WithdrawModal'
+import { fmtBRLdec, fmtPct } from './formatters'
 import { cn } from '@/lib/utils'
 
 type Period = '7d' | '30d' | '90d' | 'all'
@@ -32,19 +37,118 @@ const tabsDef = [
 const netOf = (r: RawTransaction) =>
   Number(r.net ?? (Number(r.amount) - Number(r.fee ?? 0)))
 
-const GATEWAY_LABEL: Record<string, string> = {
-  mercadopago: 'Mercado Pago',
-  pushinpay:   'Pushinpay',
-  pagarme:     'Pagar.me',
-  stripe:      'Stripe',
-}
-
 const METHOD_LABEL: Record<string, string> = {
   pix:    'Pix',
   card:   'Cartão',
   boleto: 'Boleto',
   ted:    'TED',
   other:  'Outro',
+}
+
+// ── SmallStatCard ────────────────────────────────────────────────────────────
+
+function SmallStatCard({ label, value, icon, note }: {
+  label: string; value: string; icon: string; note?: string
+}) {
+  return (
+    <div className="bg-surface border border-border rounded-xl p-4 flex flex-col gap-1">
+      <div className="flex items-center gap-1.5 text-text-muted">
+        <Icon name={icon} size={13} />
+        <span className="text-[11px] font-medium uppercase tracking-wider">{label}</span>
+      </div>
+      <div className="text-[22px] font-semibold tnum text-text leading-tight">{value}</div>
+      {note && <div className="text-[11px] text-text-subtle">{note}</div>}
+    </div>
+  )
+}
+
+// ── RevenueChart ─────────────────────────────────────────────────────────────
+
+function RevenueChart({
+  data, collapsed, onToggle,
+}: {
+  data: { day: string; receita: number }[]
+  collapsed: boolean
+  onToggle: () => void
+}) {
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => { setMounted(true) }, [])
+
+  const hasData = data.some((d) => d.receita > 0)
+
+  return (
+    <div className="bg-surface border border-border rounded-xl mb-5 overflow-hidden">
+      <div
+        className="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-surface-2/50 transition-colors"
+        onClick={onToggle}
+      >
+        <div className="flex items-center gap-2 text-[13px] font-medium text-text">
+          <Icon name="bar-chart-2" size={14} className="text-primary" />
+          Receita por dia
+        </div>
+        {collapsed
+          ? <ChevronDown size={15} className="text-text-muted" />
+          : <ChevronUp   size={15} className="text-text-muted" />}
+      </div>
+
+      {!collapsed && (
+        <div className="px-4 pb-4">
+          {!mounted ? (
+            <div className="h-[160px] animate-pulse bg-surface-2 rounded-lg" />
+          ) : !hasData ? (
+            <div className="h-[160px] flex items-center justify-center text-[13px] text-text-muted">
+              Nenhuma receita aprovada no período selecionado.
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={160}>
+              <AreaChart data={data} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="receitaGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%"  stopColor="var(--primary)" stopOpacity={0.25} />
+                    <stop offset="95%" stopColor="var(--primary)" stopOpacity={0}    />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+                <XAxis
+                  dataKey="day"
+                  tick={{ fontSize: 10, fill: 'var(--text-muted)' }}
+                  tickLine={false}
+                  axisLine={false}
+                  interval="preserveStartEnd"
+                />
+                <YAxis
+                  tick={{ fontSize: 10, fill: 'var(--text-muted)' }}
+                  tickLine={false}
+                  axisLine={false}
+                  width={52}
+                  tickFormatter={(v) => `R$${(v as number) >= 1000 ? `${((v as number) / 1000).toFixed(1)}k` : String(v)}`}
+                />
+                <Tooltip
+                  contentStyle={{
+                    background: 'var(--surface)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 8,
+                    fontSize: 12,
+                    color: 'var(--text)',
+                  }}
+                  formatter={(value: number) => [fmtBRLdec(value), 'Receita']}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="receita"
+                  stroke="var(--primary)"
+                  strokeWidth={2}
+                  fill="url(#receitaGrad)"
+                  dot={false}
+                  activeDot={{ r: 4, strokeWidth: 0 }}
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+      )}
+    </div>
+  )
 }
 
 // ── Memo A: mapeamento caro de rows brutos → tipados (sem dependência de period) ──
@@ -88,25 +192,30 @@ function mapRawRows(
       net,
       bot:         row.bot_id  ? (botMap.get(row.bot_id)  ?? '—') : '—',
       flow:        row.flow_id ? (flowMap.get(row.flow_id) ?? '—') : '—',
-      utmSource:   row.utm_source   ?? undefined,
-      utmCampaign: row.utm_campaign ?? undefined,
+      utmSource:   row.utm_source    ?? undefined,
+      utmCampaign: row.utm_campaign  ?? undefined,
+      phone:       row.customer_phone  ?? undefined,
+      device:      row.customer_device ?? undefined,
+      checkoutId:  row.checkout_id     ?? undefined,
     } : undefined
 
     const status: Transaction['status'] =
-      row.status === 'approved'   ? 'available'
-      : row.status === 'pending'  ? 'pending'
-      : row.status === 'expired'  ? 'expired'
-      : row.status === 'cancelled'? 'cancelled'
-      :                             'failed'  // refunded → failed
+      row.status === 'approved'    ? 'available'
+      : row.status === 'pending'   ? 'pending'
+      : row.status === 'expired'   ? 'expired'
+      : row.status === 'cancelled' ? 'cancelled'
+      :                              'failed'  // refunded → failed
 
     return {
-      id:     String(row.id),
-      dt:     String(row.created_at),
-      type:   txType,
-      desc:   String(row.product_name || 'Venda'),
-      value:  isRefund ? -Math.abs(gross) : net,
+      id:         String(row.id),
+      dt:         String(row.created_at),
+      type:       txType,
+      desc:       String(row.product_name || 'Venda'),
+      value:      isRefund ? -Math.abs(gross) : net,
       status,
       detail,
+      botId:      row.bot_id      ?? null,
+      gatewayRaw: row.gateway     ?? null,
     }
   })
 
@@ -203,6 +312,7 @@ export function FinanceDashboard({
   initialInvoices,
   initialSummary,
   limitReached,
+  userId,
 }: {
   initialTransactions: RawTransaction[]
   initialWithdrawals:  RawWithdrawal[]
@@ -211,15 +321,34 @@ export function FinanceDashboard({
   initialInvoices:     RawInvoice[]
   initialSummary:      RawFinanceSummary | null
   limitReached:        boolean
+  userId:              string
 }) {
   const router = useRouter()
-  const [tab,          setTab]          = useState('tx')
-  const [period,       setPeriod]       = useState<Period>('30d')
-  const [modalOpen,    setModalOpen]    = useState(false)
-  const [allRawTxs,    setAllRawTxs]    = useState<RawTransaction[]>(initialTransactions)
-  const [loadingMore,  setLoadingMore]  = useState(false)
-  const [hasMore,      setHasMore]      = useState(limitReached)
+  const [tab,            setTab]           = useState('tx')
+  const [period,         setPeriod]        = useState<Period>('30d')
+  const [modalOpen,      setModalOpen]     = useState(false)
+  const [allRawTxs,      setAllRawTxs]     = useState<RawTransaction[]>(initialTransactions)
+  const [loadingMore,    setLoadingMore]   = useState(false)
+  const [hasMore,        setHasMore]       = useState(limitReached)
+  const [chartCollapsed, setChartCollapsed] = useState(false)
   const { track } = useAnalytics()
+
+  // Realtime — novas transações em tempo real
+  useEffect(() => {
+    const supabase = createClient()
+    const channel = supabase
+      .channel('finance-tx-realtime')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'transactions', filter: `user_id=eq.${userId}` },
+        (payload: { new: Record<string, unknown> }) => {
+          const row = payload.new as unknown as RawTransaction
+          setAllRawTxs((prev) => [row, ...prev])
+        },
+      )
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [userId])
 
   // Memo A: mapeamento raw → tipado (caro, sem dependência de period)
   const { txRows, wdRows, invoices } = useMemo(
@@ -233,21 +362,17 @@ export function FinanceDashboard({
     [allRawTxs, initialWithdrawals, period, initialSummary],
   )
 
-  // Filtros por período (roda só quando txRows ou period mudam)
-  // eslint-disable-next-line react-hooks/preserve-manual-memoization
+  // Filtros por período
   const filteredTxs = useMemo(() => {
     if (period === 'all') return txRows
     const days = period === '7d' ? 7 : period === '30d' ? 30 : 90
-    // eslint-disable-next-line react-hooks/purity
     const ts = Date.now() - days * 86_400_000
     return txRows.filter((t) => new Date(t.dt).getTime() >= ts)
   }, [txRows, period])
 
-  // eslint-disable-next-line react-hooks/preserve-manual-memoization
   const filteredWds = useMemo(() => {
     if (period === 'all') return wdRows
     const days = period === '7d' ? 7 : period === '30d' ? 30 : 90
-    // eslint-disable-next-line react-hooks/purity
     const ts = Date.now() - days * 86_400_000
     return wdRows.filter((w) => new Date(w.date).getTime() >= ts)
   }, [wdRows, period])
@@ -256,6 +381,42 @@ export function FinanceDashboard({
     () => invoices.filter((i) => i.status !== 'paid').length,
     [invoices],
   )
+
+  // Memo C: KPIs secundários do período
+  const periodKpis = useMemo(() => {
+    const saleTxs  = filteredTxs.filter((t) => t.type === 'sale')
+    const approved = saleTxs.filter((t) => t.status === 'available')
+    const refunds  = filteredTxs.filter((t) => t.type === 'refund')
+    const qtdVendas   = approved.length
+    const ticketMedio = qtdVendas > 0
+      ? approved.reduce((s, t) => s + t.value, 0) / qtdVendas
+      : 0
+    const taxaAprov = saleTxs.length > 0
+      ? (approved.length / saleTxs.length) * 100
+      : 0
+    return { qtdVendas, ticketMedio, taxaAprov, qtdReembolsos: refunds.length }
+  }, [filteredTxs])
+
+  // Memo D: receita por dia para o gráfico
+  const revenueByDay = useMemo(() => {
+    const TZ = 'America/Sao_Paulo'
+    const numDays = period === '7d' ? 7 : period === '90d' ? 90 : 30
+    const approved = filteredTxs.filter((t) => t.type === 'sale' && t.status === 'available')
+    const byDay = new Map<string, number>()
+    for (const tx of approved) {
+      const key = new Date(tx.dt).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', timeZone: TZ })
+      byDay.set(key, (byDay.get(key) ?? 0) + tx.value)
+    }
+    const result: { day: string; receita: number }[] = []
+    const now = new Date()
+    for (let i = numDays - 1; i >= 0; i--) {
+      const d = new Date(now)
+      d.setDate(d.getDate() - i)
+      const key = d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', timeZone: TZ })
+      result.push({ day: key, receita: byDay.get(key) ?? 0 })
+    }
+    return result
+  }, [filteredTxs, period])
 
   const loadMoreTransactions = useCallback(async () => {
     setLoadingMore(true)
@@ -289,8 +450,20 @@ export function FinanceDashboard({
     const today = new Date().toISOString().slice(0, 10)
     if (tab === 'tx') {
       exportCSV(`transacoes_${today}.csv`,
-        ['ID', 'Data', 'Tipo', 'Descrição', 'Valor (R$)', 'Status'],
-        filteredTxs.map((t) => [t.id, t.dt, txTypeMap[t.type]?.label ?? t.type, t.desc, t.value, txStatusMap[t.status]?.label ?? t.status]),
+        ['ID', 'Data', 'Tipo', 'Descrição', 'Valor líquido (R$)', 'Status', 'Método', 'Gateway', 'Bot', 'Cliente', 'E-mail', 'Telefone', 'Dispositivo', 'Origem UTM', 'Campanha UTM'],
+        filteredTxs.map((t) => [
+          t.id, t.dt, txTypeMap[t.type]?.label ?? t.type, t.desc, t.value,
+          txStatusMap[t.status]?.label ?? t.status,
+          t.detail?.method ?? '',
+          t.detail?.gateway ?? (t.gatewayRaw ? (GATEWAY_LABEL[t.gatewayRaw] ?? t.gatewayRaw) : ''),
+          t.detail?.bot ?? '',
+          t.detail?.customer ?? '',
+          t.detail?.email ?? '',
+          t.detail?.phone ?? '',
+          t.detail?.device ?? '',
+          t.detail?.utmSource ?? '',
+          t.detail?.utmCampaign ?? '',
+        ]),
       )
       track('csv_exported', { section: 'financeiro_transacoes', rows: filteredTxs.length, period })
     } else if (tab === 'withdraws') {
@@ -310,7 +483,7 @@ export function FinanceDashboard({
 
   return (
     <>
-    <PageHeader
+      <PageHeader
         title="Financeiro"
         subtitle="Receitas, saques e conciliações da sua operação."
         actions={
@@ -337,7 +510,8 @@ export function FinanceDashboard({
         </div>
       )}
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 mb-5">
+      {/* KPI cards principais */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 mb-3">
         <SummaryCard
           label="Saldo disponível"
           value={summary.saldoDisponivel}
@@ -354,6 +528,43 @@ export function FinanceDashboard({
         <SummaryCard label="Total recebido (histórico)" value={summary.totalRecebido}        delta={summary.deltas.total}     icon="trending-up" />
         <SummaryCard label="Comissões da plataforma"    value={summary.comissoesPlataforma}  delta={summary.deltas.comissoes} icon="percent"     />
       </div>
+
+      {/* KPI cards secundários do período */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+        <SmallStatCard
+          label="Vendas no período"
+          value={String(periodKpis.qtdVendas)}
+          icon="shopping-bag"
+          note={PERIOD_LABEL[period]}
+        />
+        <SmallStatCard
+          label="Ticket médio"
+          value={fmtBRLdec(periodKpis.ticketMedio)}
+          icon="trending-up"
+          note={`${periodKpis.qtdVendas} vendas`}
+        />
+        <SmallStatCard
+          label="Taxa de aprovação"
+          value={fmtPct(periodKpis.taxaAprov)}
+          icon="circle-check"
+          note={periodKpis.taxaAprov >= 80 ? 'Boa taxa' : 'Verificar rejeições'}
+        />
+        <SmallStatCard
+          label="Reembolsos"
+          value={String(periodKpis.qtdReembolsos)}
+          icon="undo-2"
+          note={periodKpis.qtdReembolsos === 0 ? 'Nenhum no período' : undefined}
+        />
+      </div>
+
+      {/* Gráfico de receita — só na aba de transações e não em 'all' */}
+      {tab === 'tx' && period !== 'all' && (
+        <RevenueChart
+          data={revenueByDay}
+          collapsed={chartCollapsed}
+          onToggle={() => setChartCollapsed((c) => !c)}
+        />
+      )}
 
       <div className="flex items-end justify-between border-b border-border mb-4">
         <Tabs
@@ -384,7 +595,7 @@ export function FinanceDashboard({
         </div>
       </div>
 
-      {tab === 'tx'        && <TransactionsSection data={filteredTxs} />}
+      {tab === 'tx'        && <TransactionsSection data={filteredTxs} bots={initialBots} />}
       {tab === 'withdraws' && <WithdrawalsSection  data={filteredWds} onNew={() => setModalOpen(true)} />}
       {tab === 'invoices'  && <InvoicesSection     data={invoices} />}
 

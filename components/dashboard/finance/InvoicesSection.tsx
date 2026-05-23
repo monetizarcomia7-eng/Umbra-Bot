@@ -18,9 +18,14 @@ export function InvoicesSection({ data }: { data: Invoice[] }) {
         subtitle="Assinatura + variável por uso"
         noPadding
       >
-        <div className="flex flex-col items-center justify-center gap-3 py-14 text-text-muted border-t border-border">
-          <FileText size={32} className="opacity-30" />
-          <p className="text-[13px]">Nenhuma fatura gerada ainda.</p>
+        <div className="flex flex-col items-center justify-center gap-3 py-14 border-t border-border">
+          <div className="w-11 h-11 rounded-xl bg-surface-2 border border-border flex items-center justify-center text-text-muted">
+            <FileText size={18} />
+          </div>
+          <div className="text-center">
+            <p className="text-[13.5px] font-semibold text-text">Nenhuma fatura gerada ainda</p>
+            <p className="text-[12px] text-text-muted mt-1 max-w-xs mx-auto">As faturas mensais da plataforma aparecerão aqui assim que o sistema de cobrança for ativado na sua conta.</p>
+          </div>
         </div>
       </Card>
     )

@@ -1,10 +1,13 @@
 'use client'
 
 import React, { useState, useMemo, useEffect } from 'react'
-import { Search, Inbox, X } from 'lucide-react'
+import { Search, Inbox, X, ChevronDown } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import type { Transaction } from './types'
-import { txTypeMap, txStatusMap, typeToFilter, statusToFilter, filterTypes, filterStatus } from './constants'
+import type { Transaction, RawFinanceBot } from './types'
+import {
+  txTypeMap, txStatusMap, typeToFilter, statusToFilter, filterTypes, filterStatus,
+  GATEWAY_LABEL, DEVICE_LABEL,
+} from './constants'
 import { fmtBRLdec, fmtPct, fmtDateShort, fmtTime } from './formatters'
 import { Badge, Card, Dropdown, Pagination, Icon } from './atoms'
 
@@ -39,9 +42,10 @@ function TransactionDetail({ tx }: { tx: Transaction }) {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4 max-w-3xl">
       <div className="space-y-2">
-        <div className="text-[10px] uppercase tracking-wider font-semibold text-text-subtle">Cliente & origem</div>
+        <div className="text-[10px] uppercase tracking-wider font-semibold text-text-subtle">Cliente &amp; origem</div>
         <DetailRow label="Cliente" value={d.customer} />
         {d.email !== '—' && <DetailRow label="E-mail"  value={d.email} />}
+        {d.phone  && <DetailRow label="Telefone" value={d.phone} />}
         <DetailRow label="Produto" value={d.product} />
         {d.bot  !== '—' && <DetailRow label="Bot"   value={<span className="tnum">{d.bot}</span>} />}
         {d.flow !== '—' && <DetailRow label="Fluxo" value={d.flow} />}
@@ -53,8 +57,14 @@ function TransactionDetail({ tx }: { tx: Transaction }) {
         )}
       </div>
       <div className="space-y-2">
-        <div className="text-[10px] uppercase tracking-wider font-semibold text-text-subtle">Pagamento & repasse</div>
+        <div className="text-[10px] uppercase tracking-wider font-semibold text-text-subtle">Pagamento &amp; repasse</div>
         <DetailRow label="Gateway" value={`${d.gateway} · ${d.method}`} />
+        {d.device && (
+          <DetailRow label="Dispositivo" value={DEVICE_LABEL[d.device] ?? d.device} />
+        )}
+        {d.checkoutId && (
+          <DetailRow label="Checkout ID" value={<span className="font-mono text-[11px]">{d.checkoutId.slice(0, 8)}…</span>} />
+        )}
         <div className="border-t border-border pt-2 space-y-1.5">
           <BreakdownRow label="Valor bruto"                                                                    value={d.gross}       sign="+" />
           <BreakdownRow label={`Taxa do gateway (${fmtPct(d.gross > 0 ? (d.gatewayFee / d.gross) * 100 : 0)})`} value={d.gatewayFee}  sign="−" />
@@ -65,6 +75,31 @@ function TransactionDetail({ tx }: { tx: Transaction }) {
           <BreakdownRow label="Valor líquido" value={d.net} sign="+" emphasize />
         </div>
       </div>
+    </div>
+  )
+}
+
+/* ── Filter select ────────────────────────────────────────────────────── */
+
+function FilterSelect({ value, onChange, options, placeholder }: {
+  value: string
+  onChange: (v: string) => void
+  options: { label: string; value: string }[]
+  placeholder: string
+}) {
+  return (
+    <div className="relative">
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="h-9 pl-3 pr-7 bg-surface border border-border rounded-lg text-[12.5px] text-text appearance-none cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50"
+      >
+        <option value="">{placeholder}</option>
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>{o.label}</option>
+        ))}
+      </select>
+      <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
     </div>
   )
 }
@@ -122,20 +157,56 @@ function TransactionRow({ tx, expanded, onToggle }: {
 
 /* ── Section ──────────────────────────────────────────────────────────── */
 
-export function TransactionsSection({ data }: { data: Transaction[] }) {
+export function TransactionsSection({
+  data,
+  bots = [],
+}: {
+  data: Transaction[]
+  bots?: RawFinanceBot[]
+}) {
   const [filters, setFilters] = useState({
-    type:   'Todos os tipos',
-    status: 'Todos os status',
-    search: '',
+    type:    'Todos os tipos',
+    status:  'Todos os status',
+    search:  '',
+    botId:   '',
+    gateway: '',
   })
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [page, setPage] = useState(1)
-  const perPage = 8
+  const perPage = 15
+
+  // Deriva opções de bot e gateway dos dados reais
+  const botOptions = useMemo(() => {
+    const seen = new Set<string>()
+    const opts: { label: string; value: string }[] = []
+    for (const bot of bots) {
+      if (!seen.has(bot.id)) {
+        seen.add(bot.id)
+        opts.push({ value: bot.id, label: bot.username ? `@${bot.username}` : bot.name })
+      }
+    }
+    return opts
+  }, [bots])
+
+  const gatewayOptions = useMemo(() => {
+    const seen = new Set<string>()
+    const opts: { label: string; value: string }[] = []
+    for (const tx of data) {
+      const g = tx.gatewayRaw
+      if (g && !seen.has(g)) {
+        seen.add(g)
+        opts.push({ value: g, label: GATEWAY_LABEL[g] ?? g })
+      }
+    }
+    return opts
+  }, [data])
 
   const filtered = useMemo(() => data.filter((tx) => {
-    if (filters.type   !== 'Todos os tipos'   && tx.type   !== typeToFilter[filters.type])     return false
-    if (filters.status !== 'Todos os status'  && tx.status !== statusToFilter[filters.status]) return false
-    if (filters.search && !tx.desc.toLowerCase().includes(filters.search.toLowerCase()))       return false
+    if (filters.type    !== 'Todos os tipos'  && tx.type       !== typeToFilter[filters.type])     return false
+    if (filters.status  !== 'Todos os status' && tx.status     !== statusToFilter[filters.status]) return false
+    if (filters.botId   && tx.botId           !== filters.botId)                                    return false
+    if (filters.gateway && tx.gatewayRaw      !== filters.gateway)                                 return false
+    if (filters.search  && !tx.desc.toLowerCase().includes(filters.search.toLowerCase()))          return false
     return true
   }), [data, filters])
 
@@ -150,12 +221,19 @@ export function TransactionsSection({ data }: { data: Transaction[] }) {
     setExpanded((s) => { const next = new Set(s); if (next.has(id)) next.delete(id); else next.add(id); return next })
   }
 
-  const hasFilters = filters.type !== 'Todos os tipos' || filters.status !== 'Todos os status' || !!filters.search
+  const hasFilters =
+    filters.type    !== 'Todos os tipos'  ||
+    filters.status  !== 'Todos os status' ||
+    !!filters.search || !!filters.botId || !!filters.gateway
+
+  function clearFilters() {
+    setFilters({ type: 'Todos os tipos', status: 'Todos os status', search: '', botId: '', gateway: '' })
+  }
 
   return (
     <Card noPadding>
       <div className="px-5 py-3 border-b border-border flex flex-wrap items-center gap-2">
-        <div className="relative flex-1 min-w-[200px] max-w-sm">
+        <div className="relative flex-1 min-w-[180px] max-w-sm">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
           <input
             type="text"
@@ -165,11 +243,27 @@ export function TransactionsSection({ data }: { data: Transaction[] }) {
             className="w-full h-9 pl-9 pr-3 bg-surface border border-border rounded-lg text-[12.5px] placeholder:text-text-subtle text-text focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50"
           />
         </div>
-        <Dropdown icon="tag"          label="Tipo"    value={filters.type}   options={filterTypes}   onChange={(v) => setFilters((f) => ({ ...f, type: v }))}   />
-        <Dropdown icon="circle-check" label="Status"  value={filters.status} options={filterStatus}  onChange={(v) => setFilters((f) => ({ ...f, status: v }))} />
+        <Dropdown icon="tag"          label="Tipo"   value={filters.type}   options={filterTypes}   onChange={(v) => setFilters((f) => ({ ...f, type: v }))}   />
+        <Dropdown icon="circle-check" label="Status" value={filters.status} options={filterStatus}  onChange={(v) => setFilters((f) => ({ ...f, status: v }))} />
+        {botOptions.length > 0 && (
+          <FilterSelect
+            value={filters.botId}
+            onChange={(v) => setFilters((f) => ({ ...f, botId: v }))}
+            options={botOptions}
+            placeholder="Todos os bots"
+          />
+        )}
+        {gatewayOptions.length > 0 && (
+          <FilterSelect
+            value={filters.gateway}
+            onChange={(v) => setFilters((f) => ({ ...f, gateway: v }))}
+            options={gatewayOptions}
+            placeholder="Todos os gateways"
+          />
+        )}
         {hasFilters && (
           <button
-            onClick={() => setFilters({ type: 'Todos os tipos', status: 'Todos os status', search: '' })}
+            onClick={clearFilters}
             className="h-9 px-2.5 inline-flex items-center gap-1.5 text-[12.5px] text-text-muted hover:text-text rounded-lg hover:bg-surface-2"
           >
             <X size={13} /> Limpar

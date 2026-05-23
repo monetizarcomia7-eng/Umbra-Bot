@@ -2,6 +2,7 @@ export interface TxDetail {
   customer: string; email: string; product: string; gateway: string; method: string
   gross: number; gatewayFee: number; platformFee: number; net: number; bot: string; flow: string
   utmSource?: string; utmCampaign?: string
+  phone?: string; device?: string; checkoutId?: string
 }
 
 export interface Transaction {
@@ -10,6 +11,8 @@ export interface Transaction {
   desc: string; value: number
   status: 'available' | 'pending' | 'completed' | 'failed' | 'expired' | 'cancelled'
   detail?: TxDetail
+  botId?: string | null
+  gatewayRaw?: string | null
 }
 
 export interface Withdrawal {
@@ -56,6 +59,9 @@ export interface RawTransaction {
   product_name: string | null
   customer_name: string | null
   customer_email: string | null
+  customer_phone: string | null
+  customer_device: string | null
+  checkout_id: string | null
   gateway: string | null
   bot_id: string | null
   flow_id: string | null

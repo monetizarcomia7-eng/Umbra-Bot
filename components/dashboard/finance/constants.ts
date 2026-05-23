@@ -51,3 +51,17 @@ export const statusToFilter: Record<string, string> = {
 export const filterPeriods = ['Últimos 7 dias', 'Últimos 30 dias', 'Últimos 90 dias', 'Este mês', 'Personalizado']
 export const filterTypes   = ['Todos os tipos', 'Venda', 'Comissão', 'Taxa', 'Estorno', 'Saque']
 export const filterStatus  = ['Todos os status', 'Disponível', 'A liberar', 'Concluído', 'Falhou', 'Expirado', 'Cancelado']
+
+export const GATEWAY_LABEL: Record<string, string> = {
+  mercadopago: 'Mercado Pago',
+  pushinpay:   'Pushinpay',
+  pagarme:     'Pagar.me',
+  stripe:      'Stripe',
+}
+
+export const DEVICE_LABEL: Record<string, string> = {
+  mobile:  'Mobile',
+  desktop: 'Desktop',
+  tablet:  'Tablet',
+  unknown: 'Desconhecido',
+}

@@ -1,6 +1,7 @@
 'use client'
 
 import React from 'react'
+import { Inbox } from 'lucide-react'
 import type { Withdrawal } from './types'
 import { wdStatusMap } from './constants'
 import { fmtDate, fmtDateTime, fmtBRLdec, fmtTime } from './formatters'
@@ -14,6 +15,15 @@ export function WithdrawalsSection({ data, onNew }: { data: Withdrawal[]; onNew:
       action={<Btn variant="secondary" size="sm" iconName="arrow-up-from-line" onClick={onNew}>Solicitar saque</Btn>}
       noPadding
     >
+      {data.length === 0 ? (
+        <div className="py-14 px-6 flex flex-col items-center justify-center text-center border-t border-border">
+          <div className="w-11 h-11 rounded-xl bg-surface-2 border border-border flex items-center justify-center text-text-muted mb-3">
+            <Inbox size={18} />
+          </div>
+          <div className="text-[13.5px] font-semibold text-text">Nenhum saque no período</div>
+          <div className="text-[12px] text-text-muted mt-1 max-w-xs">Saques solicitados aparecerão aqui. Clique em "Solicitar saque" para iniciar uma retirada.</div>
+        </div>
+      ) : (
       <div className="overflow-x-auto border-t border-border">
         <table className="w-full text-[12.5px] border-collapse min-w-[640px]">
           <thead>
@@ -53,6 +63,7 @@ export function WithdrawalsSection({ data, onNew }: { data: Withdrawal[]; onNew:
           </tbody>
         </table>
       </div>
+      )}
     </Card>
   )
 }

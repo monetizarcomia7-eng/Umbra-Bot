@@ -18,7 +18,7 @@ export default async function FinancePage() {
   const [txRes, wdRes, botsRes, flowsRes, invRes, summaryRes] = await Promise.all([
     supabase
       .from('transactions')
-      .select('id, amount, net, fee, status, type, product_name, customer_name, customer_email, gateway, bot_id, flow_id, utm_source, utm_campaign, created_at')
+      .select('id, amount, net, fee, status, type, product_name, customer_name, customer_email, customer_phone, customer_device, payment_method, checkout_id, gateway, bot_id, flow_id, utm_source, utm_campaign, created_at')
       .eq('user_id', uid)
       .order('created_at', { ascending: false })
       .limit(TX_LIMIT),
@@ -57,6 +57,7 @@ export default async function FinancePage() {
       initialInvoices={(invRes.data     as unknown as RawInvoice[])      ?? []}
       initialSummary={(summaryRes.data  as unknown as RawFinanceSummary) ?? null}
       limitReached={limitReached}
+      userId={uid}
     />
   )
 }
