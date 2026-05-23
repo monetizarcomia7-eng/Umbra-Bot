@@ -93,6 +93,16 @@ commission_pct:  numeric     NOT NULL  default 30
 notes:           text
 ```
 
+**UI — AffiliatesClient (pendências conhecidas — sem novas migrações):**
+- 4º KPI card "Receita gerada": `SUM(transactions.net) WHERE affiliate_id = x AND status = 'approved'` — todos os campos necessários já existem no banco
+- Badge de programa inativo: flag `affiliate_config.active` já existe; falta indicador visual na UI quando `false`
+- Coluna `commission_pct` (%) na tabela: campo `affiliates.commission_pct` já existe; falta exibição na tabela de afiliados
+- Supabase Realtime: canal `'affiliates-realtime'` (postgres_changes INSERT/UPDATE na tabela `affiliates`, filtro `user_id`) — sem migração necessária
+- CSV export da lista: dados já disponíveis via SSR; falta função de exportação
+- Coluna `joined_at` na tabela: campo `affiliates.joined_at` (timestamptz) já existe; falta exibição na tabela
+- PaymentsSection: resumo mensal — dados de `affiliate_payments.paid_at` + `amount` já existem; falta agregação por mês na UI
+- Notas de aprovação legíveis: `affiliates.notes` armazena JSON `{"bots":[...],"products":"..."}` — falta parse e exibição humanizada
+
 ---
 
 ## public.alerts

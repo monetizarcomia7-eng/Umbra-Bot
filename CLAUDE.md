@@ -886,6 +886,14 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Afiliados — Webhook MP: credita sales++ e commission via RPC credit_affiliate_sale ao aprovar pagamento | ✅ Implementado |
 | Afiliados — migração 058: transactions.affiliate_id + RPC credit_affiliate_sale (security definer, anon) | ✅ Implementada |
 | Afiliados — link de afiliado: BASE_URL removido, url derivada de appUrl (sem https:// duplicado) | ✅ Corrigido |
+| Afiliados — 4º KPI card "Receita gerada" (total R$ de vendas atribuídas) + seletor de período 7d/30d/90d | ⏳ Pendente |
+| Afiliados — badge de programa inativo: indicador visual quando active=false na PageHeader e no botão "Página pública" | ⏳ Pendente |
+| Afiliados — coluna commission_pct (%) por afiliado na tabela (atualmente só exibe R$ total) | ⏳ Pendente |
+| Afiliados — Supabase Realtime: canal postgres_changes para INSERT/UPDATE na tabela affiliates | ⏳ Pendente |
+| Afiliados — CSV export da lista de afiliados (alinhado com Clientes, Atividade, Financeiro) | ⏳ Pendente |
+| Afiliados — coluna joined_at (data de entrada) na tabela de afiliados | ⏳ Pendente |
+| Afiliados — PaymentsSection: resumo mensal (pago este mês vs mês anterior) na seção de pagamentos | ⏳ Pendente |
+| Afiliados — notas de aprovação legíveis: exibir JSON {bots, products} de forma humanizada no painel do afiliado | ⏳ Pendente |
 | Bots — Server Component + BotsClient + 6 server actions (dados reais) | ✅ Funcional |
 | Bots — validateBotTokenAction: valida token real via Telegram getMe | ✅ Implementado |
 | Bots — saveBotAction: AES-256-GCM + user_id server-side (sem IDOR) | ✅ Implementado |
@@ -2555,6 +2563,19 @@ get_public_affiliate_program(p_user_id uuid) → json
 | `affiliate_paid` | ao marcar pagamentos como pagos (inclui count + total em R$) |
 | `affiliate_config_saved` | ao salvar configuração do programa (inclui percentage, attribution, cookie_window) |
 | `affiliate_link_copied` | ao copiar link de afiliado |
+
+### Pendências conhecidas (backlog)
+
+| Item | Prioridade |
+|---|---|
+| 4º KPI card "Receita gerada" (SUM de transactions.net WHERE affiliate_id = x AND status='approved') + seletor de período 7d/30d/90d | 🔴 Alta |
+| Badge de programa inativo: quando `config.active=false`, exibir tag "Programa inativo" na PageHeader e estilizar o botão "Página pública" em cinza/muted | 🔴 Alta |
+| Coluna `% comissão` na tabela (exibir `commission_pct` ao lado da comissão em R$) | 🟡 Média |
+| Supabase Realtime: canal `'affiliates-realtime'` (postgres_changes INSERT/UPDATE, tabela affiliates, filtro user_id) | 🟡 Média |
+| CSV export: botão "Exportar CSV" na lista de afiliados (campos: nome, e-mail, slug, status, cliques, vendas, comissão, % comissão, data de entrada) | 🟡 Média |
+| Coluna `joined_at` na tabela (data de entrada do afiliado, formato relativo) | 🟢 Baixa |
+| PaymentsSection: resumo mensal — total pago este mês vs mês anterior (delta ± %) | 🟢 Baixa |
+| Notas de aprovação legíveis: parse do JSON `{bots, products}` e exibição humanizada no painel/menu do afiliado | 🟢 Baixa |
 
 ---
 

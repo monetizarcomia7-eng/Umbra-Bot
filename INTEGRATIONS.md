@@ -135,6 +135,7 @@ Todos os canais usam `postgres_changes` (eventos de banco) ou `presence` (rastre
 | `webhooks-realtime` | `*` | `webhooks` | `WebhooksClient.tsx` | Atualiza status/active/deliveries_24h/success_rate em tempo real |
 | `remarketing-campaigns` | `INSERT` + `UPDATE` + `DELETE` | `remarketing_campaigns` | `RemarketingClient.tsx` | Sincroniza listagem de campanhas entre abas |
 | `finance-tx-realtime` | `INSERT` | `transactions` | `FinanceDashboard.tsx` | Prepend de novas transações sem recarregar a página; filtrado por `user_id` |
+| `affiliates-realtime` | `INSERT` + `UPDATE` | `affiliates` | `AffiliatesClient.tsx` | ⏳ **Pendente** — candidaturas novas e atualizações de cliques/vendas em tempo real (sem implementação atual) |
 | Presence por checkout | `presence` | — | `CheckoutPageClient.tsx` | Contador de visitantes ao vivo em `/c/[slug]` quando `visitor_tracking=true` |
 
 **Padrão de assinatura (exemplo):**
@@ -400,6 +401,7 @@ supabase
 | `affiliate_paid` | AffiliatesClient |
 | `affiliate_config_saved` | AffiliatesClient |
 | `affiliate_link_copied` | AffiliatesClient |
+| `csv_exported` (section: 'affiliates') | AffiliatesClient — ⏳ **Pendente** (CSV export não implementado) |
 | `alert_resolved` | AlertsClient |
 | `alert_reopened` | AlertsClient |
 | `all_alerts_resolved` | AlertsClient |
@@ -562,6 +564,16 @@ supabase
 | Método | Caminho | Função | Autenticação | Rate limit |
 |---|---|---|---|---|
 | `POST` | `/api/affiliates/apply` | Candidatura pública ao programa de afiliados | Nenhuma | 10 req/hora por IP |
+
+**Pendências conhecidas na aba de Afiliados (sem novas rotas de API necessárias):**
+1. **4º KPI "Receita gerada"** — falta seletor 7d/30d/90d e KPI card com `SUM(transactions.net WHERE affiliate_id+approved)` (dados já no banco)
+2. **Badge de programa inativo** — falta indicador visual quando `affiliate_config.active = false` na PageHeader e no botão "Página pública"
+3. **Coluna % comissão** — campo `affiliates.commission_pct` existe no banco; falta exibição na tabela
+4. **Supabase Realtime** — canal `'affiliates-realtime'` pendente (candidaturas e cliques sem atualização em tempo real)
+5. **CSV export** — dados disponíveis via SSR; falta função de exportação (alinha com Clientes/Atividade/Financeiro)
+6. **Coluna joined_at** — campo `affiliates.joined_at` (timestamptz) existe; falta exibição na tabela
+7. **Resumo mensal em PaymentsSection** — dados de `affiliate_payments.paid_at + amount` existem; falta agregação mensal na UI
+8. **Notas de aprovação legíveis** — `affiliates.notes` armazena `{"bots":[...],"products":"..."}` em JSON; falta parse e exibição humanizada
 
 ---
 
