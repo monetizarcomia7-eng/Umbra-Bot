@@ -80,12 +80,10 @@ const navGroups: NavGroupDef[] = [
 function Logo({ collapsed }: { collapsed: boolean }) {
   return (
     <div className="flex items-center gap-2.5 select-none min-w-0">
-      <svg viewBox="0 0 32 32" width="28" height="28" className="shrink-0">
-        <rect width="32" height="32" rx="9" fill="var(--primary)" />
-        <path
-          d="M16 6.5 L18 13.5 L25.5 16 L18 18.5 L16 25.5 L14 18.5 L6.5 16 L14 13.5 Z"
-          fill="white"
-        />
+      <svg viewBox="0 0 100 100" width="28" height="28" className="shrink-0">
+        <rect width="100" height="100" rx="20" fill="var(--primary)" />
+        <path d="M 18 18 V 60 A 32 32 0 0 0 82 60 V 18 H 64 V 60 A 14 14 0 0 1 36 60 V 18 Z" fill="#f4f4f8" />
+        <rect x="14" y="42" width="72" height="3.5" rx="2" fill="rgba(0,0,0,0.65)" />
       </svg>
       {!collapsed && (
         <div className="font-semibold tracking-tight text-[15px] leading-none truncate text-text">

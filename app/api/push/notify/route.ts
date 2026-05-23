@@ -52,7 +52,7 @@ export async function POST(request: NextRequest) {
     title: body.title ?? 'Umbra Bot',
     body:  body.body  ?? '',
     url:   body.url   ?? '/dashboard',
-    icon:  '/favicon.ico',
+    icon:  '/favicon.svg',
   })
 
   try {

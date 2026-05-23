@@ -186,8 +186,9 @@ export default function RegisterPage() {
           <Link href="/" className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-lg flex items-center justify-center"
               style={{ background: 'var(--primary, #7c3aed)' }}>
-              <svg viewBox="0 0 32 32" width="18" height="18">
-                <path d="M16 4 L18.5 12 L27 16 L18.5 20 L16 28 L13.5 20 L5 16 L13.5 12 Z" fill="white" />
+              <svg viewBox="0 0 100 100" width="18" height="18">
+                <path d="M 18 18 V 60 A 32 32 0 0 0 82 60 V 18 H 64 V 60 A 14 14 0 0 1 36 60 V 18 Z" fill="white" />
+                <rect x="14" y="42" width="72" height="3.5" rx="2" fill="rgba(0,0,0,0.6)" />
               </svg>
             </div>
             <span className="font-bold text-[15px]" style={{ color: 'var(--text, #0f172a)' }}>Umbra Bot</span>
