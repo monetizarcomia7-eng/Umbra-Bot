@@ -942,7 +942,13 @@ function FinalCTA() {
           Pare de operar.<br />
           <span className="text-grad">Comece a faturar.</span>
         </h2>
-        <p className="mt-5 text-[16px] md:text-[17px] text-text-muted max-w-xl mx-auto leading-relaxed">
+        <div className="mt-5 flex justify-center">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="48" height="48" aria-label="Umbra Bot">
+            <path d="M 18 18 V 60 A 32 32 0 0 0 82 60 V 18 H 64 V 60 A 14 14 0 0 1 36 60 V 18 Z" fill="currentColor" opacity="0.9" />
+            <rect x="14" y="42" width="72" height="3.5" rx="2" fill="#7C5CFF" />
+          </svg>
+        </div>
+        <p className="mt-4 text-[16px] md:text-[17px] text-text-muted max-w-xl mx-auto leading-relaxed">
           O Umbra Bot atende, cobra e entrega — você fica livre pra criar, vender mais e dormir tranquilo. Crie sua conta agora, é grátis.
         </p>
 
