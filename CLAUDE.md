@@ -196,7 +196,10 @@ umbra-bot/
 │       ├── bots/                 # Gerenciar bots — dados reais (SSR + Realtime)
 │       │   ├── page.tsx          # Server Component: SSR bots (sem token) + flows em paralelo
 │       │   └── BotsClient.tsx    # Client Component: CRUD, Realtime, AddBotModal, tabs, TokenReveal
-│       ├── finance/              # Financeiro — Server Component + módulo finance/
+│       ├── finance/              # Financeiro — Server Component + módulo finance/ (SSR + Realtime)
+│       │   └── page.tsx          # Server Component: 6 queries em paralelo; SELECT inclui
+│       │                         # customer_phone, customer_device, payment_method, checkout_id
+│       │                         # passa userId={uid} ao FinanceDashboard
 │       ├── activity/             # Feed de eventos — dados reais do Supabase
 │       │   ├── page.tsx          # Server Component: busca 25 eventos + bots em paralelo (SSR)
 │       │   └── ActivityClient.tsx # Client Component: Realtime, filtros, paginação, CSV export, NoDataState
@@ -362,18 +365,30 @@ umbra-bot/
 │       ├── PageHeader.tsx
 │       ├── Button.tsx
 │       └── finance/              # Módulo completo do Financeiro (10 arquivos)
-│           ├── types.ts          # Transaction, Withdrawal, Invoice, BankAccount, RawTransaction,
+│           ├── types.ts          # Transaction (+ botId, gatewayRaw), Withdrawal, Invoice, BankAccount,
+│           │                     # RawTransaction (+ customer_phone, customer_device, checkout_id),
 │           │                     # RawWithdrawal, RawFinanceBot, RawFinanceFlow, RawInvoice, RawFinanceSummary
+│           │                     # TxDetail (+ phone, device, checkoutId)
 │           ├── formatters.ts     # fmtBRL, fmtBRLdec, fmtDate, fmtDateTime, fmtTime, fmtPct
 │           │                     # — todos com timeZone: 'America/Sao_Paulo'
 │           ├── constants.ts      # txTypeMap, txStatusMap, wdStatusMap, invStatusMap, filtros
+│           │                     # GATEWAY_LABEL, DEVICE_LABEL — centralizados (usados por TransactionsSection + FinanceDashboard)
 │           ├── mock-data.ts      # financeMock (apenas dados de demonstração — não usado em produção)
 │           ├── atoms.tsx         # Icon, Badge, Card, Tabs, Modal, Dropdown, Btn, Spinner, etc.
 │           ├── FinanceDashboard.tsx  # Componente raiz (client) — seletor de período 7d/30d/90d/Tudo
 │           │                         # Memo A: mapRawRows (rows→tipados), Memo B: buildPeriodSummary (period-dep)
-│           ├── TransactionsSection.tsx # Tabela com filtros, paginação e detalhe expandível real
-│           ├── WithdrawalsSection.tsx  # Tabela de saques (filtrada pelo período selecionado)
-│           ├── InvoicesSection.tsx     # Tabela de faturas reais; estado vazio quando tabela está vazia
+│           │                         # Memo C: periodKpis (vendas, ticket médio, taxa aprovação, reembolsos)
+│           │                         # Memo D: revenueByDay (série diária para Recharts AreaChart)
+│           │                         # SmallStatCard: 4 KPIs secundários (vendas/ticket/aprovação/reembolsos)
+│           │                         # RevenueChart: AreaChart Recharts (colapsável, mounted SSR-safe)
+│           │                         # Realtime: canal 'finance-tx-realtime' (postgres_changes INSERT)
+│           │                         # CSV export 15 colunas; userId prop
+│           ├── TransactionsSection.tsx # Tabela com filtros (tipo/status/busca/bot/gateway), paginação
+│           │                           # perPage=15; FilterSelect nativo (bot + gateway dropdowns)
+│           │                           # botOptions / gatewayOptions derivados dos dados reais
+│           │                           # TransactionDetail: phone, device, checkoutId além dos campos anteriores
+│           ├── WithdrawalsSection.tsx  # Tabela de saques; estado vazio com ícone Inbox quando sem saques
+│           ├── InvoicesSection.tsx     # Tabela de faturas; estado vazio aprimorado (FileText icon + texto melhor)
 │           └── WithdrawModal.tsx       # Modal multi-step: self-fetch de bank_accounts, add/delete inline
 │                                       # maskPixKey: oculta meio da chave PIX para privacidade
 ├── hooks/
@@ -577,6 +592,18 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Financeiro — rate limit P7: saques 3/dia (era 5/hora) + captura requester_ip | ✅ Implementado |
 | Financeiro — saldo fresco P8: WithdrawModal busca GET /api/finance/balance ao abrir | ✅ Implementado |
 | Financeiro — transactions.net corrigido de GENERATED→coluna normal (mig 046) | ✅ Implementado |
+| Financeiro — Realtime: canal 'finance-tx-realtime' (postgres_changes INSERT, filtrado por user_id) | ✅ Implementado |
+| Financeiro — SmallStatCard: 4 KPIs secundários (vendas, ticket médio, taxa aprovação, reembolsos) | ✅ Implementado |
+| Financeiro — RevenueChart: AreaChart Recharts por dia (colapsável, mounted SSR-safe, oculto em 'all') | ✅ Implementado |
+| Financeiro — CSV export 15 colunas (+ phone, device, checkoutId, bot, gateway, method, UTMs, type) | ✅ Implementado |
+| Financeiro — SELECT page.tsx: customer_phone, customer_device, payment_method, checkout_id adicionados | ✅ Implementado |
+| Financeiro — TransactionsSection: FilterSelect bot + gateway (dropdowns nativos com ChevronDown) | ✅ Implementado |
+| Financeiro — TransactionsSection: perPage=15 (era 8) | ✅ Implementado |
+| Financeiro — TransactionDetail: phone, device (DEVICE_LABEL), checkoutId exibidos no detalhe expandível | ✅ Implementado |
+| Financeiro — WithdrawalsSection: estado vazio com ícone Inbox + texto orientativo | ✅ Implementado |
+| Financeiro — InvoicesSection: estado vazio aprimorado (ícone FileText + texto mais claro) | ✅ Implementado |
+| Financeiro — constants.ts: GATEWAY_LABEL e DEVICE_LABEL centralizados (exportados) | ✅ Implementado |
+| Financeiro — types.ts: botId/gatewayRaw em Transaction; phone/device/checkoutId em TxDetail e RawTransaction | ✅ Implementado |
 | Atividade — Server Component + Client Component (SSR + Realtime) | ✅ Funcional |
 | Atividade — dados reais do banco (activity_events) — sem mock, estado vazio quando vazio | ✅ Funcional |
 | Atividade — Supabase Realtime (INSERT em tempo real) | ✅ Funcional |
@@ -1168,7 +1195,8 @@ DashboardLayout (components/dashboard/Layout.tsx)
 FinancePage (Server Component)
   └── Promise.all com 6 queries em paralelo:
         ├── transactions (limit 500): id, amount, net, fee, status, type, product_name,
-        │   customer_name, customer_email, gateway, bot_id, flow_id, utm_source, utm_campaign, created_at
+        │   customer_name, customer_email, customer_phone, customer_device, payment_method, checkout_id,
+        │   gateway, bot_id, flow_id, utm_source, utm_campaign, created_at
         ├── withdrawals  (limit 200): id, amount, account_id, account_label, status, created_at, concluded_at, notes
         ├── bots: id, name, username
         ├── flows: id, name (limit 100)
@@ -1181,6 +1209,12 @@ FinanceDashboard (Client Component)
   ├── period state: '7d' | '30d' | '90d' | 'all'  (default: '30d')
   ├── allRawTxs state: acumula rows iniciais + carregamentos adicionais
   ├── hasMore state: true enquanto houver mais rows a carregar
+  ├── chartCollapsed state: boolean — recolhe/expande o RevenueChart
+  ├── mounted state: boolean — SSR-safe para Recharts (setMounted(true) em useEffect)
+  ├── Supabase Realtime:
+  │     canal 'finance-tx-realtime', postgres_changes INSERT, tabela transactions
+  │     filtro: user_id=eq.${userId}
+  │     nova tx → prepend em allRawTxs (re-dispara Memo A)
   ├── Memo A — mapRawRows (SEM dependência de period — roda só quando rows/bots/flows mudam):
   │     ├── botMap / flowMap para lookup O(1) de nomes por id
   │     ├── transaction.type lido do banco (mig 044); fallback: heurística por status
@@ -1188,8 +1222,10 @@ FinanceDashboard (Client Component)
   │     ├── status mapping correto: approved→available, pending→pending, expired→expired,
   │     │     cancelled→cancelled, refunded/cancelled→failed
   │     ├── TxDetail: method via payment_method (mig 047) + METHOD_LABEL; fallback 'Pix'
-  │     │     customer_name, customer_email, gateway (GATEWAY_LABEL), bot_id→nome, flow_id→nome,
-  │     │     utm_source, utm_campaign
+  │     │     customer_name, customer_email, customer_phone, customer_device (DEVICE_LABEL),
+  │     │     checkout_id, gateway (GATEWAY_LABEL), bot_id→nome, flow_id→nome, utm_source, utm_campaign
+  │     ├── Transaction: botId = bot_id (para filtro universal por bot)
+  │     │     gatewayRaw = gateway raw string (para filtro universal por gateway)
   │     └── invoices: rawInvoices.length > 0 → dados reais; senão [] (estado vazio — sem mock)
   ├── Memo B — buildPeriodSummary (COM dependência de period — só roda ao trocar período):
   │     ├── summary cards — usa dbSummary (RPC) quando disponível:
@@ -1198,12 +1234,28 @@ FinanceDashboard (Client Component)
   │     │     Fallback se RPC falhar: computa dos rows carregados
   │     └── deltas reais: compara período atual vs anterior
   │           pct(cur, prev) = prev > 0 ? round(((cur-prev)/prev)*1000)/10 : 0
+  ├── Memo C — periodKpis (derivado de filteredTxs — 4 KPIs secundários):
+  │     ├── totalSales: count das transações aprovadas no período
+  │     ├── avgTicket: totalRevenue / totalSales (0 se sem vendas)
+  │     ├── approvalRate: approved / (approved + expired + cancelled + refunded) × 100
+  │     └── totalRefunds: count das transações com status 'failed' (refunded/cancelled)
+  ├── Memo D — revenueByDay (derivado de filteredTxs — série para Recharts):
+  │     Agrupa approved por dia (America/Sao_Paulo)
+  │     Retorna Array<{ day: 'DD/MM', revenue: number }> para o AreaChart
+  │     Oculto quando period === 'all' (chart não renderiza)
+  ├── SmallStatCard: 4 cards abaixo dos KPIs principais
+  │     Vendas (totalSales) | Ticket médio (avgTicket) | Taxa aprovação (approvalRate) | Reembolsos (totalRefunds)
+  ├── RevenueChart: AreaChart Recharts — só monta quando mounted=true (SSR-safe)
+  │     Oculto quando period === 'all' ou chartCollapsed=true
+  │     Tooltip.formatter: (value) => [fmtBRLdec(Number(value ?? 0)), 'Receita'] — ValueType-safe
   ├── filteredTxs = txRows filtradas por period (useMemo)
   ├── filteredWds = wdRows filtradas por period (useMemo)
   ├── banner hasMore: mostra quantidade carregada + botão "Carregar mais →"
   │     → GET /api/finance/transactions?offset=N → acumula em allRawTxs
-  ├── CSV export usa dados filtrados pelo período ativo (inclui campo period no evento PostHog)
+  ├── CSV export 15 colunas: Data | Tipo | Produto | Cliente | E-mail | Telefone | Dispositivo |
+  │     Checkout ID | Valor bruto | Taxa | Valor líquido | Método | Bot | Gateway | Status
   │     — saques incluem coluna "Observação" (withdrawal.notes)
+  │     track('csv_exported', { section: 'finance', period })
   ├── handleTabChange → track('finance_tab_changed', { tab })
   ├── handlePeriodChange → track('finance_period_changed', { period })
   └── handleWithdrawalSuccess → setModalOpen(false) + router.refresh()
@@ -1224,14 +1276,24 @@ WithdrawModal (Client Component — sem props de contas)
   └── step 'success': botão "Fechar" chama onSuccess (→ router.refresh()) não onClose
 ```
 
-### GATEWAY_LABEL — mapeamento de IDs para nomes legíveis
+### GATEWAY_LABEL e DEVICE_LABEL — centralizados em constants.ts
 
 ```typescript
-const GATEWAY_LABEL: Record<string, string> = {
+// Exportados de components/dashboard/finance/constants.ts
+// Usados em TransactionsSection (dropdowns) e FinanceDashboard (TxDetail + export CSV)
+
+export const GATEWAY_LABEL: Record<string, string> = {
   mercadopago: 'Mercado Pago',
   pushinpay:   'Pushinpay',
   pagarme:     'Pagar.me',
   stripe:      'Stripe',
+}
+
+export const DEVICE_LABEL: Record<string, string> = {
+  mobile:  'Mobile',
+  desktop: 'Desktop',
+  tablet:  'Tablet',
+  unknown: 'Desconhecido',
 }
 ```
 

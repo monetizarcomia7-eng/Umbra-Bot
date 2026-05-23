@@ -12,6 +12,7 @@ import {
   ShoppingBag, UserPlus, CheckCircle2, Wifi, XCircle, Undo2, WifiOff,
   Gauge, Bot, Webhook, GitBranch, UserX, Filter, Bell, Download,
   X, ArrowUpRight, SearchX, Check, ChevronDown, Search, Calendar,
+  ChevronRight, Layers, Square, SquareCheck,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
@@ -47,6 +48,8 @@ interface ActivityEvent {
   amount: number | null
 }
 
+type DisplayItem = ActivityEvent | ActivityEvent[]
+
 /* ── Icon map ─────────────────────────────────────────────── */
 
 const iconMap: Record<string, LucideIcon> = {
@@ -72,6 +75,10 @@ const iconMap: Record<string, LucideIcon> = {
   'chevron-down':   ChevronDown,
   'search':         Search,
   'calendar':       Calendar,
+  'chevron-right':  ChevronRight,
+  'layers':         Layers,
+  'square':         Square,
+  'square-check':   SquareCheck,
 }
 
 function Icon({ name, size = 16, className }: { name: string; size?: number; className?: string }) {
@@ -204,6 +211,37 @@ function dayKeyFormatted(key: string) {
   return new Date(key + 'T00:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
 }
 
+/* ── Group consecutive same-type+bot events (30 min window) ─ */
+
+const GROUP_WINDOW_MS = 30 * 60 * 1000
+
+function groupDayEvents(events: ActivityEvent[]): DisplayItem[] {
+  // events are sorted newest-first (DESC by dt)
+  const result: DisplayItem[] = []
+  let i = 0
+  while (i < events.length) {
+    const cur = events[i]
+    const group: ActivityEvent[] = [cur]
+    let j = i + 1
+    while (j < events.length) {
+      const next = events[j]
+      if (
+        next.type === cur.type &&
+        next.bot_id === cur.bot_id &&
+        cur.dt - next.dt <= GROUP_WINDOW_MS
+      ) {
+        group.push(next)
+        j++
+      } else {
+        break
+      }
+    }
+    result.push(group.length >= 2 ? group : cur)
+    i = j
+  }
+  return result
+}
+
 /* ── Local UI primitives ──────────────────────────────────── */
 
 function Card({ title, subtitle, action, children }: {
@@ -284,14 +322,49 @@ function Dropdown({ icon, label, value, options, onChange, width }: {
 
 /* ── Event Card ───────────────────────────────────────────── */
 
-function EventCard({ event, now, isNew, botDisplay }: {
+function EventCard({
+  event, now, isNew, botDisplay,
+  selectionMode, selected, onSelect, onClick,
+}: {
   event: ActivityEvent; now: number; isNew: boolean; botDisplay: string
+  selectionMode: boolean; selected: boolean
+  onSelect: (id: string) => void; onClick: (event: ActivityEvent) => void
 }) {
   const t = eventTypes[event.type] ?? eventTypes.sale
   const tone = severityTones[t.severity]
 
+  const handleCardClick = () => {
+    if (selectionMode) {
+      onSelect(event.id)
+    } else {
+      onClick(event)
+    }
+  }
+
   return (
-    <article className={cn('relative pl-12 py-2.5 group', isNew && 'fade-up')}>
+    <article
+      className={cn(
+        'relative pl-12 py-2.5 group rounded-lg transition-colors',
+        selectionMode || true ? 'cursor-pointer' : '',
+        selected ? 'bg-primary/5' : 'hover:bg-surface-2/60',
+        isNew && 'fade-up',
+      )}
+      onClick={handleCardClick}
+    >
+      {/* Selection checkbox */}
+      {selectionMode && (
+        <button
+          className="absolute left-[-4px] top-3 z-10 text-text-muted hover:text-primary transition-colors"
+          onClick={(e) => { e.stopPropagation(); onSelect(event.id) }}
+          aria-label={selected ? 'Desselecionar' : 'Selecionar'}
+        >
+          {selected
+            ? <SquareCheck size={16} className="text-primary" />
+            : <Square size={16} />
+          }
+        </button>
+      )}
+
       <div
         className={cn('absolute left-1 top-2 w-7 h-7 rounded-md flex items-center justify-center', tone.bg, tone.text)}
         style={{ boxShadow: '0 0 0 4px var(--bg)' }}
@@ -302,7 +375,10 @@ function EventCard({ event, now, isNew, botDisplay }: {
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[10px] uppercase tracking-wider font-semibold text-text-subtle">{t.label}</span>
+            {/* Badge com cor por severidade — melhoria #1 e #8 */}
+            <span className={cn('text-[10px] uppercase tracking-wider font-semibold px-1.5 py-0.5 rounded', tone.bg, tone.text)}>
+              {t.label}
+            </span>
             {isNew && (
               <span className="text-[9.5px] uppercase tracking-wider font-semibold text-success bg-success-soft px-1.5 py-0.5 rounded">
                 Novo
@@ -317,6 +393,7 @@ function EventCard({ event, now, isNew, botDisplay }: {
             <Link
               href={t.link}
               className="text-primary font-medium hover:underline inline-flex items-center gap-0.5 focus-ring rounded"
+              onClick={(e) => e.stopPropagation()}
             >
               Ver {t.res}
               <Icon name="arrow-up-right" size={10} />
@@ -334,12 +411,198 @@ function EventCard({ event, now, isNew, botDisplay }: {
   )
 }
 
+/* ── Grouped Event Card ───────────────────────────────────── */
+
+function GroupedEventCard({
+  events, now, botDisplay,
+  selectionMode, selectedIds, onSelect, onClickEvent,
+}: {
+  events: ActivityEvent[]; now: number; botDisplay: string
+  selectionMode: boolean; selectedIds: Set<string>
+  onSelect: (id: string) => void; onClickEvent: (event: ActivityEvent) => void
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const first = events[0]
+  const t = eventTypes[first.type] ?? eventTypes.sale
+  const tone = severityTones[t.severity]
+  const allSelected = events.every((e) => selectedIds.has(e.id))
+
+  const handleGroupClick = () => {
+    if (selectionMode) {
+      events.forEach((e) => onSelect(e.id))
+    } else {
+      setExpanded((v) => !v)
+    }
+  }
+
+  return (
+    <div className="rounded-lg overflow-hidden">
+      <div
+        className={cn(
+          'relative pl-12 py-2.5 cursor-pointer transition-colors',
+          allSelected ? 'bg-primary/5' : 'hover:bg-surface-2/60',
+        )}
+        onClick={handleGroupClick}
+      >
+        {selectionMode && (
+          <button
+            className="absolute left-[-4px] top-3 z-10 text-text-muted hover:text-primary transition-colors"
+            onClick={(e) => { e.stopPropagation(); events.forEach((ev) => onSelect(ev.id)) }}
+          >
+            {allSelected
+              ? <SquareCheck size={16} className="text-primary" />
+              : <Square size={16} />
+            }
+          </button>
+        )}
+
+        <div
+          className={cn('absolute left-1 top-2 w-7 h-7 rounded-md flex items-center justify-center', tone.bg, tone.text)}
+          style={{ boxShadow: '0 0 0 4px var(--bg)' }}
+        >
+          <Layers size={13} />
+        </div>
+
+        <div className="flex items-center justify-between gap-4">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className={cn('text-[10px] uppercase tracking-wider font-semibold px-1.5 py-0.5 rounded', tone.bg, tone.text)}>
+                {t.label}
+              </span>
+            </div>
+            <div className="text-[13px] font-medium text-text mt-0.5 leading-snug">
+              {events.length} {t.label.toLowerCase()}s
+              {botDisplay ? ` via ${botDisplay}` : ''}
+            </div>
+            <div className="flex items-center gap-2 mt-1.5 text-[10.5px]">
+              <span className="text-text-subtle tnum">
+                {relTime(events[events.length - 1].dt, now)} – {relTime(first.dt, now)}
+              </span>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <ChevronDown
+              size={14}
+              className={cn('text-text-muted transition-transform', expanded && 'rotate-180')}
+            />
+          </div>
+        </div>
+      </div>
+
+      {expanded && (
+        <div className="pl-4 border-l-2 border-border ml-4">
+          {events.map((e) => (
+            <EventCard
+              key={e.id}
+              event={e}
+              now={now}
+              isNew={false}
+              botDisplay={botDisplay}
+              selectionMode={selectionMode}
+              selected={selectedIds.has(e.id)}
+              onSelect={onSelect}
+              onClick={onClickEvent}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/* ── Event Detail Panel ───────────────────────────────────── */
+
+function EventDetailPanel({ event, now, botDisplay, onClose }: {
+  event: ActivityEvent; now: number; botDisplay: string; onClose: () => void
+}) {
+  const t = eventTypes[event.type] ?? eventTypes.sale
+  const tone = severityTones[t.severity]
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-surface border border-border rounded-xl overflow-hidden">
+        <div className="flex items-start justify-between gap-4 px-5 pt-4 pb-3">
+          <div className="flex items-center gap-2.5">
+            <div className={cn('w-8 h-8 rounded-lg flex items-center justify-center shrink-0', tone.bg, tone.text)}>
+              <Icon name={t.icon} size={15} />
+            </div>
+            <span className={cn('text-[11px] uppercase tracking-wider font-semibold px-1.5 py-0.5 rounded', tone.bg, tone.text)}>
+              {t.label}
+            </span>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-text-muted hover:text-text transition-colors rounded-md p-1 hover:bg-surface-2"
+            aria-label="Fechar detalhe"
+          >
+            <X size={14} />
+          </button>
+        </div>
+
+        <div className="px-5 pb-5 space-y-3">
+          <div>
+            <div className="text-[15px] font-semibold text-text leading-snug">{event.title}</div>
+            {event.desc && (
+              <div className="text-[13px] text-text-muted mt-1 leading-relaxed">{event.desc}</div>
+            )}
+          </div>
+
+          {event.amount != null && event.amount > 0 && (
+            <div className="flex items-center gap-2 bg-success-soft/50 rounded-lg px-3 py-2">
+              <span className="text-[11px] text-text-muted font-medium">Valor</span>
+              <span className="text-[15px] font-bold text-success tnum">{fmtBRLdec(event.amount)}</span>
+            </div>
+          )}
+
+          <div className="space-y-1.5 text-[12px]">
+            {botDisplay && (
+              <div className="flex items-center gap-2 text-text-muted">
+                <Bot size={12} className="shrink-0" />
+                <span>{botDisplay}</span>
+              </div>
+            )}
+            <div className="flex items-center gap-2 text-text-muted">
+              <Calendar size={12} className="shrink-0" />
+              <span title={fmtDateTime(event.dt)}>
+                {fmtDateTime(event.dt)} ({relTime(event.dt, now)})
+              </span>
+            </div>
+          </div>
+
+          <Link
+            href={t.link}
+            className="w-full mt-1 h-9 inline-flex items-center justify-center gap-1.5 rounded-lg border border-border bg-surface-2 text-[13px] font-medium text-text hover:bg-surface-2/80 transition-colors"
+          >
+            Ver {t.res}
+            <ChevronRight size={14} />
+          </Link>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 /* ── Day Group ────────────────────────────────────────────── */
 
-function DayGroup({ dayKey: key, events, now, newIds, botMap }: {
+function DayGroup({
+  dayKey: key, events, now, newIds, botMap,
+  selectionMode, selectedIds, onSelect, onClickEvent,
+}: {
   dayKey: string; events: ActivityEvent[]; now: number
   newIds: Set<string>; botMap: Map<string, string>
+  selectionMode: boolean; selectedIds: Set<string>
+  onSelect: (id: string) => void; onClickEvent: (event: ActivityEvent) => void
 }) {
+  // Receita do dia: soma amount de sale e payment — melhoria #7
+  const dayRevenue = useMemo(
+    () => events
+      .filter((e) => ['sale', 'payment'].includes(e.type))
+      .reduce((s, e) => s + (e.amount ?? 0), 0),
+    [events],
+  )
+
+  const displayItems = useMemo(() => groupDayEvents(events), [events])
+
   return (
     <section className="relative">
       <div className="sticky top-0 z-10 -mx-1 px-1 bg-bg/85 backdrop-blur py-2">
@@ -350,20 +613,47 @@ function DayGroup({ dayKey: key, events, now, newIds, botMap }: {
           <span className="text-[10.5px] text-text-subtle tnum">{dayKeyFormatted(key)}</span>
           <span className="text-[10.5px] text-text-subtle">·</span>
           <span className="text-[10.5px] text-text-subtle tnum">{events.length} eventos</span>
+          {dayRevenue > 0 && (
+            <>
+              <span className="text-[10.5px] text-text-subtle">·</span>
+              <span className="text-[10.5px] font-semibold text-success tnum">{fmtBRLdec(dayRevenue)}</span>
+            </>
+          )}
           <div className="flex-1 h-px bg-border" />
         </div>
       </div>
       <div className="relative pb-2">
         <div className="absolute left-[15px] top-3 bottom-3 w-px bg-border" />
-        {events.map((e) => (
-          <EventCard
-            key={e.id}
-            event={e}
-            now={now}
-            isNew={newIds.has(e.id)}
-            botDisplay={e.bot || (e.bot_id ? (botMap.get(e.bot_id) ?? '') : '')}
-          />
-        ))}
+        {displayItems.map((item, idx) => {
+          if (Array.isArray(item)) {
+            const botDisplay = item[0].bot || (item[0].bot_id ? (botMap.get(item[0].bot_id) ?? '') : '')
+            return (
+              <GroupedEventCard
+                key={`group-${idx}`}
+                events={item}
+                now={now}
+                botDisplay={botDisplay}
+                selectionMode={selectionMode}
+                selectedIds={selectedIds}
+                onSelect={onSelect}
+                onClickEvent={onClickEvent}
+              />
+            )
+          }
+          return (
+            <EventCard
+              key={item.id}
+              event={item}
+              now={now}
+              isNew={newIds.has(item.id)}
+              botDisplay={item.bot || (item.bot_id ? (botMap.get(item.bot_id) ?? '') : '')}
+              selectionMode={selectionMode}
+              selected={selectedIds.has(item.id)}
+              onSelect={onSelect}
+              onClick={onClickEvent}
+            />
+          )
+        })}
       </div>
     </section>
   )
@@ -379,6 +669,7 @@ function FilterBar({
   bots,
   live, onLiveToggle,
   eventsPerHour, onClear, hasFilters, unreadCount,
+  selectionMode, onToggleSelection,
 }: {
   category: string; onCategoryChange: (v: string) => void
   botId: string; onBotChange: (v: string) => void
@@ -387,6 +678,7 @@ function FilterBar({
   bots: BotOption[]
   live: boolean; onLiveToggle: () => void
   eventsPerHour: number; onClear: () => void; hasFilters: boolean; unreadCount: number
+  selectionMode: boolean; onToggleSelection: () => void
 }) {
   const categoryOptions = Object.keys(categoryGroups).map((k) => ({ value: k, label: k }))
   const botOptions = [
@@ -419,8 +711,13 @@ function FilterBar({
       </div>
 
       <Dropdown icon="filter" label="Categoria" value={category} options={categoryOptions} onChange={onCategoryChange} width={200} />
-      <Dropdown icon="bot"    label="Bot"       value={botId}    options={botOptions}       onChange={onBotChange}    width={190} />
-      <Dropdown icon="calendar" label="Período" value={period}   options={PERIOD_OPTIONS}   onChange={onPeriodChange} width={170} />
+
+      {/* Bot filter — oculto quando há apenas 1 bot — melhoria #11 */}
+      {bots.length > 1 && (
+        <Dropdown icon="bot" label="Bot" value={botId} options={botOptions} onChange={onBotChange} width={190} />
+      )}
+
+      <Dropdown icon="calendar" label="Período" value={period} options={PERIOD_OPTIONS} onChange={onPeriodChange} width={170} />
 
       {hasFilters && (
         <button
@@ -433,6 +730,21 @@ function FilterBar({
       )}
 
       <div className="flex-1" />
+
+      {/* Botão de seleção bulk — melhoria #10 */}
+      <button
+        onClick={onToggleSelection}
+        className={cn(
+          'h-9 px-3 inline-flex items-center gap-1.5 rounded-lg text-[12.5px] font-medium border focus-ring transition-colors',
+          selectionMode
+            ? 'bg-primary/10 text-primary border-primary/30'
+            : 'bg-surface text-text-muted border-border hover:bg-surface-2 hover:text-text',
+        )}
+        title={selectionMode ? 'Sair do modo de seleção' : 'Selecionar eventos'}
+      >
+        <SquareCheck size={14} />
+        {selectionMode ? 'Selecionando' : 'Selecionar'}
+      </button>
 
       <button
         onClick={onLiveToggle}
@@ -448,7 +760,15 @@ function FilterBar({
           {live && <span className="absolute inset-0 rounded-full bg-success animate-ping opacity-60" />}
         </span>
         {live ? 'Ao vivo' : 'Pausado'}
-        {live && <span className="text-success/70 tnum">· {eventsPerHour}/h</span>}
+        {live && (
+          /* Tooltip no /h — melhoria #4 */
+          <span
+            title="Eventos registrados na última hora"
+            className="text-success/70 tnum cursor-help"
+          >
+            · {eventsPerHour}/h
+          </span>
+        )}
         {unreadCount > 0 && (
           <span className="min-w-[18px] h-[18px] bg-success text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1 leading-none">
             {unreadCount > 99 ? '99+' : unreadCount}
@@ -461,30 +781,38 @@ function FilterBar({
 
 /* ── Summary Sidebar ──────────────────────────────────────── */
 
-function SummarySidebar({ events, now, onSelectCategory, botMap }: {
+function SummarySidebar({ events, now, period, onSelectCategory, botMap }: {
   events: ActivityEvent[]
   now: number
+  period: string
   onSelectCategory: (v: string) => void
   botMap: Map<string, string>
 }) {
-  const last24h = useMemo(() => events.filter((e) => now - e.dt < 86400000), [events, now])
+  // Adaptação ao período selecionado — melhoria #5
+  const cutoff = getPeriodCutoff(period, now)
+  const periodLabel = PERIOD_OPTIONS.find((p) => p.value === period)?.label ?? 'Todo o período'
+
+  const periodEvents = useMemo(
+    () => (cutoff === null ? events : events.filter((e) => e.dt >= cutoff)),
+    [events, cutoff],
+  )
 
   const bySeverity = useMemo(() => {
     const acc: Record<string, number> = { success: 0, info: 0, warning: 0, danger: 0 }
-    last24h.forEach((e) => { const t = eventTypes[e.type]; if (t) acc[t.severity]++ })
+    periodEvents.forEach((e) => { const t = eventTypes[e.type]; if (t) acc[t.severity]++ })
     return acc
-  }, [last24h])
+  }, [periodEvents])
 
-  const total = last24h.length
+  const total = periodEvents.length
 
   const byBot = useMemo(() => {
     const acc: Record<string, number> = {}
-    last24h.forEach((e) => {
+    periodEvents.forEach((e) => {
       const display = e.bot || (e.bot_id ? (botMap.get(e.bot_id) ?? e.bot_id.slice(0, 8)) : '')
       if (display) acc[display] = (acc[display] || 0) + 1
     })
     return Object.entries(acc).sort((a, b) => b[1] - a[1]).slice(0, 4)
-  }, [last24h, botMap])
+  }, [periodEvents, botMap])
 
   const critical = useMemo(
     () => events.filter((e) => eventTypes[e.type]?.severity === 'danger').slice(0, 3),
@@ -500,51 +828,65 @@ function SummarySidebar({ events, now, onSelectCategory, botMap }: {
 
   return (
     <div className="space-y-4">
-      <Card title="Últimas 24 horas" subtitle={`${total} eventos registrados`}>
-        <div className="space-y-2.5 mt-1">
-          {sevConfig.map((s) => {
-            const v = bySeverity[s.key] ?? 0
-            const pct = total ? (v / total) * 100 : 0
-            return (
-              <div key={s.key}>
-                <div className="flex items-center justify-between text-[12px] mb-1">
-                  <span className="flex items-center gap-1.5">
-                    <span className="w-2 h-2 rounded-full" style={{ background: `var(--${s.sev})` }} />
-                    <span className="text-text">{s.label}</span>
-                  </span>
-                  <span className="tnum text-text-muted">{v}</span>
+      {/* Card de resumo por severidade — melhoria #3 e #5 */}
+      <Card
+        title={periodLabel}
+        subtitle={total === 0 ? 'Sem eventos no período' : `${total} evento${total !== 1 ? 's' : ''} registrado${total !== 1 ? 's' : ''}`}
+      >
+        {total === 0 ? (
+          <div className="flex items-center gap-2 mt-1 text-[12px] text-text-muted">
+            <CheckCircle2 size={14} className="text-success" />
+            <span>Nenhum evento no período.</span>
+          </div>
+        ) : (
+          <div className="space-y-2.5 mt-1">
+            {sevConfig.map((s) => {
+              const v = bySeverity[s.key] ?? 0
+              // Oculta linhas com valor zero — melhoria #3
+              if (v === 0) return null
+              const pct = total ? (v / total) * 100 : 0
+              return (
+                <div key={s.key}>
+                  <div className="flex items-center justify-between text-[12px] mb-1">
+                    <span className="flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full" style={{ background: `var(--${s.sev})` }} />
+                      <span className="text-text">{s.label}</span>
+                    </span>
+                    <span className="tnum text-text-muted">{v}</span>
+                  </div>
+                  <div className="h-1 bg-surface-2 rounded-full overflow-hidden">
+                    <div className="h-full rounded-full" style={{ width: `${pct}%`, background: `var(--${s.sev})` }} />
+                  </div>
                 </div>
-                <div className="h-1 bg-surface-2 rounded-full overflow-hidden">
-                  <div className="h-full rounded-full" style={{ width: `${pct}%`, background: `var(--${s.sev})` }} />
-                </div>
-              </div>
-            )
-          })}
-        </div>
+              )
+            })}
+          </div>
+        )}
       </Card>
 
-      <Card title="Bots mais ativos" subtitle="Eventos nas últimas 24 h">
-        <div className="space-y-2 mt-1">
-          {byBot.length === 0 && (
-            <div className="text-[12px] text-text-muted">Sem atividade nas últimas 24 h.</div>
-          )}
-          {byBot.map(([bot, count]) => {
-            const pct = byBot[0][1] > 0 ? (count / byBot[0][1]) * 100 : 0
-            return (
-              <div key={bot}>
-                <div className="flex items-center justify-between text-[12px] mb-1">
-                  <span className="tnum text-text truncate">{bot}</span>
-                  <span className="tnum text-text-muted shrink-0 ml-2">{count}</span>
+      {/* Bots mais ativos — oculto quando sem dados — melhoria #3 */}
+      {byBot.length > 0 && (
+        <Card title="Bots mais ativos" subtitle={`Eventos em ${periodLabel.toLowerCase()}`}>
+          <div className="space-y-2 mt-1">
+            {byBot.map(([bot, count]) => {
+              const pct = byBot[0][1] > 0 ? (count / byBot[0][1]) * 100 : 0
+              return (
+                <div key={bot}>
+                  <div className="flex items-center justify-between text-[12px] mb-1">
+                    <span className="tnum text-text truncate">{bot}</span>
+                    <span className="tnum text-text-muted shrink-0 ml-2">{count}</span>
+                  </div>
+                  <div className="h-1 bg-surface-2 rounded-full overflow-hidden">
+                    <div className="h-full rounded-full bg-primary" style={{ width: `${pct}%` }} />
+                  </div>
                 </div>
-                <div className="h-1 bg-surface-2 rounded-full overflow-hidden">
-                  <div className="h-full rounded-full bg-primary" style={{ width: `${pct}%` }} />
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      </Card>
+              )
+            })}
+          </div>
+        </Card>
+      )}
 
+      {/* Card de atenção — melhoria #9: link "Configurar alertas" no footer */}
       <Card
         title="Atenção"
         subtitle={critical.length === 0 ? 'Tudo certo no momento.' : `${critical.length} eventos críticos recentes`}
@@ -586,6 +928,18 @@ function SummarySidebar({ events, now, onSelectCategory, botMap }: {
             })}
           </div>
         )}
+
+        {/* Link "Configurar alertas" movido do PageHeader para cá — melhoria #9 */}
+        <div className="mt-3 pt-3 border-t border-border">
+          <Link
+            href="/dashboard/alerts"
+            className="inline-flex items-center gap-1.5 text-[12px] text-text-muted hover:text-text transition-colors"
+          >
+            <Bell size={12} />
+            Configurar alertas
+            <ChevronRight size={11} />
+          </Link>
+        </div>
       </Card>
     </div>
   )
@@ -639,7 +993,6 @@ export default function ActivityClient({
   bots: BotOption[]
 }) {
   const { track } = useAnalytics()
-  const router = useRouter()
 
   const [rows, setRows] = useState<ActivityEvent[]>(() => initialEvents.map(mapRaw))
   const [extras, setExtras] = useState<ActivityEvent[]>([])
@@ -655,11 +1008,18 @@ export default function ActivityClient({
   const [hasMore, setHasMore] = useState(initialEvents.length >= PAGE_SIZE)
   const [isLoadingMore, setIsLoadingMore] = useState(false)
 
-  const sentinelRef   = useRef<HTMLDivElement>(null)
+  // Melhoria #6: evento selecionado para detalhe no painel
+  const [selectedEvent, setSelectedEvent] = useState<ActivityEvent | null>(null)
+
+  // Melhoria #10: seleção bulk
+  const [selectionMode, setSelectionMode] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+
+  const sentinelRef    = useRef<HTMLDivElement>(null)
   const topSentinelRef = useRef<HTMLDivElement>(null)
-  const initialNewIds = useRef(new Set<string>())
-  const liveRef  = useRef(live)
-  const periodRef = useRef(period)
+  const initialNewIds  = useRef(new Set<string>())
+  const liveRef        = useRef(live)
+  const periodRef      = useRef(period)
 
   useEffect(() => { liveRef.current = live }, [live])
   useEffect(() => { periodRef.current = period }, [period])
@@ -704,7 +1064,6 @@ export default function ActivityClient({
     return () => { supabase.removeChannel(channel) }
   }, [])
 
-
   // Carrega mais eventos do banco com offset (respeita filtro de período)
   const loadMore = useCallback(async () => {
     if (isLoadingMore || !hasMore) return
@@ -732,7 +1091,7 @@ export default function ActivityClient({
     }
   }, [isLoadingMore, hasMore, dbOffset])
 
-  // Mapa id → nome de exibição do bot (para resolver bot_id → @username)
+  // Mapa id → nome de exibição do bot
   const botMap = useMemo(() => {
     const m = new Map<string, string>()
     bots.forEach((b) => {
@@ -741,7 +1100,7 @@ export default function ActivityClient({
     return m
   }, [bots])
 
-  // Todos os eventos: realtime (extras) + banco/mock (rows)
+  // Todos os eventos: realtime (extras) + banco (rows)
   const allEvents = useMemo(() => [...extras, ...rows], [extras, rows])
 
   // Filtro por período + categoria + bot + busca de texto
@@ -832,9 +1191,36 @@ export default function ActivityClient({
     track('activity_live_toggled', { live: next })
   }
 
-  // Export CSV com filtros ativos
+  // Melhoria #6: abre detalhe de evento
+  const handleClickEvent = (event: ActivityEvent) => {
+    setSelectedEvent((prev) => prev?.id === event.id ? null : event)
+  }
+
+  // Melhoria #10: toggle de seleção individual
+  const handleSelectId = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  // Melhoria #10: toggle de modo seleção
+  const handleToggleSelection = () => {
+    setSelectionMode((v) => {
+      if (v) setSelectedIds(new Set())
+      return !v
+    })
+    setSelectedEvent(null)
+  }
+
+  // Export CSV com filtros ativos (ou selecionados)
   const handleExport = () => {
-    const csvRows = filtered.map((e) => [
+    const source = selectedIds.size > 0
+      ? filtered.filter((e) => selectedIds.has(e.id))
+      : filtered
+    const csvRows = source.map((e) => [
       fmtExport(e.dt),
       eventTypes[e.type]?.label ?? e.type,
       e.title,
@@ -856,20 +1242,34 @@ export default function ActivityClient({
         title="Atividade"
         subtitle="Linha do tempo de eventos do seu painel — vendas, leads, sistema e integrações."
         actions={
-          <>
-            <Btn
-              iconName="download"
-              onClick={handleExport}
-              disabled={filtered.length === 0}
-            >
-              Exportar
-            </Btn>
-            <Btn iconName="bell" onClick={() => router.push('/dashboard/alerts')}>
-              Configurar alertas
-            </Btn>
-          </>
+          <Btn
+            iconName="download"
+            onClick={handleExport}
+            disabled={filtered.length === 0}
+          >
+            Exportar
+          </Btn>
         }
       />
+
+      {/* Barra de ação bulk — melhoria #10 */}
+      {selectionMode && selectedIds.size > 0 && (
+        <div className="mb-4 flex items-center gap-3 px-4 py-2.5 bg-primary/10 border border-primary/20 rounded-xl">
+          <span className="text-[13px] font-medium text-primary">
+            {selectedIds.size} evento{selectedIds.size !== 1 ? 's' : ''} selecionado{selectedIds.size !== 1 ? 's' : ''}
+          </span>
+          <div className="flex-1" />
+          <Btn iconName="download" onClick={handleExport}>
+            Exportar selecionados
+          </Btn>
+          <Btn
+            onClick={() => setSelectedIds(new Set())}
+            className="text-text-muted"
+          >
+            Limpar seleção
+          </Btn>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-5 items-start">
         <div className="min-w-0">
@@ -889,6 +1289,8 @@ export default function ActivityClient({
             onClear={onClear}
             hasFilters={hasFilters}
             unreadCount={unreadCount}
+            selectionMode={selectionMode}
+            onToggleSelection={handleToggleSelection}
           />
 
           <div ref={topSentinelRef} className="h-px" />
@@ -899,17 +1301,20 @@ export default function ActivityClient({
             <EmptyFeed onClear={onClear} />
           ) : (
             <div className="space-y-1">
-              {grouped.map(([k, items]) => {
-                // eslint-disable-next-line react-hooks/refs
-                return <DayGroup
+              {grouped.map(([k, items]) => (
+                <DayGroup
                   key={k}
                   dayKey={k}
                   events={items}
                   now={now}
                   newIds={initialNewIds.current}
                   botMap={botMap}
+                  selectionMode={selectionMode}
+                  selectedIds={selectedIds}
+                  onSelect={handleSelectId}
+                  onClickEvent={handleClickEvent}
                 />
-              })}
+              ))}
 
               <div ref={sentinelRef} className="py-6 flex items-center justify-center">
                 {(visibleCount < filtered.length || isLoadingMore) ? (
@@ -930,13 +1335,27 @@ export default function ActivityClient({
           )}
         </div>
 
+        {/* Sidebar — melhoria #6: mostra EventDetailPanel quando há evento selecionado */}
         <aside className="space-y-4">
-          <SummarySidebar
-            events={allEvents}
-            now={now}
-            onSelectCategory={(v) => setCategory(v)}
-            botMap={botMap}
-          />
+          {selectedEvent !== null ? (
+            <EventDetailPanel
+              event={selectedEvent}
+              now={now}
+              botDisplay={selectedEvent.bot || (selectedEvent.bot_id ? (botMap.get(selectedEvent.bot_id) ?? '') : '')}
+              onClose={() => setSelectedEvent(null)}
+            />
+          ) : (
+            <SummarySidebar
+              events={allEvents}
+              now={now}
+              period={period}
+              onSelectCategory={(v) => {
+                setCategory(v)
+                LS.set('umbra_act_category', v)
+              }}
+              botMap={botMap}
+            />
+          )}
         </aside>
       </div>
     </>

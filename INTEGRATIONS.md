@@ -116,6 +116,43 @@ Ambos usam `Authorization: Bearer CRON_SECRET`.
 - **Exceção documentada:** tabelas acessadas por `createAdminClient()` (service role bypassa RLS) — usado em webhook Telegram, cron check-bots, cron process-remarketing, cron process-broadcasts, checkout pay (busca dados do dono do checkout), route `/r/[slug]`
 - **Funções com `security definer`:** `track_checkout_event`, `track_affiliate_click`, `submit_affiliate_application`, `get_public_affiliate_program`, `credit_affiliate_sale`, `record_redirect_click`, `redirect_analytics`, `validate_and_apply_coupon`, `checkout_tx_status`, `record_biolink_visit`, `record_biolink_link_click`, `enroll_in_course`, `upsert_lesson_progress`, `get_course_progress`, `issue_certificate`, `get_user_certificates`, `get_course_with_modules`
 
+### Supabase Realtime — Canais em uso
+
+Todos os canais usam `postgres_changes` (eventos de banco) ou `presence` (rastreamento de usuários ao vivo). Cada canal é filtrado por `user_id` para isolar dados por tenant.
+
+| Canal | Evento | Tabela | Consumidor | Função |
+|---|---|---|---|---|
+| `bots-realtime` | `UPDATE` | `bots` | `BotsClient.tsx` | Atualiza status de bots em tempo real (disconnect/reconnect via cron check-bots) |
+| `activity-feed` | `INSERT` | `activity_events` | `ActivityClient.tsx` | Prepend de novos eventos no feed ao vivo |
+| `customers-realtime` | `INSERT` + `UPDATE` | `contacts` | `CustomersClient.tsx` | Novos leads e atualizações de perfil em tempo real |
+| `flows-realtime` | `INSERT` + `UPDATE` + `DELETE` | `flows` | `FlowsClient.tsx` | Sincroniza listagem de fluxos entre abas |
+| `broadcasts-realtime` | `INSERT` + `UPDATE` | `broadcasts` | `BroadcastsClient.tsx` | Progresso de envio, status, novos disparos (stale-draft guard incluso) |
+| `alerts-feed` | `INSERT` + `UPDATE` | `alerts` | `AlertsClient.tsx` | Novos alertas e atualizações de status filtrados por `user_id` |
+| `gateways-realtime` | `INSERT` + `UPDATE` | `gateways` | `GatewaysClient.tsx` | Atualiza status de conexão do gateway (ex: após OAuth callback) |
+| `pixels-tracking` | `UPDATE` | `pixels` | `TrackingClient.tsx` | Atualiza status/last_test_at do pixel após verificação |
+| `checkout-events-tracking` | `INSERT` | `checkout_events` | `TrackingClient.tsx` | Incrementa `events_sent_today` ao vivo sem re-fetch |
+| `checkouts-realtime` | `INSERT` + `UPDATE` | `checkouts` | `CheckoutClient.tsx` | Sincroniza editor de checkout entre abas |
+| `webhooks-realtime` | `*` | `webhooks` | `WebhooksClient.tsx` | Atualiza status/active/deliveries_24h/success_rate em tempo real |
+| `remarketing-campaigns` | `INSERT` + `UPDATE` + `DELETE` | `remarketing_campaigns` | `RemarketingClient.tsx` | Sincroniza listagem de campanhas entre abas |
+| `finance-tx-realtime` | `INSERT` | `transactions` | `FinanceDashboard.tsx` | Prepend de novas transações sem recarregar a página; filtrado por `user_id` |
+| Presence por checkout | `presence` | — | `CheckoutPageClient.tsx` | Contador de visitantes ao vivo em `/c/[slug]` quando `visitor_tracking=true` |
+
+**Padrão de assinatura (exemplo):**
+```typescript
+supabase
+  .channel('finance-tx-realtime')
+  .on('postgres_changes', {
+    event: 'INSERT',
+    schema: 'public',
+    table: 'transactions',
+    filter: `user_id=eq.${userId}`,
+  }, (payload) => {
+    const row = payload.new as unknown as RawTransaction
+    setAllRawTxs(prev => [row, ...prev])
+  })
+  .subscribe()
+```
+
 ---
 
 ## 4. SERVIÇOS EXTERNOS DE TERCEIROS
