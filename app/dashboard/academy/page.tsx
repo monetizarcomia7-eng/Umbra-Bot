@@ -28,6 +28,7 @@ export default async function AcademyPage() {
 
   return (
     <AcademyClient
+      userId={user.id}
       initialCourses={(coursesRes.data ?? []) as unknown as RawDbCourse[]}
       initialEnrollments={(enrollRes.data ?? []) as unknown as RawDbEnrollment[]}
       initialProgress={(progressRes.data ?? []) as unknown as RawDbProgress[]}

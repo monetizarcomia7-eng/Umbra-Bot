@@ -6,9 +6,10 @@ import { PageHeader } from '@/components/dashboard/PageHeader'
 import {
   Clock, PlayCircle, Play, Pause, CheckCircle2, Check, GraduationCap,
   HelpCircle, File, ChevronLeft, ChevronRight, ChevronUp, ChevronDown,
-  Award, ExternalLink, Volume2, Maximize2, ArrowUpRight, X,
+  Award, ExternalLink, Volume2, Maximize2, ArrowUpRight, X, Search,
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
+import { useAnalytics } from '@/hooks/use-analytics'
 
 /* ── DB Row Types (exported for page.tsx) ──────────────────── */
 
@@ -41,6 +42,7 @@ export interface RawDbLesson {
   durationSec?: number
   duration_min?: number
   type?: 'video' | 'quiz' | 'file'
+  video_url?: string
 }
 
 export interface RawDbEnrollment {
@@ -71,6 +73,7 @@ interface Lesson {
   durationSec: number
   done: boolean
   type: 'video' | 'quiz' | 'file'
+  video_url: string
   current?: boolean
 }
 
@@ -109,6 +112,7 @@ interface Certificate {
 }
 
 export interface AcademyClientProps {
+  userId: string
   initialCourses: RawDbCourse[]
   initialEnrollments: RawDbEnrollment[]
   initialProgress: RawDbProgress[]
@@ -147,6 +151,7 @@ function mapCourses(
         durationSec: l.durationSec ?? (l.duration_min ? l.duration_min * 60 : 0),
         done: doneSet.has(l.id),
         type: (l.type ?? 'video') as Lesson['type'],
+        video_url: l.video_url ?? '',
       })),
     }))
 
@@ -372,86 +377,64 @@ function CourseCard({ course, hasCert, onOpen }: { course: Course; hasCert: bool
 
 /* ── VideoPlayer ────────────────────────────────────────────── */
 
-function VideoPlayer({ lesson, onWatched }: {
-  lesson: FlatLesson | undefined
-  onWatched?: (sec: number) => void
-}) {
-  const [playing, setPlaying] = useState(false)
-  const [position, setPosition] = useState(0)
-  const total = lesson?.durationSec ?? 0
+function getVideoKind(url: string): 'youtube' | 'vimeo' | 'bunny' | 'direct' | 'empty' {
+  if (!url?.trim()) return 'empty'
+  if (url.includes('youtube.com') || url.includes('youtu.be')) return 'youtube'
+  if (url.includes('vimeo.com')) return 'vimeo'
+  if (url.includes('mediadelivery.net') || url.includes('bunny.net')) return 'bunny'
+  return 'direct'
+}
 
-  useEffect(() => {
-    setPlaying(false)
-    setPosition(0)
-  }, [lesson?.id])
+function getYoutubeId(url: string): string {
+  const m = url.match(/(?:v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/)
+  return m?.[1] ?? ''
+}
 
-  useEffect(() => {
-    if (!playing || total === 0) return
-    const t = setInterval(() => {
-      setPosition((p) => {
-        const next = p >= total ? total : p + 1
-        if (next === total) {
-          setPlaying(false)
-          onWatched?.(next)
-        }
-        return next
-      })
-    }, 1000)
-    return () => clearInterval(t)
-  }, [playing, total, onWatched])
+function getVimeoId(url: string): string {
+  const m = url.match(/vimeo\.com\/(\d+)/)
+  return m?.[1] ?? ''
+}
 
-  const pct = total === 0 ? 0 : (position / total) * 100
+function VideoPlayer({ lesson }: { lesson: FlatLesson | undefined }) {
+  if (!lesson || lesson.type !== 'video') return null
 
-  if (!lesson?.video_url && lesson?.type === 'video') {
-    // No video URL — show placeholder player
+  const url  = lesson.video_url ?? ''
+  const kind = getVideoKind(url)
+
+  if (kind === 'empty') {
+    return (
+      <div
+        className="mt-5 relative aspect-video rounded-xl overflow-hidden border border-border flex flex-col items-center justify-center gap-3"
+        style={{ background: 'linear-gradient(135deg, oklch(0.18 0.04 280), oklch(0.10 0.02 280))' }}
+      >
+        <PlayCircle size={48} className="text-white/20" />
+        <p className="text-[13px] text-white/50">Vídeo em breve</p>
+      </div>
+    )
   }
 
+  if (kind === 'direct') {
+    return (
+      <div className="mt-5 relative aspect-video rounded-xl overflow-hidden border border-border bg-black">
+        <video key={url} src={url} controls className="w-full h-full" />
+      </div>
+    )
+  }
+
+  let embedUrl = url
+  if (kind === 'youtube') embedUrl = `https://www.youtube.com/embed/${getYoutubeId(url)}?rel=0`
+  if (kind === 'vimeo')   embedUrl = `https://player.vimeo.com/video/${getVimeoId(url)}`
+
   return (
-    <div
-      className="mt-5 relative aspect-video rounded-xl overflow-hidden border border-border"
-      style={{ background: 'linear-gradient(135deg, oklch(0.18 0.04 280), oklch(0.10 0.02 280))' }}
-    >
-      <div className="absolute inset-0 flex items-center justify-center">
-        <button
-          onClick={() => setPlaying(p => !p)}
-          className="w-16 h-16 rounded-full bg-white/15 backdrop-blur border border-white/20 flex items-center justify-center text-white hover:bg-white/25 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-        >
-          <Icon name={playing ? 'pause' : 'play'} size={24} />
-        </button>
-      </div>
-      <div className="absolute inset-0 pointer-events-none opacity-30" style={{
-        backgroundImage: 'radial-gradient(circle, white 1px, transparent 1.5px)',
-        backgroundSize: '24px 24px',
-      }} />
-      <div className="absolute bottom-0 left-0 right-0 px-4 py-3 bg-gradient-to-t from-black/80 via-black/40 to-transparent">
-        <div className="flex items-center gap-2.5 text-white text-[11.5px]">
-          <button onClick={() => setPlaying(p => !p)} className="w-8 h-8 rounded-md hover:bg-white/15 inline-flex items-center justify-center">
-            <Icon name={playing ? 'pause' : 'play'} size={14} />
-          </button>
-          <span className="tabular-nums opacity-80">{formatDur(position)} / {formatDur(total)}</span>
-          <div className="flex-1 mx-2">
-            <div className="h-1 bg-white/15 rounded-full overflow-hidden cursor-pointer relative">
-              <div className="h-full bg-primary" style={{ width: `${pct}%` }} />
-              <div className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-primary border-2 border-white" style={{ left: `calc(${pct}% - 6px)` }} />
-            </div>
-          </div>
-          <button className="w-8 h-8 rounded-md hover:bg-white/15 inline-flex items-center justify-center">
-            <Icon name="volume-2" size={13} />
-          </button>
-          <button className="w-8 h-8 rounded-md hover:bg-white/15 inline-flex items-center justify-center tabular-nums text-[10.5px] font-semibold">
-            1x
-          </button>
-          <button className="w-8 h-8 rounded-md hover:bg-white/15 inline-flex items-center justify-center">
-            <Icon name="maximize-2" size={13} />
-          </button>
-        </div>
-      </div>
-      <div className="absolute top-4 left-4">
-        <span className="inline-flex items-center gap-1 px-2 py-1 rounded bg-white/10 backdrop-blur text-[10.5px] font-semibold uppercase tracking-wider text-white">
-          <Icon name="play-circle" size={10} />
-          Aula em vídeo
-        </span>
-      </div>
+    <div className="mt-5 relative aspect-video rounded-xl overflow-hidden border border-border bg-black">
+      <iframe
+        key={embedUrl}
+        src={embedUrl}
+        className="w-full h-full"
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
+        allowFullScreen
+        title={lesson.title}
+      />
     </div>
   )
 }
@@ -632,12 +615,7 @@ function CourseDetail({
           </div>
 
           {active?.type === 'video' && (
-            <VideoPlayer
-              lesson={active}
-              onWatched={(sec) => {
-                if (!active.done) onProgress(active.id, false)
-              }}
-            />
+            <VideoPlayer lesson={active} />
           )}
           {active?.type === 'file' && (
             <div className="mt-5 rounded-xl border border-border bg-surface-2/50 p-8 flex flex-col items-center gap-3">
@@ -883,18 +861,22 @@ function EduStat({ label, value, icon, tone }: {
 /* ── AcademyClient ──────────────────────────────────────────── */
 
 export function AcademyClient({
+  userId,
   initialCourses,
   initialEnrollments,
   initialProgress,
   initialCertificates,
 }: AcademyClientProps) {
-  const supabase = useMemo(() => createClient(), [])
+  const supabase  = useMemo(() => createClient(), [])
+  const { track } = useAnalytics()
 
   const [list, setList] = useState<Course[]>(() =>
     mapCourses(initialCourses, initialEnrollments, initialProgress)
   )
   const [activeCourseId, setActiveCourseId] = useState<string | null>(null)
   const [showCerts, setShowCerts] = useState(false)
+  const [search, setSearch]           = useState('')
+  const [levelFilter, setLevelFilter] = useState('Todos')
 
   const [certificates, setCertificates] = useState<Certificate[]>(() =>
     initialCertificates.map(c => ({
@@ -905,11 +887,37 @@ export function AcademyClient({
     }))
   )
 
+  const levels = useMemo(() => {
+    const unique = Array.from(new Set(list.map(c => c.level).filter(Boolean)))
+    return ['Todos', ...unique]
+  }, [list])
+
+  const filteredList = useMemo(() => {
+    let out = list
+    if (levelFilter !== 'Todos') out = out.filter(c => c.level === levelFilter)
+    if (search.trim()) {
+      const q = search.trim().toLowerCase()
+      out = out.filter(c =>
+        c.title.toLowerCase().includes(q) ||
+        c.subtitle.toLowerCase().includes(q) ||
+        c.instructor.toLowerCase().includes(q)
+      )
+    }
+    return out
+  }, [list, search, levelFilter])
+
+  useEffect(() => {
+    if (!search.trim()) return
+    track('course_searched', { query: search.trim(), results_count: filteredList.length })
+  // only track on search change, not every filteredList recalc
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search])
+
   // Enroll user when they first open a course
   const ensureEnrolled = useCallback(async (courseId: string) => {
     const course = list.find(c => c.id === courseId)
     if (!course) return
-    if (course.enrolledAt !== null) return // already enrolled
+    if (course.enrolledAt !== null) return
 
     await supabase.rpc('enroll_in_course', { p_course_id: courseId })
     setList(arr => arr.map(c =>
@@ -919,7 +927,7 @@ export function AcademyClient({
     ))
   }, [supabase, list])
 
-  // Persist lesson progress to DB and check for certificate
+  // Persist lesson progress to DB, fire PostHog, check for certificate
   const handleProgress = useCallback(async (courseId: string, lessonId: string, done: boolean) => {
     void supabase.rpc('upsert_lesson_progress', {
       p_course_id: courseId,
@@ -927,29 +935,55 @@ export function AcademyClient({
       p_done: done,
     })
 
-    if (!done) return
-
-    // After marking done, try to issue certificate (DB function handles 100% check)
-    const { data } = await supabase.rpc('issue_certificate', { p_course_id: courseId })
-    if ((data as { issued?: boolean } | null)?.issued) {
+    if (done) {
       const course = list.find(c => c.id === courseId)
-      setCertificates(prev => {
-        if (prev.some(c => c.courseId === courseId)) return prev
-        return [...prev, {
-          courseId,
-          courseTitle: course?.title ?? '',
-          issuedAt: Date.now(),
-          certificateUrl: null,
-        }]
-      })
+      const lesson = course?.modules.flatMap(m => m.lessons).find(l => l.id === lessonId)
+      const totalLessons = course ? cTotalLessons(course) : 0
+      const doneLessons  = course ? cDoneLessons(course) + 1 : 0
+      const pct          = totalLessons > 0 ? Math.round((doneLessons / totalLessons) * 100) : 0
+
+      if (lesson) {
+        track('lesson_completed', {
+          course_id:    courseId,
+          lesson_id:    lessonId,
+          lesson_title: lesson.title,
+          progress_pct: pct,
+        })
+      }
+
+      // Try to issue certificate (DB function checks 100%)
+      const { data } = await supabase.rpc('issue_certificate', { p_course_id: courseId })
+      if ((data as { issued?: boolean } | null)?.issued) {
+        const courseTitle = course?.title ?? ''
+        setCertificates(prev => {
+          if (prev.some(c => c.courseId === courseId)) return prev
+          return [...prev, { courseId, courseTitle, issuedAt: Date.now(), certificateUrl: null }]
+        })
+        track('certificate_issued', { course_id: courseId, course_title: courseTitle })
+        // Activity event: course completed
+        void supabase.from('activity_events').insert({
+          user_id:     userId,
+          type:        'courseCompleted',
+          title:       'Curso concluído',
+          description: `Você concluiu o curso "${courseTitle}"`,
+          bot:         '',
+        })
+      }
     }
-  }, [supabase, list])
+  }, [supabase, list, userId, track])
 
   function updateCourse(id: string, updater: (c: Course) => Course) {
     setList(arr => arr.map(c => c.id === id ? updater(c) : c))
   }
 
   async function openCourse(courseId: string) {
+    const course     = list.find(c => c.id === courseId)
+    const isEnrolled = course?.enrolledAt !== null
+    track('course_opened', {
+      course_id:    courseId,
+      course_title: course?.title ?? '',
+      is_enrolled:  !!isEnrolled,
+    })
     setActiveCourseId(courseId)
     await ensureEnrolled(courseId)
   }
@@ -1010,6 +1044,47 @@ export function AcademyClient({
         <EduStat label="Horas de conteúdo"   value={`${Math.round(totalHours)} h`}                      icon="clock" />
       </div>
 
+      {/* Search + level filter */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 mb-5">
+        <div className="relative flex-1 max-w-xs">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
+          <input
+            type="text"
+            placeholder="Buscar curso..."
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            className="w-full h-9 pl-8 pr-3 rounded-lg border border-border bg-surface text-[13px] text-text placeholder:text-text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          />
+          {search && (
+            <button
+              onClick={() => setSearch('')}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-text-muted hover:text-text"
+            >
+              <X size={12} />
+            </button>
+          )}
+        </div>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {levels.map(lv => (
+            <button
+              key={lv}
+              onClick={() => {
+                setLevelFilter(lv)
+                if (lv !== 'Todos') track('course_filtered', { level: lv })
+              }}
+              className={[
+                'h-7 px-3 rounded-full text-[11.5px] font-medium transition-colors',
+                levelFilter === lv
+                  ? 'bg-primary text-primary-fg'
+                  : 'bg-surface-2 text-text-muted border border-border hover:border-border-strong',
+              ].join(' ')}
+            >
+              {lv}
+            </button>
+          ))}
+        </div>
+      </div>
+
       {list.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 text-center">
           <GraduationCap size={48} className="text-text-muted/30 mb-4" />
@@ -1020,7 +1095,7 @@ export function AcademyClient({
         </div>
       ) : (
         <>
-          {featured && (
+          {featured && !search && levelFilter === 'Todos' && (
             <section className="mb-6">
               <div className="flex items-center gap-3 mb-3">
                 <h2 className="text-[11px] uppercase tracking-wider font-semibold text-text-muted">Continuar de onde parou</h2>
@@ -1032,20 +1107,31 @@ export function AcademyClient({
 
           <section>
             <div className="flex items-center gap-3 mb-3">
-              <h2 className="text-[11px] uppercase tracking-wider font-semibold text-text-muted">Todos os cursos</h2>
-              <span className="text-[10.5px] text-text-muted tabular-nums">{list.length} cursos</span>
+              <h2 className="text-[11px] uppercase tracking-wider font-semibold text-text-muted">
+                {search || levelFilter !== 'Todos' ? 'Resultados' : 'Todos os cursos'}
+              </h2>
+              <span className="text-[10.5px] text-text-muted tabular-nums">{filteredList.length} cursos</span>
               <div className="flex-1 h-px bg-border" />
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-              {list.map(c => (
-                <CourseCard
-                  key={c.id}
-                  course={c}
-                  hasCert={certMap.has(c.id)}
-                  onOpen={() => openCourse(c.id)}
-                />
-              ))}
-            </div>
+
+            {filteredList.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 text-center">
+                <Search size={32} className="text-text-muted/30 mb-3" />
+                <p className="text-[13.5px] font-medium text-text mb-1">Nenhum curso encontrado</p>
+                <p className="text-[12px] text-text-muted">Tente outros termos ou limpe os filtros.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                {filteredList.map(c => (
+                  <CourseCard
+                    key={c.id}
+                    course={c}
+                    hasCert={certMap.has(c.id)}
+                    onOpen={() => openCourse(c.id)}
+                  />
+                ))}
+              </div>
+            )}
           </section>
         </>
       )}

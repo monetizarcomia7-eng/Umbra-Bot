@@ -122,6 +122,12 @@ type EventMap = {
   guide_search_performed:    { query: string; results_count: number }
   guide_support_clicked:     { action: string }
   guide_category_viewed:     { category: string }
+  // Aba Academia (Sistema Educacional)
+  course_opened:      { course_id: string; course_title: string; is_enrolled: boolean }
+  lesson_completed:   { course_id: string; lesson_id: string; lesson_title: string; progress_pct: number }
+  certificate_issued: { course_id: string; course_title: string }
+  course_searched:    { query: string; results_count: number }
+  course_filtered:    { level: string }
   // Aba Ferramentas
   tool_opened:               { tool_id: string }
   test_message_sent:         { bot_id: string; success: boolean; time_ms: number; format: string }
