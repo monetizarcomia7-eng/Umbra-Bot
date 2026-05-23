@@ -4893,6 +4893,117 @@ export const viewport: Viewport = {
 
 **Componente `UmbraLogo`:** renderiza o SVG canônico do símbolo "U" inline — não usa arquivo externo. Aceita `size`, `className` e `style` props.
 
+### Landing page — Animação de conversa do Hero (commit `7bf16a3`)
+
+O chat widget do Hero foi convertido de JSX estático para componente React animado com sequência de mensagens em loop.
+
+#### Componentes e constantes adicionadas em `app/page.tsx`
+
+**`TypingIndicator`** — indicador de digitação com 3 pontos saltitantes:
+```tsx
+function TypingIndicator({ side }: { side: 'left' | 'right' }) {
+  const isRight = side === 'right'
+  return (
+    <div className={`flex ${isRight ? 'justify-end' : 'justify-start'}`}
+      style={{ animation: 'chatIn 0.18s ease both' }}>
+      <div className="rounded-2xl px-3 py-2.5"
+        style={isRight
+          ? { background: 'var(--accent)' }
+          : { background: 'var(--surface-2)', border: '1px solid var(--border)' }
+        }
+      >
+        <div className="flex gap-1 items-center" style={{ height: 12 }}>
+          {[0, 1, 2].map(i => (
+            <span key={i} style={{
+              display: 'block', width: 6, height: 6, borderRadius: '50%',
+              background: isRight ? 'var(--accent-fg)' : 'var(--text-muted)',
+              animation: `typingDot 1.1s ${i * 0.18}s ease-in-out infinite`,
+            }} />
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+```
+
+**`CHAT_STEPS`** — 6 passos com lado, duração do typing e pausa pós-mensagem:
+```tsx
+const CHAT_STEPS: Array<{ side: 'left' | 'right'; typingMs: number; pauseAfter: number }> = [
+  { side: 'left',  typingMs: 950,  pauseAfter: 450 },
+  { side: 'right', typingMs: 480,  pauseAfter: 380 },
+  { side: 'left',  typingMs: 1150, pauseAfter: 380 },
+  { side: 'left',  typingMs: 1050, pauseAfter: 380 },
+  { side: 'right', typingMs: 680,  pauseAfter: 380 },
+  { side: 'left',  typingMs: 920,  pauseAfter: 3800 },  // pausa longa antes do loop
+]
+```
+
+**`HeroVisual`** convertido para componente stateful:
+```tsx
+function HeroVisual() {
+  const [visibleCount, setVisibleCount] = useState(0)
+  const [typing, setTyping] = useState<'left' | 'right' | null>(null)
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>
+
+    function runStep(stepIndex: number) {
+      if (stepIndex >= CHAT_STEPS.length) {
+        setVisibleCount(0)
+        setTyping(null)
+        timer = setTimeout(() => runStep(0), 500)  // 500ms de tela vazia antes de repetir
+        return
+      }
+      const step = CHAT_STEPS[stepIndex]
+      setTyping(step.side)
+      timer = setTimeout(() => {
+        setTyping(null)
+        setVisibleCount(stepIndex + 1)
+        timer = setTimeout(() => runStep(stepIndex + 1), step.pauseAfter)
+      }, step.typingMs)
+    }
+
+    timer = setTimeout(() => runStep(0), 600)  // delay inicial de 600ms
+    return () => clearTimeout(timer)
+  }, [])
+
+  // Mensagens reveladas com: {visibleCount >= N && <div style={chatStyle}>...</div>}
+  // Typing indicator: {typing && <TypingIndicator side={typing} />}
+  // Container com minHeight: 220 para evitar layout jump ao resetar
+}
+```
+
+#### Keyframes adicionados em `app/globals.css`
+
+```css
+@keyframes typingDot {
+  0%, 60%, 100% { transform: translateY(0);    opacity: 0.4; }
+  30%            { transform: translateY(-4px); opacity: 1;   }
+}
+
+@keyframes chatIn {
+  from { opacity: 0; transform: translateY(6px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0)   scale(1);    }
+}
+```
+
+#### Timing do loop
+
+| Fase | Duração aproximada |
+|---|---|
+| Delay inicial | 600 ms |
+| 6 mensagens (typing + pausa) | ~6 s |
+| Pausa final (pós mensagem 6) | 3.8 s |
+| Tela vazia antes de repetir | 500 ms |
+| **Ciclo total** | **~11 s** |
+
+#### Regras de implementação
+
+- `runStep(N >= CHAT_STEPS.length)`: a pausa longa (`pauseAfter: 3800`) já foi consumida **antes** de chamar `runStep` com índice fora do range — não usar `setTimeout` extra no handler de overflow.
+- `minHeight: 220` no container de mensagens — evita salto de layout ao resetar `visibleCount=0`.
+- Dentro de `TypingIndicator`: usar `style={{ background: 'var(--accent)' }}` (não `className="bg-accent"`) — regra `.lp` color fix.
+
 ---
 
 ## 29. MÓDULO SISTEMA EDUCACIONAL (ACADEMY)
