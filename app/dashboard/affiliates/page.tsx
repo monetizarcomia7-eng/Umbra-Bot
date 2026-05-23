@@ -64,7 +64,7 @@ export default async function AffiliatesPage() {
     redirectUrl:          (configRes.data.redirect_url as string | null) ?? '',
   } : DEFAULT_CONFIG
 
-  const appUrl = process.env.APP_URL ?? 'https://umbra.bot'
+  const appUrl = process.env.APP_URL ?? 'https://www.umbrabot.com.br'
 
   return (
     <AffiliatesClient

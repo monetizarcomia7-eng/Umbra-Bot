@@ -120,7 +120,7 @@ export default async function PublicCheckoutPage({
       pixelCode: p.pixel_code ?? null,
     }))
 
-  const appUrl = process.env.APP_URL ?? 'https://umbra.bot'
+  const appUrl = process.env.APP_URL ?? 'https://www.umbrabot.com.br'
 
   return (
     <CheckoutPageClient

@@ -1107,7 +1107,7 @@ function CheckoutPreview({ checkout, gatewayChoices }: { checkout: Checkout; gat
         <span className="w-2 h-2 rounded-full bg-yellow-500" />
         <span className="w-2 h-2 rounded-full bg-green-500" />
         <div className="ml-3 px-2 py-0.5 rounded text-[10px] font-mono truncate" style={{ background: palette.bg, color: palette.muted, border: `1px solid ${palette.border}` }}>
-          🔒 https://umbra.bot/c/{c.slug}
+          🔒 https://umbrabot.com.br/c/{c.slug}
         </div>
       </div>
 
@@ -1368,7 +1368,7 @@ function SlugCard({
   return (
     <SectionCard title="URL pública do checkout" subtitle="Slug é o caminho público — usuários acessam por este link.">
       <div className={`flex items-center bg-[var(--surface-2)]/40 border rounded-lg overflow-hidden ${borderColor}`}>
-        <span className="px-3 text-[12.5px] text-[var(--text-muted)] font-mono whitespace-nowrap">umbra.bot/c/</span>
+        <span className="px-3 text-[12.5px] text-[var(--text-muted)] font-mono whitespace-nowrap">umbrabot.com.br/c/</span>
         <input
           type="text" value={slug}
           onChange={(e) => handleSlugChange(e.target.value)}
@@ -1524,7 +1524,7 @@ function CheckoutCard({ checkout, gatewayChoices, appUrl, onOpen, onDuplicate, o
           <span className="text-[10.5px] text-[var(--text-muted)]">{fmtDate(checkout.updatedAt)}</span>
         </div>
         <h3 className="text-[14.5px] font-semibold text-[var(--text)] leading-snug">{checkout.name}</h3>
-        <code className="text-[10.5px] font-mono text-[var(--text-muted)]">umbra.bot/c/{checkout.slug}</code>
+        <code className="text-[10.5px] font-mono text-[var(--text-muted)]">umbrabot.com.br/c/{checkout.slug}</code>
         <div className="mt-3 flex items-center gap-2 text-[11px] text-[var(--text-muted)] flex-wrap">
           <span className="inline-flex items-center gap-1.5">
             <span className="w-1.5 h-1.5 rounded-full" style={{ background: gw?.color || 'var(--text-muted)' }} />
@@ -1795,7 +1795,7 @@ function CheckoutEditor({ checkout, gatewayChoices, pixelChoices, appUrl, userId
               placeholder="Nome do checkout"
             />
             <Badge tone={st.tone}>{st.label}</Badge>
-            <code className="hidden md:inline text-[10.5px] font-mono text-[var(--text-muted)]">umbra.bot/c/{draft.slug}</code>
+            <code className="hidden md:inline text-[10.5px] font-mono text-[var(--text-muted)]">umbrabot.com.br/c/{draft.slug}</code>
           </div>
           <div className="flex items-center gap-1.5">
             {autoSaveLabel && (

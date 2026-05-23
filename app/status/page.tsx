@@ -22,7 +22,7 @@ const SERVICES: Service[] = [
   { name: 'API da Plataforma',          description: 'Endpoints REST do painel e integrações.',       status: 'operational' },
   { name: 'Webhooks dos bots',          description: 'Recebimento de updates do Telegram.',            status: 'operational' },
   { name: 'Processamento de pagamentos', description: 'Confirmação de PIX e split de comissão.',      status: 'operational' },
-  { name: 'Painel web',                 description: 'Interface do dashboard em app.umbra.bot.',       status: 'operational' },
+  { name: 'Painel web',                 description: 'Interface do dashboard em app.umbrabot.com.br.',  status: 'operational' },
   { name: 'Banco de dados',             description: 'Armazenamento de leads, vendas e configurações.', status: 'operational' },
   { name: 'Disparador de mensagens',    description: 'Fila de envio em massa (broadcasts).',           status: 'operational' },
 ]

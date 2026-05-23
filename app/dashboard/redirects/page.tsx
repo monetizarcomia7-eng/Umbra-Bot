@@ -47,7 +47,7 @@ export default async function RedirectsPage() {
     <RedirectsClient
       initialRedirects={initialRedirects as Parameters<typeof RedirectsClient>[0]['initialRedirects']}
       userId={user.id}
-      appUrl={process.env.APP_URL ?? 'https://umbra.bot'}
+      appUrl={process.env.APP_URL ?? 'https://www.umbrabot.com.br'}
       currClicks={currClicks}
       currUnique={currUnique}
       clicksDelta={clicksDelta}

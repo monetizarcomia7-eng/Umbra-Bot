@@ -107,7 +107,7 @@ export default async function CheckoutPage() {
       .limit(200),
   ])
 
-  const appUrl = process.env.APP_URL ?? 'https://umbra.bot'
+  const appUrl = process.env.APP_URL ?? 'https://www.umbrabot.com.br'
 
   return (
     <CheckoutClient

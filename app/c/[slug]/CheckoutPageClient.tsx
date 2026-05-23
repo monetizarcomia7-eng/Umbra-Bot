@@ -819,11 +819,11 @@ export default function CheckoutPageClient({
                         <strong>Umbra Bot</strong> está processando essa compra em nome de{' '}
                         <strong>{sellerName}</strong> e que não possui responsabilidade pelo conteúdo,
                         oferta, e nem faz controle prévio do infoproduto; (ii) que li e concordo com os{' '}
-                        <a href="https://umbra.bot/termos-de-compra" target="_blank" rel="noopener noreferrer"
+                        <a href="https://www.umbrabot.com.br/termos-de-compra" target="_blank" rel="noopener noreferrer"
                            className="underline hover:opacity-80">Termos de Compra</a>,{' '}
-                        <a href="https://umbra.bot/termos-de-uso" target="_blank" rel="noopener noreferrer"
+                        <a href="https://www.umbrabot.com.br/termos-de-uso" target="_blank" rel="noopener noreferrer"
                            className="underline hover:opacity-80">Termos de Uso</a> e{' '}
-                        <a href="https://umbra.bot/privacidade" target="_blank" rel="noopener noreferrer"
+                        <a href="https://www.umbrabot.com.br/privacidade" target="_blank" rel="noopener noreferrer"
                            className="underline hover:opacity-80">Política de Privacidade</a>.
                       </p>
                       <p className="text-center">

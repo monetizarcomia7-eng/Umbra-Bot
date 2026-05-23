@@ -643,7 +643,7 @@ export const DOCS_CATEGORIES: DocCategory[] = [
               <>Acesse <Bold>Automações → Redirecionadores</Bold> e clique em <Bold>"+ Novo"</Bold>.</>,
               'Cole a URL de destino (ex.: link de um produto ou grupo VIP).',
               'Defina um apelido (slug) para o link curto.',
-              <>O sistema gera o link no formato <Bold>umbra.bot/r/apelido</Bold>.</>,
+              <>O sistema gera o link no formato <Bold>umbrabot.com.br/r/apelido</Bold>.</>,
             ]} />
 
             <H2 id="dados">Dados de acesso</H2>

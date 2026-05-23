@@ -312,7 +312,7 @@ function PhonePreview({ page, theme, publicUrl }: { page: BioPage; theme: ThemeP
             {page.name || 'Seu nome'}
           </div>
           <code className="text-[10px] font-mono mt-0.5" style={{ color: t.muted }}>
-            umbra.bot/{page.slug || 'seu-slug'}
+            umbrabot.com.br/{page.slug || 'seu-slug'}
           </code>
           <p className="text-[11.5px] mt-2.5 text-center leading-snug px-2" style={{ color: t.muted }}>
             {page.bio || 'Sua descrição aparece aqui…'}

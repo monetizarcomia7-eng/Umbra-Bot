@@ -37,7 +37,7 @@ export async function GET(
   { params }: { params: Promise<{ slug: string }> },
 ) {
   const { slug } = await params
-  const appUrl = process.env.APP_URL ?? 'https://umbra.bot'
+  const appUrl = process.env.APP_URL ?? 'https://www.umbrabot.com.br'
 
   // ── 1. Tenta link de afiliado primeiro ──────────────────────────────────────
   const supabase = await createClient()

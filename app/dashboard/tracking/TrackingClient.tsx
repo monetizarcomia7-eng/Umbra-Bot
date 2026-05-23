@@ -1146,7 +1146,7 @@ function UTMSection({ onCopy }: { onCopy: (hasUtm: boolean) => void }) {
             <label className="block text-[10.5px] uppercase tracking-wider font-semibold text-[var(--text-muted)] mb-1">URL base *</label>
             <input
               type="text" value={utm.base} onChange={e => handleBaseChange(e.target.value)}
-              placeholder="https://umbra.bot/r/meu-link"
+              placeholder="https://www.umbrabot.com.br/r/meu-link"
               className={`w-full h-9 px-2.5 bg-[var(--surface)] border rounded-md text-[12.5px] font-mono text-[var(--text)] placeholder:text-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/30 transition-colors ${urlError ? 'border-red-500 focus:border-red-500' : 'border-[var(--border)] focus:border-[var(--primary)]/50'}`}
             />
             {urlError && (

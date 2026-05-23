@@ -598,7 +598,7 @@ export default function GuideClient({ initialArticles, initialFaqs }: Props) {
       </Btn>
       <Btn
         variant="ghost" size="sm" icon={<ExternalLink size={13} />}
-        href="https://status.umbra.bot"
+        href="https://status.umbrabot.com.br"
         onClick={() => handleSupportClick('status')}
       >
         Status

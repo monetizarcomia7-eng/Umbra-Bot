@@ -38,7 +38,7 @@ export default async function BioLinkPage() {
     <BioLinkClient
       userId={user.id}
       initialBiolinks={(biolinks as RawBiolink[]) ?? []}
-      appUrl={process.env.APP_URL ?? 'https://umbra.bot'}
+      appUrl={process.env.APP_URL ?? 'https://www.umbrabot.com.br'}
     />
   )
 }

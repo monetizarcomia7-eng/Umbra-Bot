@@ -6,7 +6,7 @@ import { SpeedInsights } from '@vercel/speed-insights/next'
 import { PostHogProvider } from '@/providers/PostHogProvider'
 import { ServiceWorkerRegistrar } from './ServiceWorkerRegistrar'
 
-const APP_URL = process.env.APP_URL ?? 'https://umbra.bot'
+const APP_URL = process.env.APP_URL ?? 'https://www.umbrabot.com.br'
 
 export const metadata: Metadata = {
   metadataBase: new URL(APP_URL),
