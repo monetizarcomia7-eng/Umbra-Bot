@@ -1,5 +1,10 @@
 import { createClient } from '@/lib/supabase/server'
-import CustomersClient, { type RawContact, type ContactBotOption } from './CustomersClient'
+import CustomersClient, {
+  type RawContact,
+  type ContactBotOption,
+  type TagOption,
+  type ContactKpis,
+} from './CustomersClient'
 
 export const dynamic = 'force-dynamic'
 
@@ -13,10 +18,10 @@ export default async function CustomersPage() {
 
   const uid = user.id
 
-  const [contactsRes, botsRes, summaryRes, filterOptsRes] = await Promise.all([
+  const [contactsRes, botsRes, summaryRes, filterOptsRes, kpisRes] = await Promise.all([
     supabase
       .from('contacts')
-      .select('id, name, username, email, phone, origin, bot, bot_id, purchases, total_spent, avg_ticket, tags, first_contact, last_contact, first_purchase, last_purchase')
+      .select('id, name, username, email, phone, origin, bot, bot_id, purchases, total_spent, avg_ticket, tags, first_contact, last_contact, first_purchase, last_purchase, city, state, flow_vars, notes, telegram_id')
       .eq('user_id', uid)
       .order('last_contact', { ascending: false })
       .limit(PAGE_SIZE),
@@ -27,13 +32,22 @@ export default async function CustomersPage() {
       .order('name'),
     supabase.rpc('contacts_summary', { p_user_id: uid }),
     supabase.rpc('contacts_filter_options', { p_user_id: uid }),
+    supabase.rpc('contacts_kpis', { p_user_id: uid }),
   ])
 
   const summary = (summaryRes.data as { total: number; buyers: number; leads: number } | null) ?? {
     total: 0, buyers: 0, leads: 0,
   }
 
-  const filterOpts = (filterOptsRes.data as { origins: string[] } | null) ?? { origins: [] }
+  const filterOpts = (filterOptsRes.data as {
+    origins: string[]
+    tags: TagOption[]
+    states: string[]
+  } | null) ?? { origins: [], tags: [], states: [] }
+
+  const kpiData: ContactKpis = (kpisRes.data as ContactKpis | null) ?? {
+    avg_ticket: 0, ltv: 0, new_30d: 0, new_prev_30d: 0, conversion_rate: 0,
+  }
 
   return (
     <CustomersClient
@@ -43,6 +57,10 @@ export default async function CustomersPage() {
       buyersCount={summary.buyers}
       leadsCount={summary.leads}
       originOptions={filterOpts.origins ?? []}
+      tagOptions={filterOpts.tags ?? []}
+      stateOptions={filterOpts.states ?? []}
+      kpiData={kpiData}
+      userId={uid}
       hasMore={(contactsRes.data?.length ?? 0) >= PAGE_SIZE}
     />
   )

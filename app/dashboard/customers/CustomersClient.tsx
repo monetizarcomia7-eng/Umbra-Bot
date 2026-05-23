@@ -11,8 +11,9 @@ import {
   ShoppingBag, Mail, Phone, Bot, Clock, Plus, Activity, MessageCircle,
   PackageX, ShoppingCart, Undo2, Upload, UserPlus, Download,
   ChevronDown, Compass, Tag, Calendar, Loader2, AlertCircle,
-  CheckCircle2, Wifi, WifiOff, GitBranch,
-  ArrowUp, ArrowDown, ChevronsUpDown,
+  CheckCircle2, Wifi, WifiOff, GitBranch, MapPin, ExternalLink,
+  Copy, AlertTriangle, FileText, TrendingUp, TrendingDown,
+  ArrowUp, ArrowDown, ChevronsUpDown, Users,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
@@ -35,6 +36,11 @@ export interface RawContact {
   last_contact: string
   first_purchase: string | null
   last_purchase: string | null
+  city: string | null
+  state: string | null
+  flow_vars: Record<string, string> | null
+  notes: string | null
+  telegram_id: string | null
 }
 
 export interface ContactBotOption {
@@ -43,7 +49,47 @@ export interface ContactBotOption {
   username: string | null
 }
 
+export interface TagOption {
+  tag: string
+  count: number
+}
+
+export interface ContactKpis {
+  avg_ticket: number
+  ltv: number
+  new_30d: number
+  new_prev_30d: number
+  conversion_rate: number
+}
+
 /* ── Internal types ───────────────────────────────────────── */
+
+type RfmSegment = 'champion' | 'at_risk' | 'lost' | 'cold_lead' | 'regular' | 'new_buyer' | 'lead'
+
+const RFM_LABELS: Record<RfmSegment, { label: string; tone: string }> = {
+  champion:  { label: 'Campeão',    tone: 'success' },
+  at_risk:   { label: 'Em risco',   tone: 'warning' },
+  lost:      { label: 'Perdido',    tone: 'danger'  },
+  cold_lead: { label: 'Lead frio',  tone: 'muted'   },
+  regular:   { label: 'Regular',    tone: 'info'    },
+  new_buyer: { label: 'Novo comprador', tone: 'primary' },
+  lead:      { label: 'Lead',       tone: 'muted'   },
+}
+
+function computeRfm(purchases: number, lastPurchaseMs: number | undefined, lastContactMs: number): RfmSegment {
+  if (purchases === 0) {
+    const daysSinceContact = (Date.now() - lastContactMs) / 86_400_000
+    return daysSinceContact > 60 ? 'cold_lead' : 'lead'
+  }
+  if (!lastPurchaseMs) return 'regular'
+  const daysSince = (Date.now() - lastPurchaseMs) / 86_400_000
+  if (purchases >= 3 && daysSince < 30)  return 'champion'
+  if (purchases >= 2 && daysSince < 60)  return 'regular'
+  if (purchases === 1 && daysSince < 14) return 'new_buyer'
+  if (daysSince > 120) return 'lost'
+  if (daysSince > 60)  return 'at_risk'
+  return 'regular'
+}
 
 interface Customer {
   id: string
@@ -62,7 +108,15 @@ interface Customer {
   lastContact: number
   firstPurchase?: number
   lastPurchase?: number
+  city: string
+  state: string
+  flowVars: Record<string, string>
+  notes: string
+  telegramId: string
+  rfmSegment: RfmSegment
 }
+
+type CustomerPatch = Partial<Pick<Customer, 'tags' | 'notes'>>
 
 interface TimelineEvent {
   id: string
@@ -73,12 +127,36 @@ interface TimelineEvent {
   dt: number
 }
 
+interface PurchaseRecord {
+  id: string
+  amount: number
+  net: number
+  status: string
+  productName: string
+  createdAt: number
+}
+
+interface DuplicateContact {
+  id: string
+  name: string
+  email: string | null
+  phone: string | null
+  telegram_id: string | null
+}
+
+interface EngagementData {
+  totalInteractions: number
+  lastInteractionMs: number | null
+}
+
 interface CustFilters {
   search: string
   status: string
   origin: string
   tag: string
   period: string
+  state: string
+  rfm: string
 }
 
 /* ── mapRaw ───────────────────────────────────────────────── */
@@ -89,31 +167,39 @@ function buildAvatar(name: string): string {
 }
 
 function mapRaw(row: RawContact): Customer {
+  const lastPurchase = row.last_purchase ? new Date(row.last_purchase).getTime() : undefined
+  const lastContact  = row.last_contact  ? new Date(row.last_contact).getTime()  : Date.now()
   return {
-    id: row.id,
-    name: row.name || 'Sem nome',
-    username: row.username ?? '',
-    email: row.email ?? '',
-    phone: row.phone ?? '',
-    origin: row.origin ?? '',
-    bot: row.bot ?? '',
-    status: Number(row.purchases ?? 0) > 0 ? 'buyer' : 'lead',
-    purchases: Number(row.purchases ?? 0),
-    totalSpent: Number(row.total_spent ?? 0),
-    avgTicket: Number(row.avg_ticket ?? 0),
-    tags: Array.isArray(row.tags) ? row.tags.map(String) : [],
+    id:          row.id,
+    name:        row.name || 'Sem nome',
+    username:    row.username ?? '',
+    email:       row.email ?? '',
+    phone:       row.phone ?? '',
+    origin:      row.origin ?? '',
+    bot:         row.bot ?? '',
+    status:      Number(row.purchases ?? 0) > 0 ? 'buyer' : 'lead',
+    purchases:   Number(row.purchases ?? 0),
+    totalSpent:  Number(row.total_spent ?? 0),
+    avgTicket:   Number(row.avg_ticket ?? 0),
+    tags:        Array.isArray(row.tags) ? row.tags.map(String) : [],
     firstContact: row.first_contact ? new Date(row.first_contact).getTime() : Date.now(),
-    lastContact: row.last_contact ? new Date(row.last_contact).getTime() : Date.now(),
+    lastContact,
     firstPurchase: row.first_purchase ? new Date(row.first_purchase).getTime() : undefined,
-    lastPurchase: row.last_purchase ? new Date(row.last_purchase).getTime() : undefined,
+    lastPurchase,
+    city:        row.city ?? '',
+    state:       row.state ?? '',
+    flowVars:    (row.flow_vars as Record<string, string> | null) ?? {},
+    notes:       row.notes ?? '',
+    telegramId:  row.telegram_id ?? '',
+    rfmSegment:  computeRfm(Number(row.purchases ?? 0), lastPurchase, lastContact),
   }
 }
 
 /* ── Formatters ───────────────────────────────────────────── */
 
 const TZ = 'America/Sao_Paulo'
-const fmtNum = (v: number) => v.toLocaleString('pt-BR')
-const fmtBRL = (v: number) =>
+const fmtNum  = (v: number) => v.toLocaleString('pt-BR')
+const fmtBRL  = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 2 }).format(v)
 const fmtDate = (dt: number | string) =>
   new Date(dt).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric', timeZone: TZ })
@@ -134,9 +220,7 @@ function relTime(dt: number): string {
 }
 
 function getPeriodCutoff(period: string): number | null {
-  const map: Record<string, number> = {
-    '7d': 7, '30d': 30, '90d': 90,
-  }
+  const map: Record<string, number> = { '7d': 7, '30d': 30, '90d': 90 }
   const days = map[period]
   return days ? Date.now() - days * 86_400_000 : null
 }
@@ -153,7 +237,7 @@ const LS = {
 /* ── Constants ────────────────────────────────────────────── */
 
 const PAGE_SIZE = 25
-const CONTACTS_SELECT = 'id, name, username, email, phone, origin, bot, bot_id, purchases, total_spent, avg_ticket, tags, first_contact, last_contact, first_purchase, last_purchase'
+const CONTACTS_SELECT = 'id, name, username, email, phone, origin, bot, bot_id, purchases, total_spent, avg_ticket, tags, first_contact, last_contact, first_purchase, last_purchase, city, state, flow_vars, notes, telegram_id'
 
 const statusOptions = ['Todos os status', 'Comprou', 'Não comprou']
 const periodOptions = [
@@ -162,10 +246,11 @@ const periodOptions = [
   { value: '30d', label: 'Últimos 30 dias' },
   { value: '90d', label: 'Últimos 90 dias' },
 ]
+const rfmOptions = ['Todos os segmentos', ...Object.entries(RFM_LABELS).map(([, v]) => v.label)]
 
 const defaultFilters: CustFilters = {
   search: '', status: 'Todos os status', origin: 'Todas as origens',
-  tag: 'Todas as tags', period: 'all',
+  tag: 'Todas as tags', period: 'all', state: 'Todos os estados', rfm: 'Todos os segmentos',
 }
 
 /* ── UI Atoms ─────────────────────────────────────────────── */
@@ -310,15 +395,77 @@ function Pagination({ page, totalPages, onChange }: { page: number; totalPages: 
   )
 }
 
+/* ── KpiRow ───────────────────────────────────────────────── */
+
+function KpiRow({ kpis }: { kpis: ContactKpis }) {
+  const deltaSign = kpis.new_30d - kpis.new_prev_30d
+  const deltaPct  = kpis.new_prev_30d > 0
+    ? Math.round(((kpis.new_30d - kpis.new_prev_30d) / kpis.new_prev_30d) * 1000) / 10
+    : null
+
+  return (
+    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+      {[
+        {
+          label: 'Ticket médio global',
+          value: fmtBRL(Number(kpis.avg_ticket ?? 0)),
+          icon: ShoppingBag,
+          tone: 'success' as const,
+        },
+        {
+          label: 'LTV total (receita)',
+          value: fmtBRL(Number(kpis.ltv ?? 0)),
+          icon: TrendingUp,
+          tone: 'primary' as const,
+        },
+        {
+          label: 'Taxa de conversão',
+          value: `${Number(kpis.conversion_rate ?? 0).toFixed(1)}%`,
+          icon: CheckCircle,
+          tone: 'info' as const,
+        },
+        {
+          label: 'Novos (30 dias)',
+          value: fmtNum(Number(kpis.new_30d ?? 0)),
+          icon: Users,
+          tone: 'warning' as const,
+          delta: deltaPct,
+          deltaSign,
+        },
+      ].map(({ label, value, icon: Ico, tone, delta, deltaSign: ds }) => (
+        <div key={label} className="bg-surface border border-border rounded-xl p-4">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[11px] uppercase tracking-wider font-semibold text-text-subtle">{label}</span>
+            <span className={cn('w-7 h-7 rounded-lg flex items-center justify-center', toneClasses[tone])}>
+              <Ico size={13} />
+            </span>
+          </div>
+          <div className="text-[20px] font-bold tnum text-text leading-none">{value}</div>
+          {delta !== null && delta !== undefined && (
+            <div className={cn('flex items-center gap-1 text-[11px] font-medium mt-1.5',
+              (ds ?? 0) >= 0 ? 'text-success' : 'text-danger')}>
+              {(ds ?? 0) >= 0
+                ? <TrendingUp size={10} />
+                : <TrendingDown size={10} />}
+              {delta >= 0 ? '+' : ''}{delta}% vs. mês anterior
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 /* ── FilterBar ────────────────────────────────────────────── */
 
-function FilterBar({ filters, setFilters, hasFilters, onClear, originOptions, tagOptions, onFilterChange }: {
+function FilterBar({ filters, setFilters, hasFilters, onClear, originOptions, tagOptions, stateOptions, onFilterChange }: {
   filters: CustFilters
   setFilters: React.Dispatch<React.SetStateAction<CustFilters>>
   hasFilters: boolean
   onClear: () => void
   originOptions: string[]
-  tagOptions: string[]
+  tagOptions: TagOption[]
+  stateOptions: string[]
   onFilterChange: (patch: Partial<CustFilters>) => void
 }) {
   const [searchInput, setSearchInput] = useState(filters.search)
@@ -330,9 +477,7 @@ function FilterBar({ filters, setFilters, hasFilters, onClear, originOptions, ta
     debounceRef.current = setTimeout(() => onFilterChange({ search: v }), 300)
   }
 
-  useEffect(() => {
-    setSearchInput(filters.search)
-  }, [filters.search])
+  useEffect(() => { setSearchInput(filters.search) }, [filters.search])
 
   const periodLabel = periodOptions.find(p => p.value === filters.period)?.label ?? 'Sempre'
 
@@ -341,7 +486,7 @@ function FilterBar({ filters, setFilters, hasFilters, onClear, originOptions, ta
       <div className="relative flex-1 min-w-[200px] max-w-sm">
         <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
         <input type="text" value={searchInput} onChange={(e) => handleSearch(e.target.value)}
-          placeholder="Buscar por nome, usuário ou e-mail…"
+          placeholder="Buscar nome, e-mail, telefone, Telegram…"
           className="w-full h-9 pl-9 pr-3 bg-surface border border-border rounded-lg text-[12.5px] placeholder:text-text-subtle text-text focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50" />
       </div>
       <Dropdown icon={CheckCircle} label="Status" value={filters.status}
@@ -350,10 +495,30 @@ function FilterBar({ filters, setFilters, hasFilters, onClear, originOptions, ta
       <Dropdown icon={Compass} label="Origem" value={filters.origin}
         options={['Todas as origens', ...originOptions]}
         onChange={(v) => onFilterChange({ origin: v })}
-        width={200} />
-      <Dropdown icon={Tag} label="Tag" value={filters.tag}
-        options={['Todas as tags', ...tagOptions]}
-        onChange={(v) => onFilterChange({ tag: v })} />
+        width={190} />
+      {/* Tag dropdown with counts */}
+      <div className="relative h-9" style={{ minWidth: 150 }}>
+        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none z-10"><Tag size={13} /></span>
+        <select aria-label="Tag" value={filters.tag}
+          onChange={(e) => onFilterChange({ tag: e.target.value })}
+          className="h-full w-full appearance-none bg-surface border border-border rounded-lg text-[12.5px] text-text pr-7 pl-8 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50">
+          <option value="Todas as tags">Todas as tags</option>
+          {tagOptions.map((o) => (
+            <option key={o.tag} value={o.tag}>{o.tag} ({o.count})</option>
+          ))}
+        </select>
+        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none"><ChevronDown size={12} /></span>
+      </div>
+      {stateOptions.length > 0 && (
+        <Dropdown icon={MapPin} label="Estado" value={filters.state}
+          options={['Todos os estados', ...stateOptions]}
+          onChange={(v) => onFilterChange({ state: v })}
+          width={170} />
+      )}
+      <Dropdown icon={Activity} label="Segmento RFM" value={filters.rfm}
+        options={rfmOptions}
+        onChange={(v) => onFilterChange({ rfm: v })}
+        width={180} />
       <Dropdown icon={Calendar} label="Período" value={periodLabel}
         options={periodOptions.map(p => p.label)}
         onChange={(label) => {
@@ -371,10 +536,10 @@ function FilterBar({ filters, setFilters, hasFilters, onClear, originOptions, ta
   )
 }
 
-/* ── BulkActionsBar + AddTagPopover ───────────────────────── */
+/* ── AddTagPopover ────────────────────────────────────────── */
 
 function AddTagPopover({ open, onClose, onAdd, tagOptions }: {
-  open: boolean; onClose: () => void; onAdd: (t: string) => void; tagOptions: string[]
+  open: boolean; onClose: () => void; onAdd: (t: string) => void; tagOptions: TagOption[]
 }) {
   const [input, setInput] = useState('')
   const ref = useRef<HTMLDivElement>(null)
@@ -391,10 +556,10 @@ function AddTagPopover({ open, onClose, onAdd, tagOptions }: {
       <div className="text-[10px] uppercase tracking-wider font-semibold text-text-subtle px-2 pt-1 pb-1.5">Tags</div>
       {tagOptions.length > 0 && (
         <div className="flex flex-wrap gap-1 px-1 pb-1.5">
-          {tagOptions.map((t) => (
-            <button key={t} onClick={() => { onAdd(t); onClose() }}
+          {tagOptions.map((o) => (
+            <button key={o.tag} onClick={() => { onAdd(o.tag); onClose() }}
               className="text-[11px] font-medium px-1.5 py-0.5 rounded bg-surface-2 border border-border text-text hover:border-primary hover:text-primary">
-              {t}
+              {o.tag}
             </button>
           ))}
         </div>
@@ -411,8 +576,16 @@ function AddTagPopover({ open, onClose, onAdd, tagOptions }: {
   )
 }
 
-function BulkActionsBar({ count, onAddTag, onExport, onClear, toast }: {
-  count: number; onAddTag: () => void; onExport: () => void; onClear: () => void; toast: string
+/* ── BulkActionsBar ───────────────────────────────────────── */
+
+function BulkActionsBar({ count, onAddTag, onExport, onDelete, onUpdateOrigin, onClear, toast }: {
+  count: number
+  onAddTag: () => void
+  onExport: () => void
+  onDelete: () => void
+  onUpdateOrigin: () => void
+  onClear: () => void
+  toast: string
 }) {
   return (
     <div className="mb-3 bg-primary-soft border border-primary/30 rounded-xl px-3.5 py-2 flex items-center gap-3">
@@ -427,13 +600,88 @@ function BulkActionsBar({ count, onAddTag, onExport, onClear, toast }: {
         </span>
       )}
       <Btn size="sm" icon={Tag} onClick={onAddTag}>Adicionar tag</Btn>
+      <Btn size="sm" icon={Compass} onClick={onUpdateOrigin}>Atualizar origem</Btn>
       <Btn size="sm" icon={Download} onClick={onExport}>Exportar</Btn>
+      <Btn size="sm" variant="danger" icon={X} onClick={onDelete}>Apagar</Btn>
       <button onClick={onClear}
         className="h-7 w-7 inline-flex items-center justify-center rounded-md text-text-muted hover:bg-surface-2"
         title="Cancelar seleção">
         <X size={14} />
       </button>
     </div>
+  )
+}
+
+/* ── BulkDeleteModal ──────────────────────────────────────── */
+
+function BulkDeleteModal({ open, count, onClose, onConfirm, loading }: {
+  open: boolean; count: number; onClose: () => void; onConfirm: () => void; loading: boolean
+}) {
+  if (!open) return null
+  return (
+    <>
+      <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-40" onClick={onClose} />
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="bg-surface border border-border rounded-2xl w-full max-w-sm p-6" style={{ boxShadow: 'var(--shadow-xl)' }}>
+          <div className="flex items-center gap-3 mb-4">
+            <span className="w-10 h-10 rounded-full bg-danger-soft flex items-center justify-center">
+              <AlertTriangle size={18} className="text-danger" />
+            </span>
+            <h2 className="text-[16px] font-semibold text-text">Apagar {count} cliente{count === 1 ? '' : 's'}?</h2>
+          </div>
+          <p className="text-[13px] text-text-muted mb-5">
+            Esta ação é permanente e não pode ser desfeita. Os dados dos clientes selecionados serão removidos.
+          </p>
+          <div className="flex gap-2">
+            <Btn onClick={onClose} className="flex-1">Cancelar</Btn>
+            <Btn variant="danger" disabled={loading} onClick={onConfirm} className="flex-1"
+              icon={loading ? Loader2 : undefined}>
+              {loading ? 'Apagando…' : 'Apagar'}
+            </Btn>
+          </div>
+        </div>
+      </div>
+    </>
+  )
+}
+
+/* ── BulkOriginModal ──────────────────────────────────────── */
+
+function BulkOriginModal({ open, count, originOptions, onClose, onConfirm }: {
+  open: boolean; count: number; originOptions: string[]
+  onClose: () => void; onConfirm: (origin: string) => void
+}) {
+  const [value, setValue] = useState('')
+  useEffect(() => { if (open) setValue('') }, [open])
+  if (!open) return null
+  return (
+    <>
+      <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-40" onClick={onClose} />
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="bg-surface border border-border rounded-2xl w-full max-w-sm p-6" style={{ boxShadow: 'var(--shadow-xl)' }}>
+          <h2 className="text-[16px] font-semibold text-text mb-1">Atualizar origem</h2>
+          <p className="text-[12.5px] text-text-muted mb-4">
+            Definir nova origem para {count} cliente{count === 1 ? '' : 's'} selecionado{count === 1 ? '' : 's'}.
+          </p>
+          <Field label="Nova origem">
+            <div className="relative">
+              <input list="bulk-origin-opts" value={value} onChange={e => setValue(e.target.value)}
+                placeholder="Ex: Instagram Ads"
+                className="w-full h-9 px-3 bg-surface border border-border rounded-lg text-[12.5px] text-text placeholder:text-text-subtle focus:outline-none focus:ring-2 focus:ring-primary/30" />
+              <datalist id="bulk-origin-opts">
+                {originOptions.map(o => <option key={o} value={o} />)}
+              </datalist>
+            </div>
+          </Field>
+          <div className="flex gap-2 mt-4">
+            <Btn onClick={onClose} className="flex-1">Cancelar</Btn>
+            <Btn variant="primary" disabled={!value.trim()} onClick={() => { onConfirm(value.trim()); onClose() }} className="flex-1">
+              Aplicar
+            </Btn>
+          </div>
+        </div>
+      </div>
+    </>
   )
 }
 
@@ -448,6 +696,7 @@ function CustomerRow({ c, selected, onToggleSelect, onOpen }: {
   c: Customer; selected: boolean; onToggleSelect: () => void; onOpen: () => void
 }) {
   const s = statusMap[c.status]
+  const rfm = RFM_LABELS[c.rfmSegment]
   return (
     <tr onClick={onOpen}
       className={cn('border-t border-border cursor-pointer transition-colors',
@@ -473,6 +722,9 @@ function CustomerRow({ c, selected, onToggleSelect, onOpen }: {
           {s.label}
         </Badge>
       </td>
+      <td className="px-2 py-2.5 whitespace-nowrap hidden md:table-cell">
+        <Badge tone={rfm.tone}>{rfm.label}</Badge>
+      </td>
       <td className="px-2 py-2.5 text-right text-[12.5px] tnum text-text whitespace-nowrap">
         {c.purchases || <span className="text-text-subtle">—</span>}
       </td>
@@ -489,7 +741,7 @@ function CustomerRow({ c, selected, onToggleSelect, onOpen }: {
   )
 }
 
-/* ── NoDataState ──────────────────────────────────────────── */
+/* ── NoDataState / EmptyFilter ────────────────────────────── */
 
 function NoDataState({ onAdd }: { onAdd: () => void }) {
   return (
@@ -518,7 +770,7 @@ function EmptyFilter() {
   )
 }
 
-/* ── CustomersTable — sort types ──────────────────────────── */
+/* ── Sort types ───────────────────────────────────────────── */
 
 type SortField = 'name' | 'origin' | 'status' | 'purchases' | 'totalSpent' | 'lastContact'
 type SortDir   = 'asc' | 'desc'
@@ -528,11 +780,11 @@ const SORT_LS_KEY = 'sort'
 function sortCustomers(data: Customer[], field: SortField, dir: SortDir): Customer[] {
   return [...data].sort((a, b) => {
     let cmp = 0
-    if (field === 'name')        cmp = a.name.localeCompare(b.name, 'pt-BR')
-    else if (field === 'origin') cmp = (a.origin || '').localeCompare(b.origin || '', 'pt-BR')
-    else if (field === 'status') cmp = a.status.localeCompare(b.status)
-    else if (field === 'purchases')  cmp = a.purchases  - b.purchases
-    else if (field === 'totalSpent') cmp = a.totalSpent - b.totalSpent
+    if (field === 'name')         cmp = a.name.localeCompare(b.name, 'pt-BR')
+    else if (field === 'origin')  cmp = (a.origin || '').localeCompare(b.origin || '', 'pt-BR')
+    else if (field === 'status')  cmp = a.status.localeCompare(b.status)
+    else if (field === 'purchases')   cmp = a.purchases  - b.purchases
+    else if (field === 'totalSpent')  cmp = a.totalSpent - b.totalSpent
     else if (field === 'lastContact') cmp = a.lastContact - b.lastContact
     return dir === 'asc' ? cmp : -cmp
   })
@@ -546,23 +798,15 @@ function SortIcon({ field, active, dir }: { field: SortField; active: SortField;
 }
 
 function SortTh({ field, children, align = 'left', sortField, sortDir, onToggle }: {
-  field: SortField
-  children: React.ReactNode
-  align?: 'left' | 'right'
-  sortField: SortField
-  sortDir: SortDir
-  onToggle: (f: SortField) => void
+  field: SortField; children: React.ReactNode; align?: 'left' | 'right'
+  sortField: SortField; sortDir: SortDir; onToggle: (f: SortField) => void
 }) {
   const active = sortField === field
   return (
     <th className={cn('font-semibold px-2 py-2.5', align === 'right' ? 'text-right' : 'text-left')}>
-      <button
-        onClick={() => onToggle(field)}
-        className={cn(
-          'inline-flex items-center gap-0.5 rounded transition-colors hover:text-text',
-          active ? 'text-primary' : 'text-text-subtle',
-        )}
-      >
+      <button onClick={() => onToggle(field)}
+        className={cn('inline-flex items-center gap-0.5 rounded transition-colors hover:text-text',
+          active ? 'text-primary' : 'text-text-subtle')}>
         {children}
         <SortIcon field={field} active={sortField} dir={sortDir} />
       </button>
@@ -573,18 +817,11 @@ function SortTh({ field, children, align = 'left', sortField, sortDir, onToggle 
 /* ── CustomersTable ───────────────────────────────────────── */
 
 function CustomersTable({ data, selected, setSelected, onOpenCustomer, totalLoaded, totalCount, hasMore, loadingMore, onLoadMore, onAdd }: {
-  data: Customer[]
-  selected: Set<string>
-  setSelected: React.Dispatch<React.SetStateAction<Set<string>>>
-  onOpenCustomer: (id: string) => void
-  totalLoaded: number
-  totalCount: number
-  hasMore: boolean
-  loadingMore: boolean
-  onLoadMore: () => void
-  onAdd: () => void
+  data: Customer[]; selected: Set<string>; setSelected: React.Dispatch<React.SetStateAction<Set<string>>>
+  onOpenCustomer: (id: string) => void; totalLoaded: number; totalCount: number
+  hasMore: boolean; loadingMore: boolean; onLoadMore: () => void; onAdd: () => void
 }) {
-  const [page, setPage]         = useState(1)
+  const [page, setPage]           = useState(1)
   const [sortField, setSortField] = useState<SortField>(() => (LS.get(SORT_LS_KEY) as SortField) ?? 'lastContact')
   const [sortDir,   setSortDir]   = useState<SortDir>(() => (LS.get(SORT_LS_KEY + '_dir') as SortDir) ?? 'desc')
 
@@ -606,7 +843,7 @@ function CustomersTable({ data, selected, setSelected, onOpenCustomer, totalLoad
   }
 
   const pageIds = pageItems.map((c) => c.id)
-  const allOnPageSelected = pageIds.length > 0 && pageIds.every((id) => selected.has(id))
+  const allOnPageSelected  = pageIds.length > 0 && pageIds.every((id) => selected.has(id))
   const someOnPageSelected = pageIds.some((id) => selected.has(id))
 
   function togglePage() {
@@ -642,7 +879,7 @@ function CustomersTable({ data, selected, setSelected, onOpenCustomer, totalLoad
         </div>
       )}
       <div className="overflow-x-auto">
-        <table className="w-full text-[12.5px] border-collapse min-w-[880px]">
+        <table className="w-full text-[12.5px] border-collapse min-w-[960px]">
           <thead>
             <tr className="text-[10.5px] uppercase tracking-wider bg-surface-2/40 select-none">
               <th className="pl-4 pr-2 py-2.5 w-10">
@@ -651,6 +888,7 @@ function CustomersTable({ data, selected, setSelected, onOpenCustomer, totalLoad
               <SortTh field="name" sortField={sortField} sortDir={sortDir} onToggle={toggleSort}>Cliente</SortTh>
               <SortTh field="origin" sortField={sortField} sortDir={sortDir} onToggle={toggleSort}>Origem</SortTh>
               <SortTh field="status" sortField={sortField} sortDir={sortDir} onToggle={toggleSort}>Status</SortTh>
+              <th className="px-2 py-2.5 text-left font-semibold text-text-subtle hidden md:table-cell">Segmento</th>
               <SortTh field="purchases" align="right" sortField={sortField} sortDir={sortDir} onToggle={toggleSort}>Compras</SortTh>
               <SortTh field="totalSpent" align="right" sortField={sortField} sortDir={sortDir} onToggle={toggleSort}>Total gasto</SortTh>
               <SortTh field="lastContact" sortField={sortField} sortDir={sortDir} onToggle={toggleSort}>Último contato</SortTh>
@@ -678,7 +916,7 @@ function CustomersTable({ data, selected, setSelected, onOpenCustomer, totalLoad
   )
 }
 
-/* ── Timeline in ProfilePanel ─────────────────────────────── */
+/* ── Timeline items ───────────────────────────────────────── */
 
 const timelineMeta: Record<string, { icon: LucideIcon; tone: string; label: string }> = {
   sale:         { icon: ShoppingBag,   tone: 'success', label: 'Venda'                },
@@ -724,54 +962,148 @@ function TimelineItem({ event }: { event: TimelineEvent }) {
   )
 }
 
+/* ── CopyButton ───────────────────────────────────────────── */
+
+function CopyButton({ value, title }: { value: string; title?: string }) {
+  const [copied, setCopied] = useState(false)
+  function handleCopy(e: React.MouseEvent) {
+    e.stopPropagation()
+    navigator.clipboard.writeText(value).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    }).catch(() => {})
+  }
+  return (
+    <button onClick={handleCopy} title={title ?? 'Copiar'}
+      className="w-4 h-4 inline-flex items-center justify-center rounded text-text-subtle hover:text-primary shrink-0">
+      {copied ? <CheckCircle2 size={10} className="text-success" /> : <Copy size={10} />}
+    </button>
+  )
+}
+
 /* ── ProfilePanel ─────────────────────────────────────────── */
 
-function ProfilePanel({ customer, open, onClose, onUpdate, onDelete }: {
+function ProfilePanel({ customer, open, onClose, onUpdate, onDelete, userId }: {
   customer: Customer | null
   open: boolean
   onClose: () => void
-  onUpdate: (id: string, patch: { tags: string[] }) => void
+  onUpdate: (id: string, patch: CustomerPatch) => void
   onDelete: (id: string) => Promise<void>
+  userId: string
 }) {
-  const [tab, setTab] = useState<'timeline' | 'purchases'>('timeline')
-  const [addingTag, setAddingTag] = useState(false)
-  const [tagInput, setTagInput] = useState('')
-  const [timeline, setTimeline] = useState<TimelineEvent[]>([])
-  const [timelineLoading, setTimelineLoading] = useState(false)
+  type Tab = 'timeline' | 'purchases' | 'notes'
+  const [tab, setTab]               = useState<Tab>('timeline')
+  const [addingTag, setAddingTag]   = useState(false)
+  const [tagInput, setTagInput]     = useState('')
+  const [timeline, setTimeline]     = useState<TimelineEvent[]>([])
+  const [tlLoading, setTlLoading]   = useState(false)
+  const [purchases, setPurchases]   = useState<PurchaseRecord[]>([])
+  const [prLoading, setPrLoading]   = useState(false)
+  const [prLoaded, setPrLoaded]     = useState(false)
+  const [engagement, setEngagement] = useState<EngagementData | null>(null)
+  const [duplicates, setDuplicates] = useState<DuplicateContact[]>([])
+  const [notesValue, setNotesValue] = useState('')
+  const [notesSaving, setNotesSaving] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
-  const [deleting, setDeleting] = useState(false)
+  const [deleting, setDeleting]     = useState(false)
+  const notesSaveRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const notesInitRef = useRef(false)
 
+  // Reset on open / contact change
   useEffect(() => {
-    if (open) { setTab('timeline'); setTimeline([]) }
+    if (open && customer) {
+      setTab('timeline')
+      setTimeline([])
+      setPurchases([])
+      setPrLoaded(false)
+      setEngagement(null)
+      setDuplicates([])
+      setNotesValue(customer.notes)
+      notesInitRef.current = true
+    }
     setConfirmDelete(false)
-  }, [open, customer?.id])
+  }, [open, customer?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Load timeline lazily
+  // Load timeline + engagement lazily
   useEffect(() => {
     if (!open || !customer?.id) return
-    setTimelineLoading(true)
+    setTlLoading(true)
     const supabase = createClient()
-    supabase
-      .from('activity_events')
-      .select('id, type, title, description, amount, created_at')
-      .eq('contact_id', customer.id)
-      .order('created_at', { ascending: false })
-      .limit(20)
-      .then(({ data }) => {
-        setTimeline(
-          (data ?? []).map((r) => ({
-            id: String(r.id),
-            type: String(r.type),
-            title: String(r.title ?? ''),
-            desc: String(r.description ?? ''),
-            amount: r.amount != null ? Number(r.amount) : null,
-            dt: new Date(String(r.created_at)).getTime(),
-          }))
-        )
-        setTimelineLoading(false)
+    Promise.all([
+      supabase.from('activity_events')
+        .select('id, type, title, description, amount, created_at')
+        .eq('contact_id', customer.id)
+        .order('created_at', { ascending: false })
+        .limit(30),
+      supabase.from('activity_events')
+        .select('id, created_at', { count: 'exact', head: false })
+        .eq('contact_id', customer.id)
+        .order('created_at', { ascending: false })
+        .limit(1),
+    ]).then(([evRes, cntRes]) => {
+      setTimeline(
+        (evRes.data ?? []).map((r) => ({
+          id: String(r.id),
+          type: String(r.type),
+          title: String(r.title ?? ''),
+          desc: String(r.description ?? ''),
+          amount: r.amount != null ? Number(r.amount) : null,
+          dt: new Date(String(r.created_at)).getTime(),
+        }))
+      )
+      const cnt = cntRes.count ?? 0
+      const last = cntRes.data?.[0]?.created_at
+      setEngagement({
+        totalInteractions: cnt,
+        lastInteractionMs: last ? new Date(String(last)).getTime() : null,
       })
+      setTlLoading(false)
+    })
   }, [open, customer?.id])
 
+  // Duplicate detection on open
+  useEffect(() => {
+    if (!open || !customer?.id) return
+    const supabase = createClient()
+    supabase.rpc('find_duplicate_contacts', {
+      p_user_id:    userId,
+      p_contact_id: customer.id,
+      p_email:      customer.email || null,
+      p_phone:      customer.phone || null,
+      p_telegram_id: customer.telegramId || null,
+    }).then(({ data }) => {
+      setDuplicates((data ?? []) as DuplicateContact[])
+    })
+  }, [open, customer?.id, userId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Load purchases when tab becomes active
+  useEffect(() => {
+    if (tab !== 'purchases' || prLoaded || !customer?.id) return
+    setPrLoading(true)
+    const supabase = createClient()
+    supabase
+      .from('transactions')
+      .select('id, amount, net, status, product_name, created_at')
+      .eq('contact_id', customer.id)
+      .order('created_at', { ascending: false })
+      .limit(50)
+      .then(({ data }) => {
+        setPurchases(
+          (data ?? []).map((r) => ({
+            id: String(r.id),
+            amount: Number(r.amount ?? 0),
+            net: Number(r.net ?? 0),
+            status: String(r.status ?? ''),
+            productName: String(r.product_name ?? ''),
+            createdAt: new Date(String(r.created_at)).getTime(),
+          }))
+        )
+        setPrLoaded(true)
+        setPrLoading(false)
+      })
+  }, [tab, prLoaded, customer?.id])
+
+  // Body scroll lock
   useEffect(() => {
     if (!open) return
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
@@ -781,31 +1113,56 @@ function ProfilePanel({ customer, open, onClose, onUpdate, onDelete }: {
     return () => { document.removeEventListener('keydown', onKey); document.body.style.overflow = prev }
   }, [open, onClose])
 
+  // Notes auto-save (1.5s debounce, skip initial population)
+  useEffect(() => {
+    if (notesInitRef.current) { notesInitRef.current = false; return }
+    if (!customer?.id) return
+    if (notesSaveRef.current) clearTimeout(notesSaveRef.current)
+    notesSaveRef.current = setTimeout(async () => {
+      setNotesSaving(true)
+      const supabase = createClient()
+      await supabase.from('contacts').update({ notes: notesValue || null }).eq('id', customer.id)
+      onUpdate(customer.id, { notes: notesValue })
+      setNotesSaving(false)
+    }, 1500)
+    return () => { if (notesSaveRef.current) clearTimeout(notesSaveRef.current) }
+  }, [notesValue]) // eslint-disable-line react-hooks/exhaustive-deps
+
   if (!customer) return null
 
-  const purchaseEvents = timeline.filter(e => e.type === 'sale' || e.type === 'payment')
-  const items = tab === 'timeline' ? timeline : purchaseEvents
+  const rfm = RFM_LABELS[customer.rfmSegment]
+  const purchaseCount = purchases.length
+  const flowVarEntries = Object.entries(customer.flowVars).filter(([, v]) => v !== null && v !== '')
+
+  const txStatusMap: Record<string, { label: string; tone: string }> = {
+    approved:  { label: 'Aprovada',   tone: 'success' },
+    pending:   { label: 'Pendente',   tone: 'warning' },
+    expired:   { label: 'Expirada',   tone: 'muted'   },
+    cancelled: { label: 'Cancelada',  tone: 'muted'   },
+    refunded:  { label: 'Reembolsada',tone: 'danger'  },
+  }
 
   return (
     <>
       <div className={cn('fixed inset-0 bg-black/40 backdrop-blur-sm z-40 transition-opacity', open ? 'opacity-100' : 'opacity-0 pointer-events-none')}
         onClick={onClose} />
-      <aside className={cn('fixed right-0 inset-y-0 z-50 w-full md:w-[480px] bg-surface border-l border-border flex flex-col transition-transform duration-200', open ? 'translate-x-0' : 'translate-x-full')}
+      <aside className={cn('fixed right-0 inset-y-0 z-50 w-full md:w-[500px] bg-surface border-l border-border flex flex-col transition-transform duration-200', open ? 'translate-x-0' : 'translate-x-full')}
         style={{ boxShadow: 'var(--shadow-xl)' }}
         role="dialog" aria-modal="true">
 
         {/* Header */}
         <header className="px-5 pt-5 pb-4 border-b border-border">
-          <div className="flex items-start gap-3 mb-4">
+          <div className="flex items-start gap-3 mb-3">
             <Avatar name={customer.name} size={48} />
             <div className="min-w-0 flex-1">
               <h2 className="text-[17px] font-semibold text-text leading-tight truncate">{customer.name}</h2>
               <div className="text-[12px] text-text-muted tnum truncate">{customer.username || customer.email || '—'}</div>
-              <div className="mt-1">
+              <div className="mt-1.5 flex flex-wrap gap-1.5">
                 <Badge tone={statusMap[customer.status].tone}>
                   {customer.status === 'buyer' && <span className="w-1.5 h-1.5 rounded-full bg-success" />}
                   {statusMap[customer.status].label}
                 </Badge>
+                <Badge tone={rfm.tone}>{rfm.label}</Badge>
               </div>
             </div>
             <button onClick={onClose}
@@ -814,17 +1171,39 @@ function ProfilePanel({ customer, open, onClose, onUpdate, onDelete }: {
               <X size={16} />
             </button>
           </div>
-          <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-[11.5px]">
+
+          {/* Info grid */}
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-[11.5px]">
             {customer.email && (
               <div className="flex items-center gap-1.5 min-w-0">
                 <Mail size={11} className="text-text-subtle shrink-0" />
-                <span className="text-text truncate">{customer.email}</span>
+                <span className="text-text truncate flex-1 min-w-0">{customer.email}</span>
+                <CopyButton value={customer.email} title="Copiar e-mail" />
               </div>
             )}
             {customer.phone && (
               <div className="flex items-center gap-1.5 min-w-0">
                 <Phone size={11} className="text-text-subtle shrink-0" />
-                <span className="text-text tnum truncate">{customer.phone}</span>
+                <span className="text-text tnum truncate flex-1 min-w-0">{customer.phone}</span>
+                <CopyButton value={customer.phone} title="Copiar telefone" />
+              </div>
+            )}
+            {customer.username && (
+              <div className="flex items-center gap-1.5 min-w-0">
+                <MessageCircle size={11} className="text-text-subtle shrink-0" />
+                <a href={`https://t.me/${customer.username.replace('@', '')}`} target="_blank" rel="noopener noreferrer"
+                  className="text-primary tnum truncate flex-1 min-w-0 hover:underline" onClick={e => e.stopPropagation()}>
+                  {customer.username.startsWith('@') ? customer.username : `@${customer.username}`}
+                </a>
+                <ExternalLink size={10} className="text-text-subtle shrink-0" />
+              </div>
+            )}
+            {(customer.city || customer.state) && (
+              <div className="flex items-center gap-1.5 min-w-0">
+                <MapPin size={11} className="text-text-subtle shrink-0" />
+                <span className="text-text truncate">
+                  {[customer.city, customer.state].filter(Boolean).join(', ')}
+                </span>
               </div>
             )}
             {customer.origin && (
@@ -850,6 +1229,37 @@ function ProfilePanel({ customer, open, onClose, onUpdate, onDelete }: {
               <span className="text-text">{relTime(customer.lastContact)}</span>
             </div>
           </div>
+
+          {/* Engagement strip */}
+          {engagement && (
+            <div className="mt-2.5 flex items-center gap-3 text-[11px] text-text-muted">
+              <span className="flex items-center gap-1">
+                <Activity size={10} />
+                <span className="tnum font-medium text-text">{fmtNum(engagement.totalInteractions)}</span> interações
+              </span>
+              {engagement.lastInteractionMs && (
+                <span className="flex items-center gap-1">
+                  <Clock size={10} />
+                  última {relTime(engagement.lastInteractionMs)}
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Duplicate warning */}
+          {duplicates.length > 0 && (
+            <div className="mt-2.5 flex items-start gap-2 bg-warning-soft border border-warning/25 rounded-lg px-3 py-2">
+              <AlertTriangle size={13} className="text-warning shrink-0 mt-0.5" />
+              <div className="min-w-0">
+                <div className="text-[11.5px] font-semibold text-warning">
+                  {duplicates.length} possível{duplicates.length === 1 ? '' : 'eis'} duplicata{duplicates.length === 1 ? '' : 's'}
+                </div>
+                <div className="text-[11px] text-text-muted truncate">
+                  {duplicates.map(d => d.name).join(', ')}
+                </div>
+              </div>
+            </div>
+          )}
         </header>
 
         {/* Body */}
@@ -913,14 +1323,15 @@ function ProfilePanel({ customer, open, onClose, onUpdate, onDelete }: {
             </div>
           </section>
 
-          {/* Timeline */}
+          {/* Tabs */}
           <section className="px-5 py-4">
             <div className="flex items-center gap-0.5 border-b border-border -mx-1 mb-3">
               {([
-                { id: 'timeline', label: 'Linha do tempo', Ico: Activity, count: timeline.length },
-                { id: 'purchases', label: 'Compras', Ico: ShoppingBag, count: purchaseEvents.length },
+                { id: 'timeline',  label: 'Linha do tempo', Ico: Activity,     count: timeline.length },
+                { id: 'purchases', label: 'Compras reais',  Ico: ShoppingBag,  count: prLoaded ? purchaseCount : customer.purchases },
+                { id: 'notes',     label: 'Anotações',      Ico: FileText,     count: flowVarEntries.length },
               ] as const).map(({ id, label, Ico, count }) => (
-                <button key={id} onClick={() => setTab(id as 'timeline' | 'purchases')}
+                <button key={id} onClick={() => setTab(id as Tab)}
                   className={cn('inline-flex items-center gap-1.5 h-9 px-3 text-[13px] font-medium rounded-t-md -mb-px border-b-2 transition-colors',
                     tab === id ? 'text-primary border-primary' : 'text-text-muted border-transparent hover:text-text')}>
                   <Ico size={14} />
@@ -932,18 +1343,100 @@ function ProfilePanel({ customer, open, onClose, onUpdate, onDelete }: {
                 </button>
               ))}
             </div>
-            {timelineLoading ? (
-              <div className="flex items-center justify-center py-8 text-text-muted">
-                <Loader2 size={18} className="animate-spin mr-2" /> Carregando…
-              </div>
-            ) : items.length === 0 ? (
-              <div className="text-[12px] text-text-muted py-4 text-center">
-                {tab === 'purchases' ? 'Nenhuma compra registrada.' : 'Nenhum evento registrado.'}
-              </div>
-            ) : (
-              <div className="relative pb-2">
-                <div className="absolute left-[14px] top-2 bottom-2 w-px bg-border" />
-                {items.map((e) => <TimelineItem key={e.id} event={e} />)}
+
+            {/* Timeline tab */}
+            {tab === 'timeline' && (
+              tlLoading ? (
+                <div className="flex items-center justify-center py-8 text-text-muted">
+                  <Loader2 size={18} className="animate-spin mr-2" /> Carregando…
+                </div>
+              ) : timeline.length === 0 ? (
+                <div className="text-[12px] text-text-muted py-4 text-center">Nenhum evento registrado.</div>
+              ) : (
+                <div className="relative pb-2">
+                  <div className="absolute left-[14px] top-2 bottom-2 w-px bg-border" />
+                  {timeline.map((e) => <TimelineItem key={e.id} event={e} />)}
+                </div>
+              )
+            )}
+
+            {/* Purchases tab */}
+            {tab === 'purchases' && (
+              prLoading ? (
+                <div className="flex items-center justify-center py-8 text-text-muted">
+                  <Loader2 size={18} className="animate-spin mr-2" /> Carregando…
+                </div>
+              ) : purchases.length === 0 ? (
+                <div className="text-[12px] text-text-muted py-4 text-center">Nenhuma compra registrada.</div>
+              ) : (
+                <div className="space-y-2">
+                  {purchases.map((p) => {
+                    const s = txStatusMap[p.status] ?? { label: p.status, tone: 'muted' }
+                    return (
+                      <div key={p.id} className="flex items-center justify-between gap-3 p-2.5 rounded-lg bg-surface-2/50 border border-border">
+                        <div className="min-w-0 flex-1">
+                          <div className="text-[12.5px] font-medium text-text truncate">{p.productName || 'Produto'}</div>
+                          <div className="text-[11px] text-text-muted">{fmtDate(p.createdAt)}</div>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <div className="text-[12.5px] font-semibold tnum text-text">{fmtBRL(p.amount)}</div>
+                          <Badge tone={s.tone}>{s.label}</Badge>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )
+            )}
+
+            {/* Notes tab */}
+            {tab === 'notes' && (
+              <div className="space-y-4">
+                {/* Anotações */}
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-[11px] uppercase tracking-wider font-semibold text-text-subtle">Anotações</label>
+                    {notesSaving && (
+                      <span className="text-[10.5px] text-text-muted flex items-center gap-1">
+                        <Loader2 size={10} className="animate-spin" /> Salvando…
+                      </span>
+                    )}
+                  </div>
+                  <textarea
+                    value={notesValue}
+                    onChange={e => setNotesValue(e.target.value)}
+                    placeholder="Adicione observações sobre este cliente…"
+                    rows={5}
+                    className="w-full px-3 py-2.5 bg-surface border border-border rounded-lg text-[12.5px] text-text placeholder:text-text-subtle focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50 resize-none"
+                  />
+                  <p className="text-[10.5px] text-text-subtle mt-1">Salvo automaticamente.</p>
+                </div>
+
+                {/* Variáveis do fluxo */}
+                {flowVarEntries.length > 0 && (
+                  <div>
+                    <div className="text-[11px] uppercase tracking-wider font-semibold text-text-subtle mb-2">
+                      Variáveis capturadas no fluxo
+                    </div>
+                    <div className="space-y-1.5">
+                      {flowVarEntries.map(([key, val]) => (
+                        <div key={key} className="flex items-start justify-between gap-2 px-3 py-2 rounded-lg bg-surface-2/50 border border-border">
+                          <div className="min-w-0 flex-1">
+                            <div className="text-[10.5px] font-semibold text-text-subtle uppercase tracking-wider">{key}</div>
+                            <div className="text-[12.5px] text-text mt-0.5 break-words">{String(val)}</div>
+                          </div>
+                          <CopyButton value={String(val)} title={`Copiar ${key}`} />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {flowVarEntries.length === 0 && (
+                  <div className="text-[12px] text-text-muted text-center py-2">
+                    Nenhuma variável de fluxo capturada.
+                  </div>
+                )}
               </div>
             )}
           </section>
@@ -970,8 +1463,7 @@ function ProfilePanel({ customer, open, onClose, onUpdate, onDelete }: {
             </div>
           ) : (
             <div className="flex items-center justify-between gap-2">
-              <button
-                onClick={() => setConfirmDelete(true)}
+              <button onClick={() => setConfirmDelete(true)}
                 className="text-[12px] text-danger hover:opacity-75 transition-opacity flex items-center gap-1"
                 title="Apagar cliente">
                 <X size={13} />
@@ -1000,21 +1492,15 @@ interface AddCustomerForm {
 }
 
 function AddCustomerModal({ open, onClose, bots, originOptions, onSuccess }: {
-  open: boolean
-  onClose: () => void
-  bots: ContactBotOption[]
-  originOptions: string[]
+  open: boolean; onClose: () => void; bots: ContactBotOption[]; originOptions: string[]
   onSuccess: (raw: RawContact) => void
 }) {
   const emptyForm: AddCustomerForm = { name: '', username: '', email: '', phone: '', origin: '', botId: '' }
-  const [form, setForm] = useState<AddCustomerForm>(emptyForm)
+  const [form, setForm]     = useState<AddCustomerForm>(emptyForm)
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
+  const [error, setError]   = useState('')
 
-  useEffect(() => {
-    if (open) { setForm(emptyForm); setError('') }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open])
+  useEffect(() => { if (open) { setForm(emptyForm); setError('') } }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!open) return
@@ -1023,7 +1509,7 @@ function AddCustomerModal({ open, onClose, bots, originOptions, onSuccess }: {
     return () => document.removeEventListener('keydown', onKey)
   }, [open, onClose])
 
-  function patch(p: Partial<AddCustomerForm>) { setForm(f => ({ ...f, ...p }) ) }
+  function patch(p: Partial<AddCustomerForm>) { setForm(f => ({ ...f, ...p })) }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -1048,9 +1534,7 @@ function AddCustomerModal({ open, onClose, bots, originOptions, onSuccess }: {
         tags:        [] as string[],
         status:      'new',
       }
-      const { data, error: err } = await supabase.from('contacts').insert(row).select(
-        'id, name, username, email, phone, origin, bot, bot_id, purchases, total_spent, avg_ticket, tags, first_contact, last_contact, first_purchase, last_purchase'
-      ).single()
+      const { data, error: err } = await supabase.from('contacts').insert(row).select(CONTACTS_SELECT).single()
       if (err) { setError(err.message); return }
       onSuccess(data as unknown as RawContact)
       onClose()
@@ -1069,10 +1553,7 @@ function AddCustomerModal({ open, onClose, bots, originOptions, onSuccess }: {
           style={{ boxShadow: 'var(--shadow-xl)' }}>
           <div className="flex items-center justify-between px-5 pt-5 pb-4 border-b border-border">
             <h2 className="text-[16px] font-semibold text-text">Adicionar cliente</h2>
-            <button onClick={onClose}
-              className="w-7 h-7 flex items-center justify-center rounded-md text-text-muted hover:bg-surface-2">
-              <X size={15} />
-            </button>
+            <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded-md text-text-muted hover:bg-surface-2"><X size={15} /></button>
           </div>
           <form onSubmit={handleSubmit} className="px-5 py-4 space-y-3">
             <Field label="Nome" required>
@@ -1102,7 +1583,7 @@ function AddCustomerModal({ open, onClose, bots, originOptions, onSuccess }: {
               </Field>
               <Field label="Bot">
                 <select value={form.botId} onChange={e => patch({ botId: e.target.value })}
-                  className="w-full h-9 px-3 bg-surface border border-border rounded-lg text-[12.5px] text-text focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50 appearance-none">
+                  className="w-full h-9 px-3 bg-surface border border-border rounded-lg text-[12.5px] text-text focus:outline-none focus:ring-2 focus:ring-primary/30 appearance-none">
                   <option value="">Nenhum</option>
                   {bots.map(b => <option key={b.id} value={b.id}>{b.username ? `@${b.username}` : b.name}</option>)}
                 </select>
@@ -1145,12 +1626,12 @@ function parseCSVRows(text: string): string[][] {
 function ImportCSVModal({ open, onClose, bots, onSuccess }: {
   open: boolean; onClose: () => void; bots: ContactBotOption[]; onSuccess: (count: number) => void
 }) {
-  const [preview, setPreview] = useState<string[][]>([])
-  const [headers, setHeaders] = useState<string[]>([])
-  const [allRows, setAllRows] = useState<string[][]>([])
+  const [preview, setPreview]   = useState<string[][]>([])
+  const [headers, setHeaders]   = useState<string[]>([])
+  const [allRows, setAllRows]   = useState<string[][]>([])
   const [importing, setImporting] = useState(false)
-  const [result, setResult] = useState<{ imported: number; errors: number } | null>(null)
-  const [error, setError] = useState('')
+  const [result, setResult]     = useState<{ imported: number; errors: number } | null>(null)
+  const [error, setError]       = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -1191,11 +1672,11 @@ function ImportCSVModal({ open, onClose, bots, onSuccess }: {
     const rows = valid.map(r => ({
       user_id:     user.id,
       name:        r[nameIdx]?.trim() ?? '',
-      username:    userIdx >= 0 ? (r[userIdx]?.trim() || null) : null,
-      email:       emailIdx >= 0 ? (r[emailIdx]?.trim() || null) : null,
-      phone:       phoneIdx >= 0 ? (r[phoneIdx]?.trim() || null) : null,
+      username:    userIdx   >= 0 ? (r[userIdx]?.trim()   || null) : null,
+      email:       emailIdx  >= 0 ? (r[emailIdx]?.trim()  || null) : null,
+      phone:       phoneIdx  >= 0 ? (r[phoneIdx]?.trim()  || null) : null,
       origin:      originIdx >= 0 ? (r[originIdx]?.trim() || null) : null,
-      tags:        tagsIdx >= 0 ? r[tagsIdx]?.split(';').map(t => t.trim()).filter(Boolean) : [],
+      tags:        tagsIdx   >= 0 ? r[tagsIdx]?.split(';').map(t => t.trim()).filter(Boolean) : [],
       purchases:   0,
       total_spent: 0,
       avg_ticket:  0,
@@ -1229,10 +1710,7 @@ function ImportCSVModal({ open, onClose, bots, onSuccess }: {
                 Colunas: <span className="font-medium text-text">Nome*</span>, Username, E-mail, Telefone, Origem, Tags (separar por ;)
               </p>
             </div>
-            <button onClick={onClose}
-              className="w-7 h-7 flex items-center justify-center rounded-md text-text-muted hover:bg-surface-2">
-              <X size={15} />
-            </button>
+            <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded-md text-text-muted hover:bg-surface-2"><X size={15} /></button>
           </div>
           <div className="px-5 py-4 space-y-4">
             {!result ? (
@@ -1243,7 +1721,9 @@ function ImportCSVModal({ open, onClose, bots, onSuccess }: {
                   className="w-full h-24 border-2 border-dashed border-border rounded-xl flex flex-col items-center justify-center gap-2 text-text-muted hover:border-primary hover:text-primary transition-colors">
                   <Upload size={20} />
                   <span className="text-[12.5px]">
-                    {allRows.length > 0 ? `${allRows.length} linha${allRows.length === 1 ? '' : 's'} detectada${allRows.length === 1 ? '' : 's'}` : 'Clique para selecionar o arquivo .csv'}
+                    {allRows.length > 0
+                      ? `${allRows.length} linha${allRows.length === 1 ? '' : 's'} detectada${allRows.length === 1 ? '' : 's'}`
+                      : 'Clique para selecionar o arquivo .csv'}
                   </span>
                 </button>
 
@@ -1255,18 +1735,12 @@ function ImportCSVModal({ open, onClose, bots, onSuccess }: {
                     <div className="overflow-x-auto border border-border rounded-lg">
                       <table className="w-full text-[11px]">
                         <thead className="bg-surface-2/60">
-                          <tr>
-                            {headers.map((h, i) => (
-                              <th key={i} className="px-2 py-1.5 text-left font-semibold text-text-subtle whitespace-nowrap">{h}</th>
-                            ))}
-                          </tr>
+                          <tr>{headers.map((h, i) => <th key={i} className="px-2 py-1.5 text-left font-semibold text-text-subtle whitespace-nowrap">{h}</th>)}</tr>
                         </thead>
                         <tbody>
                           {preview.map((row, i) => (
                             <tr key={i} className="border-t border-border">
-                              {row.map((cell, j) => (
-                                <td key={j} className="px-2 py-1.5 text-text-muted truncate max-w-[120px]">{cell}</td>
-                              ))}
+                              {row.map((cell, j) => <td key={j} className="px-2 py-1.5 text-text-muted truncate max-w-[120px]">{cell}</td>)}
                             </tr>
                           ))}
                         </tbody>
@@ -1314,7 +1788,7 @@ function ImportCSVModal({ open, onClose, bots, onSuccess }: {
 
 export default function CustomersClient({
   initialContacts, bots, totalCount: totalCountProp, buyersCount: buyersCountProp,
-  leadsCount: leadsCountProp, originOptions, hasMore: hasMoreProp,
+  leadsCount: leadsCountProp, originOptions, tagOptions, stateOptions, kpiData, userId, hasMore: hasMoreProp,
 }: {
   initialContacts: RawContact[]
   bots: ContactBotOption[]
@@ -1322,33 +1796,42 @@ export default function CustomersClient({
   buyersCount: number
   leadsCount: number
   originOptions: string[]
+  tagOptions: TagOption[]
+  stateOptions: string[]
+  kpiData: ContactKpis
+  userId: string
   hasMore: boolean
 }) {
   const { track } = useAnalytics()
 
   // ── State
-  const [customers, setCustomers] = useState<Customer[]>(() => initialContacts.map(mapRaw))
+  const [customers, setCustomers]   = useState<Customer[]>(() => initialContacts.map(mapRaw))
   const [totalCount, setTotalCount] = useState(totalCountProp)
   const [buyersCount, setBuyersCount] = useState(buyersCountProp)
   const [leadsCount, setLeadsCount] = useState(leadsCountProp)
-  const [dbOffset, setDbOffset] = useState(initialContacts.length)
-  const [hasMore, setHasMore] = useState(hasMoreProp)
+  const [dbOffset, setDbOffset]     = useState(initialContacts.length)
+  const [hasMore, setHasMore]       = useState(hasMoreProp)
   const [loadingMore, setLoadingMore] = useState(false)
 
-  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [selected, setSelected]         = useState<Set<string>>(new Set())
   const [openCustomerId, setOpenCustomerId] = useState<string | null>(null)
-  const [addTagOpen, setAddTagOpen] = useState(false)
-  const [toast, setToast] = useState('')
+  const [addTagOpen, setAddTagOpen]     = useState(false)
+  const [toast, setToast]               = useState('')
   const [addModalOpen, setAddModalOpen] = useState(false)
   const [importModalOpen, setImportModalOpen] = useState(false)
+  const [bulkDeleteOpen, setBulkDeleteOpen]   = useState(false)
+  const [bulkDeleting, setBulkDeleting]       = useState(false)
+  const [bulkOriginOpen, setBulkOriginOpen]   = useState(false)
 
-  // ── Filters (persisted in localStorage)
+  // ── Filters
   const [filters, setFilters] = useState<CustFilters>(() => ({
-    search: LS.get('search')   ?? '',
-    status: LS.get('status')   ?? 'Todos os status',
-    origin: LS.get('origin')   ?? 'Todas as origens',
-    tag:    LS.get('tag')      ?? 'Todas as tags',
-    period: LS.get('period')   ?? 'all',
+    search: LS.get('search') ?? '',
+    status: LS.get('status') ?? 'Todos os status',
+    origin: LS.get('origin') ?? 'Todas as origens',
+    tag:    LS.get('tag')    ?? 'Todas as tags',
+    period: LS.get('period') ?? 'all',
+    state:  LS.get('state')  ?? 'Todos os estados',
+    rfm:    LS.get('rfm')    ?? 'Todos os segmentos',
   }))
 
   function handleFilterChange(patch: Partial<CustFilters>) {
@@ -1359,6 +1842,8 @@ export default function CustomersClient({
       if ('origin' in patch) LS.set('origin', patch.origin ?? defaultFilters.origin)
       if ('tag'    in patch) LS.set('tag',    patch.tag    ?? defaultFilters.tag)
       if ('period' in patch) LS.set('period', patch.period ?? 'all')
+      if ('state'  in patch) LS.set('state',  patch.state  ?? defaultFilters.state)
+      if ('rfm'    in patch) LS.set('rfm',    patch.rfm    ?? defaultFilters.rfm)
       track('customer_filter_changed', {
         status: next.status,
         origin_filtered: next.origin !== 'Todas as origens',
@@ -1371,20 +1856,17 @@ export default function CustomersClient({
 
   function handleClear() {
     setFilters(defaultFilters)
-    LS.del('search'); LS.del('status'); LS.del('origin'); LS.del('tag'); LS.del('period')
+    LS.del('search'); LS.del('status'); LS.del('origin'); LS.del('tag')
+    LS.del('period'); LS.del('state'); LS.del('rfm')
   }
 
   const hasFilters = JSON.stringify(filters) !== JSON.stringify(defaultFilters)
 
-  // ── Derived option lists from loaded contacts
+  // ── Derived option lists
   const allOriginOptions = useMemo(() => {
     const fromContacts = customers.map(c => c.origin).filter(Boolean)
     return [...new Set([...originOptions, ...fromContacts])].sort()
   }, [customers, originOptions])
-
-  const allTagOptions = useMemo(() => {
-    return [...new Set(customers.flatMap(c => c.tags))].sort()
-  }, [customers])
 
   // ── Realtime
   useEffect(() => {
@@ -1408,13 +1890,14 @@ export default function CustomersClient({
     return () => { supabase.removeChannel(channel) }
   }, [])
 
-  // ── Load more
+  // ── Load more (IDOR-safe: always filter by userId)
   const loadMore = useCallback(async () => {
     setLoadingMore(true)
     const supabase = createClient()
     const { data } = await supabase
       .from('contacts')
       .select(CONTACTS_SELECT)
+      .eq('user_id', userId)
       .order('last_contact', { ascending: false })
       .range(dbOffset, dbOffset + PAGE_SIZE - 1)
     if (data && data.length > 0) {
@@ -1425,22 +1908,27 @@ export default function CustomersClient({
       setHasMore(false)
     }
     setLoadingMore(false)
-  }, [dbOffset])
+  }, [dbOffset, userId])
 
   // ── Filter
   const filtered = useMemo(() => {
     const q = filters.search.trim().toLowerCase()
     const cutoff = getPeriodCutoff(filters.period)
+    const rfmLabel = filters.rfm !== 'Todos os segmentos' ? filters.rfm : null
     return customers.filter((c) => {
       if (q && !(
         c.name.toLowerCase().includes(q) ||
         c.username.toLowerCase().includes(q) ||
-        c.email.toLowerCase().includes(q)
+        c.email.toLowerCase().includes(q) ||
+        c.phone.toLowerCase().includes(q) ||
+        c.telegramId.toLowerCase().includes(q)
       )) return false
       if (filters.status === 'Comprou'     && c.status !== 'buyer') return false
       if (filters.status === 'Não comprou' && c.status !== 'lead')  return false
       if (filters.origin !== 'Todas as origens' && c.origin !== filters.origin) return false
       if (filters.tag    !== 'Todas as tags'    && !c.tags.includes(filters.tag)) return false
+      if (filters.state  !== 'Todos os estados' && c.state !== filters.state) return false
+      if (rfmLabel && RFM_LABELS[c.rfmSegment].label !== rfmLabel) return false
       if (cutoff && c.lastContact < cutoff) return false
       return true
     })
@@ -1453,18 +1941,21 @@ export default function CustomersClient({
     return () => clearTimeout(t)
   }, [toast])
 
-  // ── Update single customer tags
-  async function updateCustomer(id: string, patch: { tags: string[] }) {
+  // ── Update customer (tags or notes)
+  async function updateCustomer(id: string, patch: CustomerPatch) {
     setCustomers(cs => cs.map(c => c.id === id ? { ...c, ...patch } : c))
     const supabase = createClient()
-    const { error } = await supabase.from('contacts').update({ tags: patch.tags }).eq('id', id)
-    if (error) setToast('Erro ao salvar tag.')
+    const dbPatch: Record<string, unknown> = {}
+    if ('tags'  in patch) dbPatch.tags  = patch.tags
+    if ('notes' in patch) dbPatch.notes = patch.notes || null
+    const { error } = await supabase.from('contacts').update(dbPatch).eq('id', id)
+    if (error) setToast('Erro ao salvar.')
   }
 
   async function deleteCustomer(id: string) {
     const customer = customers.find(c => c.id === id)
     const supabase = createClient()
-    const { error } = await supabase.from('contacts').delete().eq('id', id)
+    const { error } = await supabase.from('contacts').delete().eq('id', id).eq('user_id', userId)
     if (error) { setToast('Erro ao apagar cliente.'); return }
     setCustomers(cs => cs.filter(c => c.id !== id))
     setTotalCount(n => n - 1)
@@ -1475,7 +1966,36 @@ export default function CustomersClient({
     setToast('Cliente apagado.')
   }
 
-  // ── Bulk add tag via RPC
+  // ── Bulk delete
+  async function bulkDeleteCustomers() {
+    const ids = Array.from(selected)
+    setBulkDeleting(true)
+    const supabase = createClient()
+    const { error } = await supabase.from('contacts').delete().in('id', ids).eq('user_id', userId)
+    setBulkDeleting(false)
+    setBulkDeleteOpen(false)
+    if (error) { setToast('Erro ao apagar clientes.'); return }
+    const removed = customers.filter(c => ids.includes(c.id))
+    const removedBuyers = removed.filter(c => c.status === 'buyer').length
+    const removedLeads  = removed.length - removedBuyers
+    setCustomers(cs => cs.filter(c => !ids.includes(c.id)))
+    setTotalCount(n => n - removed.length)
+    setBuyersCount(n => n - removedBuyers)
+    setLeadsCount(n => n - removedLeads)
+    setSelected(new Set())
+    setToast(`${ids.length} cliente${ids.length === 1 ? '' : 's'} apagado${ids.length === 1 ? '' : 's'}.`)
+  }
+
+  // ── Bulk update origin
+  async function bulkUpdateOrigin(newOrigin: string) {
+    const ids = Array.from(selected)
+    setCustomers(cs => cs.map(c => ids.includes(c.id) ? { ...c, origin: newOrigin } : c))
+    setToast(`Origem atualizada para ${ids.length} cliente${ids.length === 1 ? '' : 's'}.`)
+    const supabase = createClient()
+    await supabase.from('contacts').update({ origin: newOrigin }).in('id', ids).eq('user_id', userId)
+  }
+
+  // ── Bulk add tag
   async function bulkAddTag(tag: string) {
     const ids = Array.from(selected)
     setCustomers(cs => cs.map(c => {
@@ -1493,13 +2013,22 @@ export default function CustomersClient({
     const targets = selected.size > 0 ? customers.filter(c => selected.has(c.id)) : filtered
     const today = new Date().toISOString().slice(0, 10)
     exportCSV(`clientes_${today}.csv`,
-      ['ID', 'Nome', 'Username', 'E-mail', 'Telefone', 'Status', 'Origem', 'Bot', 'Compras', 'Total gasto (R$)', 'Ticket médio (R$)', 'Primeiro contato', 'Último contato', 'Tags'],
+      ['ID', 'Nome', 'Username', 'E-mail', 'Telefone', 'ID Telegram', 'Status', 'Segmento RFM',
+       'Origem', 'Bot', 'Cidade', 'Estado', 'Compras', 'Total gasto (R$)', 'Ticket médio (R$)',
+       'Primeiro contato', 'Último contato', 'Primeira compra', 'Última compra',
+       'Tags', 'Anotações', 'Variáveis do fluxo'],
       targets.map(c => [
-        c.id, c.name, c.username, c.email, c.phone,
+        c.id, c.name, c.username, c.email, c.phone, c.telegramId,
         c.status === 'buyer' ? 'Comprador' : 'Lead',
-        c.origin, c.bot, c.purchases, c.totalSpent, c.avgTicket,
+        RFM_LABELS[c.rfmSegment].label,
+        c.origin, c.bot, c.city, c.state,
+        c.purchases, c.totalSpent, c.avgTicket,
         fmtDate(c.firstContact), fmtDate(c.lastContact),
+        c.firstPurchase ? fmtDate(c.firstPurchase) : '',
+        c.lastPurchase  ? fmtDate(c.lastPurchase)  : '',
         c.tags.join('; '),
+        c.notes,
+        Object.entries(c.flowVars).map(([k, v]) => `${k}=${v}`).join('; '),
       ]),
     )
     track('csv_exported', { section: 'clientes', rows: targets.length })
@@ -1508,16 +2037,11 @@ export default function CustomersClient({
 
   const openCustomer = customers.find(c => c.id === openCustomerId) ?? null
 
-  // ── Derived counts from loaded list (for subtitle)
-  const displayTotal  = totalCount
-  const displayBuyers = buyersCount
-  const displayLeads  = leadsCount
-
   return (
     <>
       <PageHeader
         title="Clientes"
-        subtitle={`${fmtNum(displayTotal)} contatos · ${fmtNum(displayBuyers)} compradores · ${fmtNum(displayLeads)} leads`}
+        subtitle={`${fmtNum(totalCount)} contatos · ${fmtNum(buyersCount)} compradores · ${fmtNum(leadsCount)} leads`}
         actions={
           <>
             <Btn icon={Download} onClick={bulkExport}>Exportar CSV</Btn>
@@ -1527,13 +2051,16 @@ export default function CustomersClient({
         }
       />
 
+      <KpiRow kpis={kpiData} />
+
       <FilterBar
         filters={filters}
         setFilters={setFilters}
         hasFilters={hasFilters}
         onClear={handleClear}
         originOptions={allOriginOptions}
-        tagOptions={allTagOptions}
+        tagOptions={tagOptions}
+        stateOptions={stateOptions}
         onFilterChange={handleFilterChange}
       />
 
@@ -1543,6 +2070,8 @@ export default function CustomersClient({
             count={selected.size}
             onAddTag={() => setAddTagOpen(o => !o)}
             onExport={bulkExport}
+            onDelete={() => setBulkDeleteOpen(true)}
+            onUpdateOrigin={() => setBulkOriginOpen(true)}
             onClear={() => setSelected(new Set())}
             toast={toast}
           />
@@ -1550,7 +2079,7 @@ export default function CustomersClient({
             open={addTagOpen}
             onClose={() => setAddTagOpen(false)}
             onAdd={bulkAddTag}
-            tagOptions={allTagOptions}
+            tagOptions={tagOptions}
           />
         </div>
       )}
@@ -1584,6 +2113,7 @@ export default function CustomersClient({
         onClose={() => setOpenCustomerId(null)}
         onUpdate={updateCustomer}
         onDelete={deleteCustomer}
+        userId={userId}
       />
 
       <AddCustomerModal
@@ -1609,6 +2139,22 @@ export default function CustomersClient({
           setLeadsCount(n => n + count)
           track('customer_imported', { rows: count })
         }}
+      />
+
+      <BulkDeleteModal
+        open={bulkDeleteOpen}
+        count={selected.size}
+        onClose={() => setBulkDeleteOpen(false)}
+        onConfirm={bulkDeleteCustomers}
+        loading={bulkDeleting}
+      />
+
+      <BulkOriginModal
+        open={bulkOriginOpen}
+        count={selected.size}
+        originOptions={allOriginOptions}
+        onClose={() => setBulkOriginOpen(false)}
+        onConfirm={bulkUpdateOrigin}
       />
     </>
   )
