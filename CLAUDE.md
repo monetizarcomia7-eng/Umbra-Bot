@@ -346,6 +346,9 @@ umbra-bot/
 │       │                                     # strip frontmatter, marked() → HTML, processHtml()
 │       │                                     # TL;DR → callout, screenshots → placeholder visual,
 │       │                                     # TODO → removido, blockquotes coloridos por tipo
+│       │                                     # Light mode fix: usa var(--primary) em vez de
+│       │                                     # var(--accent-fg) em badge, links, checkbox,
+│       │                                     # bordas e label do TL;DR (accent-fg = branco no light)
 │       ├── guide/                # Guia da Plataforma — SSR + GuideClient (dados reais, migração 070)
 │       │   ├── page.tsx          # Server Component: SSR guide_articles + guide_faqs em paralelo (ISR revalidate=3600)
 │       │   └── GuideClient.tsx   # Client Component: busca + filtros por categoria + ArticlePanel com body lazy,
@@ -360,6 +363,8 @@ umbra-bot/
 │   │                             # hl="pt-BR"; onExpired reseta token para null
 │   └── dashboard/
 │       ├── Layout.tsx            # Shell: DashboardProvider → LayoutShell (Sidebar + Topbar)
+│       │                         # usePathname() + isDocs: oculta Sidebar e wrapper de padding
+│       │                         # quando rota começa com /dashboard/docs (evita dupla sidebar)
 │       ├── Sidebar.tsx           # Navegação colapsável (260px / 80px) + badge via DashboardProvider
 │       ├── Topbar.tsx            # Busca global (14 tabelas, race-condition safe) + notif + user
 │       ├── OnboardingWizard.tsx  # Modal 4 passos (welcome→bot→gateway→done) — aparece 1x
@@ -504,9 +509,10 @@ app/layout.tsx
 
 DashboardLayout (components/dashboard/Layout.tsx)
   └── LayoutShell
-        ├── Sidebar   ← usa alertCount do provider (sem fetch próprio)
+        ├── isDocs = pathname?.startsWith('/dashboard/docs')
+        ├── Sidebar   ← renderizado somente quando !isDocs (oculto nas rotas de docs)
         ├── Topbar    ← usa user, alerts, logout do provider (sem fetch próprio)
-        └── {children}
+        └── {children} — envolto em div.max-w-[1400px] apenas quando !isDocs
 ```
 
 **Regra:** `useDashboard()` só pode ser chamado em componentes que são **filhos** de `DashboardLayout`. Nunca no mesmo componente que renderiza o `DashboardLayout`.
@@ -1050,6 +1056,8 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Documentação — toggle dark/light na sidebar da docs | ✅ Implementado |
 | Documentação — TL;DR callout, screenshots placeholder, blockquotes coloridos | ✅ Implementado |
 | Documentação — botão "Documentação" em Gerenciar Bots navega para /dashboard/docs | ✅ Implementado |
+| Documentação — light mode fix: var(--primary) em vez de var(--accent-fg) no artigo (badge, links, checkbox, bordas TL;DR) | ✅ Corrigido |
+| Documentação — sidebar dupla corrigida: LayoutShell usa usePathname() + isDocs para ocultar Sidebar em /dashboard/docs/** | ✅ Corrigido |
 | Guia da Plataforma — Server Component SSR + GuideClient (dados reais, migração 070) | ✅ Funcional |
 | Guia da Plataforma — page.tsx: SSR guide_articles + guide_faqs em paralelo (ISR revalidate=3600) | ✅ Implementado |
 | Guia da Plataforma — busca por texto (query ≥ 2 chars) + logGuideSearchAction (guide_search_logs) | ✅ Implementado |
@@ -2997,6 +3005,9 @@ app/dashboard/docs/             ← renderizador Next.js das docs
                                   Breadcrumb + hero (title, description, read time)
                                   processHtml(): TL;DR → callout, screenshots → placeholder visual,
                                   TODOs removidos, blockquotes coloridos (tip/warn/note)
+                                  Light mode fix: usa var(--primary) em 6 pontos que usavam
+                                  var(--accent-fg) — accent-fg = branco no light mode (invisível
+                                  sobre fundo claro); primary = roxo escuro no light, visível
 ```
 
 ### Convenções dos artigos Markdown
