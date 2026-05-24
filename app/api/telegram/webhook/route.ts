@@ -274,6 +274,29 @@ async function executeFlowNode(
       break
     }
 
+    case 'phone': {
+      const text = subVars((node.data.text as string) ?? 'Qual é o seu telefone?', flowVars, firstName, botName)
+      if (text.trim()) {
+        await sendTelegramMessage(plainToken, chatId, text).catch(() => {})
+      }
+      // Pause: save current node so next message is treated as the phone answer
+      await supabase
+        .from('contacts')
+        .update({ flow_id: flowId, flow_node_id: nodeId })
+        .eq('id', contact.id)
+      break
+    }
+
+    case 'checkout': {
+      const btnText = subVars((node.data.text as string) ?? 'Clique para comprar:', flowVars, firstName, botName)
+      const url = (node.data.url as string) ?? ''
+      if (url) {
+        await sendTelegramWithKeyboard(plainToken, chatId, btnText, [[{ text: '🛒 Comprar agora', url }]])
+      }
+      await advance()
+      break
+    }
+
     case 'end':
     case 'handoff':
     default:
@@ -287,15 +310,17 @@ async function executeFlowNode(
 async function loadFlow(flowId: string, supabase: SupabaseAdmin) {
   const { data } = await supabase
     .from('flows')
-    .select('id, nodes, edges')
+    .select('id, nodes, edges, trigger_type, keywords')
     .eq('id', flowId)
     .eq('status', 'published')
     .single()
   if (!data) return null
   return {
-    id: data.id as string,
-    nodes: (data.nodes ?? []) as FlowNode[],
-    edges: (data.edges ?? []) as FlowEdge[],
+    id:          data.id as string,
+    nodes:       (data.nodes ?? []) as FlowNode[],
+    edges:       (data.edges ?? []) as FlowEdge[],
+    triggerType: ((data as Record<string, unknown>).trigger_type as string) ?? 'start',
+    keywords:    ((data as Record<string, unknown>).keywords as string[]) ?? [],
   }
 }
 
@@ -493,6 +518,10 @@ export async function POST(request: NextRequest) {
         const edgeMap   = buildEdgeMap(flow.edges)
         const startNode = findStartNode(flow.nodes, flow.edges)
         if (startNode) {
+          // Increment executions counter atomically (fire-and-forget)
+          supabase.rpc('increment_flow_executions', { p_flow_id: flow.id }).then(({ error }) => {
+            if (error) console.error('[webhook] increment_flow_executions error:', error.message)
+          })
           await executeFlowNode(
             startNode.id, flow.nodes, edgeMap, contactState,
             firstName, bot.name as string,
@@ -571,8 +600,8 @@ export async function POST(request: NextRequest) {
       const edgeMap     = buildEdgeMap(flow.edges)
       const currentNode = flow.nodes.find(n => n.id === contactState.flow_node_id)
 
-      if (currentNode?.type === 'question') {
-        const varName = (currentNode.data.variable as string) || 'resposta'
+      if (currentNode?.type === 'question' || currentNode?.type === 'phone') {
+        const varName = (currentNode.data.variable as string) || (currentNode.type === 'phone' ? 'telefone' : 'resposta')
         const newVars = { ...(contactState.flow_vars ?? {}), [varName]: text }
 
         // Persist captured variable
@@ -585,6 +614,10 @@ export async function POST(request: NextRequest) {
         if (varName === 'nome' && text.trim()) {
           await supabase.from('contacts').update({ first_name: text.trim() }).eq('id', contactState.id)
           contactState.first_name = text.trim()
+        }
+        // If capturing phone, persist to contacts.phone field
+        if (currentNode.type === 'phone' && text.trim()) {
+          await supabase.from('contacts').update({ phone: text.trim() }).eq('id', contactState.id)
         }
 
         contactState.flow_vars    = newVars
@@ -606,6 +639,52 @@ export async function POST(request: NextRequest) {
       // If currentNode is 'buttons', ignore text — wait for callback_query
     }
     return new NextResponse(null, { status: 200 })
+  }
+
+  // ── Keyword trigger: check published flows with trigger_type='keyword' ──────────
+  if (!text.startsWith('/')) {
+    const { data: keywordFlows } = await supabase
+      .from('flows')
+      .select('id, nodes, edges, trigger_type, keywords')
+      .eq('user_id', bot.user_id)
+      .eq('status', 'published')
+      .eq('trigger_type', 'keyword')
+
+    if (keywordFlows && keywordFlows.length > 0) {
+      const lowerText = text.toLowerCase().trim()
+      let matchedFlow: Awaited<ReturnType<typeof loadFlow>> = null
+
+      for (const row of keywordFlows) {
+        const kws = ((row as Record<string, unknown>).keywords as string[]) ?? []
+        const hit = kws.some(k => lowerText === k.toLowerCase().trim() || lowerText.includes(k.toLowerCase().trim()))
+        if (hit) {
+          matchedFlow = {
+            id:          row.id as string,
+            nodes:       (row.nodes ?? []) as FlowNode[],
+            edges:       (row.edges ?? []) as FlowEdge[],
+            triggerType: 'keyword',
+            keywords:    kws,
+          }
+          break
+        }
+      }
+
+      if (matchedFlow && matchedFlow.nodes.length > 0) {
+        const edgeMap   = buildEdgeMap(matchedFlow.edges)
+        const startNode = findStartNode(matchedFlow.nodes, matchedFlow.edges)
+        if (startNode) {
+          supabase.rpc('increment_flow_executions', { p_flow_id: matchedFlow.id }).then(({ error }) => {
+            if (error) console.error('[webhook] increment_flow_executions (keyword) error:', error.message)
+          })
+          await executeFlowNode(
+            startNode.id, matchedFlow.nodes, edgeMap, contactState,
+            firstName, bot.name as string,
+            plainToken, chatId, matchedFlow.id, supabase,
+          )
+          return new NextResponse(null, { status: 200 })
+        }
+      }
+    }
   }
 
   // ── Fallback message (no active flow, not /start) ─────────────────────────────

@@ -8,9 +8,9 @@ import {
   Search, Plus, BookOpen, ChevronLeft, ChevronDown, Check, X, Trash2,
   ArrowUpRight, Zap, Maximize, Minus, Save, Rocket, Eye, GitBranch,
   MessageSquare, HelpCircle, MousePointerClick, Split, Clock,
-  ShoppingBag, Tag, UserRound, Loader2, AlertCircle, Bot,
+  ShoppingBag, Tag, UserRound, Loader2, AlertCircle, AlertTriangle, Bot,
   Flag, Copy, ChevronRight, Undo2, Redo2,
-  Image as LucideImage, Link2, Settings, Hash,
+  Image as LucideImage, Link2, Settings, Hash, ShoppingCart, Phone,
 } from 'lucide-react'
 
 // ─── Public types (imported by page.tsx) ───────────────────────────────────────
@@ -25,6 +25,10 @@ export interface RawFlowRow {
   conversion: number
   description: string
   updated_at: string
+  // stats injected by page.tsx from parallel queries
+  revenue?: number
+  sales?: number
+  leads?: number
 }
 
 export interface RawBotOption {
@@ -32,6 +36,14 @@ export interface RawBotOption {
   name: string
   username: string | null
   color: string | null
+}
+
+export interface FlowStatsMap {
+  [flowId: string]: {
+    revenue: number
+    sales: number
+    leads: number
+  }
 }
 
 // ─── Internal types ────────────────────────────────────────────────────────────
@@ -82,6 +94,9 @@ interface FlowMeta {
   conversion: number
   updatedAt: number
   description: string
+  revenue: number
+  sales: number
+  leads: number
 }
 
 interface FlowEditorData extends FlowMeta {
@@ -104,6 +119,9 @@ function mapRawMeta(r: RawFlowRow): FlowMeta {
     conversion: Number(r.conversion ?? 0),
     updatedAt: r.updated_at ? new Date(r.updated_at).getTime() : Date.now(),
     description: r.description ?? '',
+    revenue: Number(r.revenue ?? 0),
+    sales: Number(r.sales ?? 0),
+    leads: Number(r.leads ?? 0),
   }
 }
 
@@ -116,6 +134,9 @@ function mapRawFull(r: Record<string, unknown>): FlowEditorData {
     status: (r.status as FlowMeta['status']) ?? 'draft',
     executions: Number(r.executions ?? 0),
     conversion: Number(r.conversion ?? 0),
+    revenue: Number(r.revenue ?? 0),
+    sales: Number(r.sales ?? 0),
+    leads: Number(r.leads ?? 0),
     updatedAt: r.updated_at ? new Date(r.updated_at as string).getTime() : Date.now(),
     description: (r.description as string) ?? '',
     nodes: (r.nodes as FlowNodeType[]) ?? [],
@@ -158,6 +179,8 @@ const nodeTypes: Record<string, NodeTypeDef> = {
   handoff:   { label: 'Humano',      Icon: UserRound,         color: 'var(--danger)',          category: 'CRM',        description: 'Encaminha o atendimento para o time humano.',                        defaultData: { team: 'Suporte', message: 'Um humano vai te atender em instantes.' }, outputs: 0 },
   image:     { label: 'Imagem',      Icon: LucideImage,       color: 'oklch(0.55 0.12 280)',   category: 'Mídia',      description: 'Envia uma imagem com legenda opcional.',                             defaultData: { imageUrl: '', caption: '' },                                      outputs: 1 },
   link:      { label: 'Link/Botão',  Icon: Link2,             color: 'oklch(0.52 0.18 250)',   category: 'Mídia',      description: 'Envia um botão inline com URL (Telegram InlineKeyboard).',           defaultData: { text: 'Clique aqui!', url: '' },                                  outputs: 1 },
+  checkout:  { label: 'Checkout',    Icon: ShoppingCart,      color: 'var(--success)',          category: 'Comercial',  description: 'Envia link de pagamento como botão inline. Avança automaticamente.', defaultData: { text: 'Clique para comprar:', url: '' },                          outputs: 1 },
+  phone:     { label: 'Telefone',    Icon: Phone,             color: 'oklch(0.58 0.12 200)',   category: 'Conversa',   description: 'Pede o número de telefone e salva na variável do contato.',          defaultData: { text: 'Qual é o seu telefone? (ex: 11999998888)', variable: 'telefone' }, outputs: 1 },
 }
 
 const flowStatusMap: Record<string, { label: string; tone: string }> = {
@@ -261,8 +284,10 @@ function getNodePreview(node: FlowNodeType): string {
     case 'offer':     return `${node.data.product} · ${fmtBRLdec(node.data.price || 0)}`
     case 'tag':       return `${node.data.action === 'add' ? 'Adicionar' : 'Remover'} tag "${node.data.tag}"`
     case 'handoff':   return `Encaminhar para ${node.data.team}`
-    case 'image':     return node.data.caption || (node.data.imageUrl ? 'Imagem com URL' : 'Imagem (sem URL)')
-    case 'link':      return `${node.data.text || 'Botão'} → ${node.data.url || 'sem URL'}`
+    case 'image':    return node.data.caption || (node.data.imageUrl ? 'Imagem com URL' : 'Imagem (sem URL)')
+    case 'link':     return `${node.data.text || 'Botão'} → ${node.data.url || 'sem URL'}`
+    case 'checkout': return `🛒 ${node.data.url || 'URL do checkout'}`
+    case 'phone':    return (node.data.text as string) || 'Solicitar telefone'
     default: return ''
   }
 }
@@ -493,16 +518,24 @@ function FlowCard({ flow, onOpen, onDelete, onDuplicate }: {
         )}
       </div>
 
-      <div className="grid grid-cols-2 gap-2 mt-4 pt-4 border-t border-border">
+      <div className="grid grid-cols-3 gap-2 mt-4 pt-4 border-t border-border">
         <div>
-          <div className="text-[16px] font-semibold text-text leading-none tracking-tight">{fmtNum(flow.executions)}</div>
-          <div className="text-[10.5px] text-text-muted mt-1">execuções</div>
+          <div className="text-[13.5px] font-semibold text-text leading-none tracking-tight truncate">
+            {(flow.revenue ?? 0) > 0 ? fmtBRLdec(flow.revenue ?? 0) : '—'}
+          </div>
+          <div className="text-[10.5px] text-text-muted mt-1">receita</div>
         </div>
         <div>
-          <div className="text-[16px] font-semibold text-text leading-none tracking-tight">
-            {flow.conversion > 0 ? fmtPct(flow.conversion) : '—'}
+          <div className="text-[13.5px] font-semibold text-text leading-none tracking-tight">
+            {fmtNum(flow.leads ?? 0)}
           </div>
-          <div className="text-[10.5px] text-text-muted mt-1">conversão</div>
+          <div className="text-[10.5px] text-text-muted mt-1">leads</div>
+        </div>
+        <div>
+          <div className="text-[13.5px] font-semibold text-text leading-none tracking-tight">
+            {fmtNum(flow.sales ?? 0)}
+          </div>
+          <div className="text-[10.5px] text-text-muted mt-1">vendas</div>
         </div>
       </div>
 
@@ -528,14 +561,29 @@ function FlowsList({ flows, onOpen, onCreate, onOpenTemplates, onDelete, onDupli
 }) {
   const [search, setSearch]   = useState('')
   const [statusF, setStatusF] = useState('Todos')
+  const [sortBy, setSortBy]   = useState('Mais recente')
 
-  const filtered = useMemo(() => flows.filter(f => {
-    const q = search.trim().toLowerCase()
-    if (q && !f.name.toLowerCase().includes(q) && !f.bot.toLowerCase().includes(q)) return false
-    if (statusF === 'Publicados' && f.status !== 'published') return false
-    if (statusF === 'Rascunhos'  && f.status !== 'draft')     return false
-    return true
-  }), [flows, search, statusF])
+  function sortFlows(arr: FlowMeta[], sort: string): FlowMeta[] {
+    const copy = [...arr]
+    switch (sort) {
+      case 'Mais executado':  return copy.sort((a, b) => (b.executions ?? 0) - (a.executions ?? 0))
+      case 'Maior receita':   return copy.sort((a, b) => (b.revenue ?? 0) - (a.revenue ?? 0))
+      case 'Alfabético':      return copy.sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))
+      default:                return copy.sort((a, b) => b.updatedAt - a.updatedAt)
+    }
+  }
+
+  const filtered = useMemo(() => {
+    const base = flows.filter(f => {
+      const q = search.trim().toLowerCase()
+      if (q && !f.name.toLowerCase().includes(q) && !f.bot.toLowerCase().includes(q)) return false
+      if (statusF === 'Publicados' && f.status !== 'published') return false
+      if (statusF === 'Rascunhos'  && f.status !== 'draft')     return false
+      return true
+    })
+    return sortFlows(base, sortBy)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [flows, search, statusF, sortBy])
 
   const counts = {
     total:     flows.length,
@@ -578,6 +626,7 @@ function FlowsList({ flows, onOpen, onCreate, onOpenTemplates, onDelete, onDupli
               )}
             </div>
             <Dropdown label="Status" value={statusF} options={['Todos', 'Publicados', 'Rascunhos']} onChange={setStatusF} />
+            <Dropdown label="Ordenar" value={sortBy} options={['Mais recente', 'Mais executado', 'Maior receita', 'Alfabético']} onChange={setSortBy} />
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
@@ -932,6 +981,30 @@ function Inspector({ node, onUpdate, onClose, onDelete }: {
             </InspField>
             <InspField label="URL do link">
               <input value={node.data.url ?? ''} onChange={e => setData({ url: e.target.value })} placeholder="https://…" className={inspInput} />
+            </InspField>
+          </>
+        )}
+        {node.type === 'checkout' && (
+          <>
+            <InspField label="Texto do botão">
+              <input value={node.data.text ?? '🛒 Comprar agora'} onChange={e => setData({ text: e.target.value })} className={inspInput} />
+            </InspField>
+            <InspField label="URL do checkout">
+              <input value={node.data.url ?? ''} onChange={e => setData({ url: e.target.value })} placeholder="https://umbrabot.com.br/c/…" className={inspInput} />
+            </InspField>
+          </>
+        )}
+        {node.type === 'phone' && (
+          <>
+            <InspField label="Pergunta">
+              <textarea rows={3} value={node.data.text ?? 'Qual é o seu telefone?'} onChange={e => setData({ text: e.target.value })} className={inspTextarea} />
+            </InspField>
+            <InspField label="Variável de captura">
+              <div className="flex items-center bg-surface-2 border border-border rounded-lg overflow-hidden">
+                <span className="px-2 text-text-subtle text-[12px] font-mono">{'{'}</span>
+                <input value={node.data.variable ?? 'telefone'} onChange={e => setData({ variable: e.target.value.replace(/[^a-z0-9_]/gi, '') })} className="flex-1 h-9 bg-transparent text-text font-mono text-[12px] focus:outline-none" />
+                <span className="px-2 text-text-subtle text-[12px] font-mono">{'}'}</span>
+              </div>
             </InspField>
           </>
         )}
@@ -1558,6 +1631,14 @@ function FlowEditor({ flow, bots, onBack, onSave, onPublish, showToast }: {
   const [settingsOpen, setSettingsOpen]         = useState(false)
   const [canUndo, setCanUndo]                   = useState(false)
   const [canRedo, setCanRedo]                   = useState(false)
+  const [backConfirmOpen, setBackConfirmOpen]   = useState(false)
+
+  // Snapshot inicial para dirty check
+  const initialSnapshotRef = useRef({
+    name:  flow.name,
+    nodes: JSON.stringify(flow.nodes),
+    edges: JSON.stringify(flow.edges),
+  })
 
   const containerRef = useRef<HTMLDivElement | null>(null)
   const autoSaveRef  = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -1790,7 +1871,15 @@ function FlowEditor({ flow, bots, onBack, onSave, onPublish, showToast }: {
     <div className="-mx-4 md:-mx-6 lg:-mx-8 -mt-6 md:-mt-7" style={{ minHeight: 'calc(100vh - 64px)' }}>
       {/* Topbar do editor */}
       <div className="h-[60px] bg-surface border-b border-border flex items-center px-4 md:px-6 gap-3 sticky top-0 z-30">
-        <button onClick={onBack} className="inline-flex items-center gap-1.5 h-9 px-2.5 text-[12.5px] text-text-muted hover:text-text rounded-lg hover:bg-surface-2 shrink-0">
+        <button
+          onClick={() => {
+            const dirty = name !== initialSnapshotRef.current.name
+              || JSON.stringify(nodesRef.current) !== initialSnapshotRef.current.nodes
+              || JSON.stringify(edgesRef.current) !== initialSnapshotRef.current.edges
+            if (dirty) { setBackConfirmOpen(true) } else { onBack() }
+          }}
+          className="inline-flex items-center gap-1.5 h-9 px-2.5 text-[12.5px] text-text-muted hover:text-text rounded-lg hover:bg-surface-2 shrink-0"
+        >
           <ChevronLeft size={14} /> Fluxos
         </button>
         <div className="w-px h-6 bg-border shrink-0" />
@@ -2044,19 +2133,58 @@ function FlowEditor({ flow, bots, onBack, onSave, onPublish, showToast }: {
           )}
         </div>
       </Modal>
+
+      {/* Modal — sair com mudanças não salvas */}
+      {backConfirmOpen && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.55)' }}>
+          <div className="bg-surface border border-border rounded-2xl shadow-2xl w-full max-w-sm p-6">
+            <div className="flex items-start gap-3 mb-4">
+              <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0" style={{ background: 'var(--warning-soft)' }}>
+                <AlertTriangle size={16} style={{ color: 'var(--warning)' }} />
+              </div>
+              <div>
+                <h3 className="text-[15px] font-semibold text-text leading-snug">Sair sem salvar?</h3>
+                <p className="text-[12.5px] text-text-muted mt-1 leading-relaxed">Você tem alterações não salvas. Se sair agora, elas serão descartadas.</p>
+              </div>
+            </div>
+            <div className="flex gap-2 justify-end mt-2">
+              <button
+                onClick={() => setBackConfirmOpen(false)}
+                className="h-9 px-4 rounded-lg text-[13px] font-medium text-text-muted hover:text-text hover:bg-surface-2 transition-colors"
+              >
+                Continuar editando
+              </button>
+              <button
+                onClick={onBack}
+                className="h-9 px-4 rounded-lg text-[13px] font-medium text-danger hover:bg-danger/10 transition-colors"
+              >
+                Sair sem salvar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
 // ─── FlowsClient (componente principal) ────────────────────────────────────────
 
-export default function FlowsClient({ initialFlows, bots, userId }: {
+export default function FlowsClient({ initialFlows, bots, userId, statsMap }: {
   initialFlows: RawFlowRow[]
   bots: RawBotOption[]
   userId: string
+  statsMap: FlowStatsMap
 }) {
   const { track } = useAnalytics()
-  const [flows, setFlows]             = useState<FlowMeta[]>(initialFlows.map(mapRawMeta))
+  const [flows, setFlows]             = useState<FlowMeta[]>(
+    initialFlows.map(r => mapRawMeta({
+      ...r,
+      revenue: statsMap[r.id]?.revenue ?? 0,
+      sales:   statsMap[r.id]?.sales   ?? 0,
+      leads:   statsMap[r.id]?.leads   ?? 0,
+    }))
+  )
   const [editingId, setEditingId]     = useState<string | null>(null)
   const [editorData, setEditorData]   = useState<FlowEditorData | null>(null)
   const [editorLoading, setEditorLoading] = useState(false)
@@ -2153,6 +2281,9 @@ export default function FlowsClient({ initialFlows, bots, userId }: {
       status: 'draft',
       executions: 0,
       conversion: 0,
+      revenue: 0,
+      sales: 0,
+      leads: 0,
       updatedAt: Date.now(),
       description: '',
     }
@@ -2213,6 +2344,9 @@ export default function FlowsClient({ initialFlows, bots, userId }: {
       status: 'draft',
       executions: 0,
       conversion: 0,
+      revenue: 0,
+      sales: 0,
+      leads: 0,
       updatedAt: Date.now(),
       description: src.description ?? '',
     }
@@ -2257,8 +2391,15 @@ export default function FlowsClient({ initialFlows, bots, userId }: {
     const ok = await saveFlow(toPublish)
     if (!ok) return false
 
-    // Registra activity_event (fire-and-forget)
     const supabase = createClient()
+
+    // Vincula fluxo como ativo no bot selecionado (fire-and-forget)
+    const botEntry = bots.find(b => (b.username ? `@${b.username}` : b.name) === updated.bot)
+    if (botEntry) {
+      supabase.from('bots').update({ active_flow_id: updated.id }).eq('id', botEntry.id).eq('user_id', userId).then()
+    }
+
+    // Registra activity_event (fire-and-forget)
     supabase.from('activity_events').insert({
       user_id:     userId,
       type:        'flowPublished',
