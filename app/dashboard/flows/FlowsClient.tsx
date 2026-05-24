@@ -11,7 +11,7 @@ import {
   ShoppingBag, Tag, UserRound, Loader2, AlertCircle, AlertTriangle, Bot,
   Flag, Copy, ChevronRight, Undo2, Redo2,
   Image as LucideImage, Link2, Settings, Hash, ShoppingCart, Phone,
-  TrendingUp, TrendingDown, PackagePlus, Megaphone,
+  TrendingUp, TrendingDown, PackagePlus, Megaphone, Upload, Video,
 } from 'lucide-react'
 
 // ─── Public types (imported by page.tsx) ───────────────────────────────────────
@@ -66,6 +66,7 @@ interface NodeData {
   team?: string
   message?: string
   imageUrl?: string
+  videoUrl?: string
   caption?: string
   url?: string
   description?: string
@@ -185,6 +186,7 @@ const nodeTypes: Record<string, NodeTypeDef> = {
   tag:       { label: 'Aplicar tag', Icon: Tag,               color: 'oklch(0.60 0.13 200)',   category: 'CRM',        description: 'Adiciona ou remove uma tag do contato.',                             defaultData: { action: 'add', tag: 'VIP' },                                      outputs: 1 },
   handoff:   { label: 'Humano',      Icon: UserRound,         color: 'var(--danger)',          category: 'CRM',        description: 'Encaminha o atendimento para o time humano.',                        defaultData: { team: 'Suporte', message: 'Um humano vai te atender em instantes.' }, outputs: 0 },
   image:     { label: 'Imagem',      Icon: LucideImage,       color: 'oklch(0.55 0.12 280)',   category: 'Mídia',      description: 'Envia uma imagem com legenda opcional.',                             defaultData: { imageUrl: '', caption: '' },                                      outputs: 1 },
+  video:     { label: 'Vídeo',       Icon: Video,             color: 'oklch(0.52 0.18 20)',    category: 'Mídia',      description: 'Envia um vídeo (MP4) com legenda opcional.',                         defaultData: { videoUrl: '', caption: '' },                                      outputs: 1 },
   link:      { label: 'Link/Botão',  Icon: Link2,             color: 'oklch(0.52 0.18 250)',   category: 'Mídia',      description: 'Envia um botão inline com URL (Telegram InlineKeyboard).',           defaultData: { text: 'Clique aqui!', url: '' },                                  outputs: 1 },
   checkout:  { label: 'Checkout',    Icon: ShoppingCart,      color: 'var(--success)',          category: 'Comercial',  description: 'Envia link de pagamento como botão inline. Avança automaticamente.', defaultData: { text: 'Clique para comprar:', url: '' },                          outputs: 1 },
   phone:     { label: 'Telefone',    Icon: Phone,             color: 'oklch(0.58 0.12 200)',   category: 'Conversa',   description: 'Pede o número de telefone e salva na variável do contato.',          defaultData: { text: 'Qual é o seu telefone? (ex: 11999998888)', variable: 'telefone' }, outputs: 1 },
@@ -296,6 +298,7 @@ function getNodePreview(node: FlowNodeType): string {
     case 'tag':       return `${node.data.action === 'add' ? 'Adicionar' : 'Remover'} tag "${node.data.tag}"`
     case 'handoff':   return `Encaminhar para ${node.data.team}`
     case 'image':    return node.data.caption || (node.data.imageUrl ? 'Imagem com URL' : 'Imagem (sem URL)')
+    case 'video':    return node.data.caption || (node.data.videoUrl ? 'Vídeo com URL' : 'Vídeo (sem URL)')
     case 'link':     return `${node.data.text || 'Botão'} → ${node.data.url || 'sem URL'}`
     case 'checkout':    return `🛒 ${node.data.url || 'URL do checkout'}`
     case 'phone':       return (node.data.text as string) || 'Solicitar telefone'
@@ -857,8 +860,76 @@ function InspField({ label, children }: { label: string; children: React.ReactNo
   )
 }
 
-function Inspector({ node, onUpdate, onClose, onDelete }: {
-  node: FlowNodeType | undefined; onUpdate: (n: FlowNodeType) => void; onClose: () => void; onDelete: (id: string) => void
+// ─── ImageUploadField ──────────────────────────────────────────────────────────
+
+function ImageUploadField({ value, onChange, userId }: {
+  value: string | undefined
+  onChange: (url: string) => void
+  userId?: string
+}) {
+  const [uploading, setUploading] = useState(false)
+  const [uploadError, setUploadError] = useState<string | null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
+  const supabase = createClient()
+
+  async function handleFile(file: File) {
+    if (!file.type.startsWith('image/')) { setUploadError('Apenas imagens são permitidas.'); return }
+    if (file.size > 2 * 1024 * 1024) { setUploadError('Imagem muito grande (máx. 2 MB).'); return }
+    setUploadError(null)
+    setUploading(true)
+    try {
+      const ext = file.name.split('.').pop()?.toLowerCase() ?? 'jpg'
+      const uid = userId ?? 'anon'
+      const path = `flow/${uid}/${crypto.randomUUID()}.${ext}`
+      const { error } = await supabase.storage.from('checkout-images').upload(path, file, { upsert: false })
+      if (error) throw error
+      const { data: { publicUrl } } = supabase.storage.from('checkout-images').getPublicUrl(path)
+      onChange(publicUrl)
+    } catch {
+      setUploadError('Erro ao enviar. Cole a URL direta abaixo.')
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  return (
+    <div className="space-y-2">
+      {value ? (
+        <div className="relative group rounded-lg overflow-hidden border border-border bg-surface-2" style={{ height: 110 }}>
+          <img src={value} alt="" className="w-full h-full object-cover" onError={e => (e.currentTarget.style.display = 'none')} />
+          <button
+            type="button"
+            onClick={() => { onChange(''); if (fileRef.current) fileRef.current.value = '' }}
+            className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-black/60 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+          ><X size={10} /></button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => fileRef.current?.click()}
+          disabled={uploading}
+          className="w-full h-20 flex flex-col items-center justify-center gap-1.5 border-2 border-dashed border-border rounded-lg text-text-muted hover:border-primary/60 hover:text-primary transition-colors disabled:opacity-60"
+        >
+          {uploading
+            ? <><Loader2 size={18} className="animate-spin" /><span className="text-[11px]">Enviando…</span></>
+            : <><Upload size={18} /><span className="text-[11px]">Clique para enviar imagem</span><span className="text-[10px] text-text-subtle">JPG, PNG, WebP · máx. 2 MB</span></>
+          }
+        </button>
+      )}
+      <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f) }} />
+      <input
+        value={value ?? ''}
+        onChange={e => { setUploadError(null); onChange(e.target.value) }}
+        placeholder="ou cole a URL da imagem…"
+        className={inspInput}
+      />
+      {uploadError && <p className="text-[11px] text-danger leading-tight">{uploadError}</p>}
+    </div>
+  )
+}
+
+function Inspector({ node, onUpdate, onClose, onDelete, userId }: {
+  node: FlowNodeType | undefined; onUpdate: (n: FlowNodeType) => void; onClose: () => void; onDelete: (id: string) => void; userId?: string
 }) {
   if (!node) return null
   const t = nodeTypes[node.type]
@@ -981,11 +1052,22 @@ function Inspector({ node, onUpdate, onClose, onDelete }: {
         )}
         {node.type === 'image' && (
           <>
-            <InspField label="URL da imagem">
-              <input value={node.data.imageUrl ?? ''} onChange={e => setData({ imageUrl: e.target.value })} placeholder="https://exemplo.com/foto.jpg" className={inspInput} />
+            <InspField label="Imagem">
+              <ImageUploadField value={node.data.imageUrl} onChange={url => setData({ imageUrl: url })} userId={userId} />
             </InspField>
             <InspField label="Legenda (opcional)">
               <textarea rows={2} value={node.data.caption ?? ''} onChange={e => setData({ caption: e.target.value })} placeholder="Descrição da imagem…" className={inspTextarea} />
+            </InspField>
+          </>
+        )}
+        {node.type === 'video' && (
+          <>
+            <InspField label="URL do vídeo">
+              <input value={node.data.videoUrl ?? ''} onChange={e => setData({ videoUrl: e.target.value })} placeholder="https://…/video.mp4" className={inspInput} />
+              <p className="text-[11px] text-text-muted mt-1 leading-tight">Use um link direto para arquivo MP4. O Telegram aceita vídeos de até 50 MB.</p>
+            </InspField>
+            <InspField label="Legenda (opcional)">
+              <textarea rows={2} value={node.data.caption ?? ''} onChange={e => setData({ caption: e.target.value })} placeholder="Descrição do vídeo…" className={inspTextarea} />
             </InspField>
           </>
         )}
@@ -1691,13 +1773,14 @@ function EdgePanel({ edge, nodes, reconnecting, onStartReconnect, onCancelReconn
 
 // ─── FlowEditor ────────────────────────────────────────────────────────────────
 
-function FlowEditor({ flow, bots, onBack, onSave, onPublish, showToast }: {
+function FlowEditor({ flow, bots, onBack, onSave, onPublish, showToast, userId }: {
   flow: FlowEditorData
   bots: RawBotOption[]
   onBack: () => void
   onSave: (f: FlowEditorData) => Promise<boolean>
   onPublish: (f: FlowEditorData) => Promise<boolean>
   showToast: (msg: string, type: 'success' | 'error') => void
+  userId?: string
 }) {
   const [name, setName]                         = useState(flow.name)
   const [nameError, setNameError]               = useState(false)
@@ -2068,6 +2151,7 @@ function FlowEditor({ flow, bots, onBack, onSave, onPublish, showToast }: {
               setNodes(nextNodes); setEdges(nextEdges); setSelectedNodeIds(new Set())
               pushHistory(nextNodes, nextEdges)
             }}
+            userId={userId}
           />
         )}
 
@@ -2547,6 +2631,7 @@ export default function FlowsClient({ initialFlows, bots, userId, statsMap }: {
           onSave={saveFlow}
           onPublish={publishFlow}
           showToast={showToast}
+          userId={userId}
         />
       </>
     )

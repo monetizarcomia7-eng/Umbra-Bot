@@ -23,6 +23,15 @@ async function sendTelegramPhoto(token: string, chatId: number, photo: string, c
   }).catch(() => {})
 }
 
+async function sendTelegramVideo(token: string, chatId: number, video: string, caption?: string) {
+  await tgApi(token, 'sendVideo', {
+    chat_id: chatId,
+    video,
+    caption: caption ?? '',
+    parse_mode: 'HTML',
+  }).catch(() => {})
+}
+
 async function sendTelegramWithKeyboard(
   token: string,
   chatId: number,
@@ -239,6 +248,16 @@ async function executeFlowNode(
       const caption = subVars((node.data.caption as string) ?? '', flowVars, firstName, botName)
       if (url) {
         await sendTelegramPhoto(plainToken, chatId, url, caption)
+      }
+      await advance()
+      break
+    }
+
+    case 'video': {
+      const url     = (node.data.videoUrl as string) ?? ''
+      const caption = subVars((node.data.caption as string) ?? '', flowVars, firstName, botName)
+      if (url) {
+        await sendTelegramVideo(plainToken, chatId, url, caption)
       }
       await advance()
       break
