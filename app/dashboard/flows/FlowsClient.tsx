@@ -1332,7 +1332,7 @@ function Canvas({ nodes, edges, vp, setVp, selectedIds, selectedEdgeId, onSelect
       if (dragging) {
         const dx = (e.clientX - dragging.startX) / vp.zoom
         const dy = (e.clientY - dragging.startY) / vp.zoom
-        const movedEnough = Math.abs(e.clientX - dragging.startX) > 3 || Math.abs(e.clientY - dragging.startY) > 3
+        const movedEnough = Math.abs(e.clientX - dragging.startX) > 6 || Math.abs(e.clientY - dragging.startY) > 6
         if (movedEnough) {
           movedRef.current = true
           const updates = dragging.nodeIds
