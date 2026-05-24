@@ -164,7 +164,7 @@ function fmtDate(d: number) { return new Date(d).toLocaleDateString('pt-BR', { d
 // ─── Node definitions ──────────────────────────────────────────────────────────
 
 const NODE_W = 220
-const NODE_H = 96
+const NODE_H = 128
 
 interface NodeTypeDef {
   label: string
