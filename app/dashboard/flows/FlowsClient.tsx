@@ -942,7 +942,7 @@ function Inspector({ node, onUpdate, onClose, onDelete, userId }: {
   }
 
   return (
-    <aside className="absolute top-3 right-3 z-20 w-[300px] max-h-[calc(100%-24px)] overflow-y-auto bg-surface border border-border rounded-xl" style={{ boxShadow: 'var(--shadow-lg)' }}>
+    <aside className="absolute top-3 right-3 z-20 w-[300px] max-h-[calc(100%-24px)] overflow-y-auto bg-surface border border-border rounded-xl" style={{ boxShadow: 'var(--shadow-lg)' }} onMouseDown={e => e.stopPropagation()} onClick={e => e.stopPropagation()}>
       <header className="flex items-center gap-2 px-4 py-3 border-b border-border">
         <div className="w-7 h-7 rounded-md flex items-center justify-center text-white shrink-0" style={{ background: t.color }}><NodeIcon size={14} /></div>
         <div className="min-w-0 flex-1">
@@ -1890,11 +1890,10 @@ function FlowEditor({ flow, bots, onBack, onSave, onPublish, showToast, userId }
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       const ctrl = e.ctrlKey || e.metaKey
-      // Undo/Redo — antes do guard de input
+      if ((e.target as HTMLElement).matches('input, textarea, select')) return
+
       if (ctrl && e.key === 'z' && !e.shiftKey) { e.preventDefault(); undoAction(); return }
       if (ctrl && (e.key === 'y' || (e.shiftKey && e.key === 'Z'))) { e.preventDefault(); redoAction(); return }
-
-      if ((e.target as HTMLElement).matches('input, textarea, select')) return
 
       if (e.key === 'Delete' || e.key === 'Backspace') {
         const ids = [...selectedNodeIdsRef.current]
@@ -2017,7 +2016,11 @@ function FlowEditor({ flow, bots, onBack, onSave, onPublish, showToast, userId }
     setSaving(true)
     const ok = await onSave({ ...flow, name, description, bot, botColor, nodes, edges, triggerType, keywords })
     setSaving(false)
-    if (ok) { setSavedAt(Date.now()); showToast('Rascunho salvo.', 'success') }
+    if (ok) {
+      setSavedAt(Date.now())
+      showToast('Rascunho salvo.', 'success')
+      initialSnapshotRef.current = { name, nodes: JSON.stringify(nodesRef.current), edges: JSON.stringify(edgesRef.current) }
+    }
   }
 
   async function handlePublish() {
@@ -2031,7 +2034,10 @@ function FlowEditor({ flow, bots, onBack, onSave, onPublish, showToast, userId }
     setPublishing(true)
     const ok = await onPublish({ ...flow, name, description, bot, botColor, nodes, edges, triggerType, keywords, status: 'published' })
     setPublishing(false)
-    if (ok) setSavedAt(Date.now())
+    if (ok) {
+      setSavedAt(Date.now())
+      initialSnapshotRef.current = { name, nodes: JSON.stringify(nodesRef.current), edges: JSON.stringify(edgesRef.current) }
+    }
   }
 
   // Nó único selecionado (para o inspector)
