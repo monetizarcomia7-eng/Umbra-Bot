@@ -696,10 +696,11 @@ function NodeHandle({ variant, x, y, label, active, highlighted, onClick }: {
 
 // ─── FlowNodeComp ──────────────────────────────────────────────────────────────
 
-function FlowNodeComp({ node, selected, isStart, onMouseDown, onClick, onHandleClick, connecting }: {
+function FlowNodeComp({ node, selected, isStart, onMouseDown, onClick, onEdit, onHandleClick, connecting }: {
   node: FlowNodeType; selected: boolean; isStart: boolean
   onMouseDown: (e: React.MouseEvent, id: string) => void
   onClick: (id: string, shift: boolean) => void
+  onEdit: (id: string) => void
   onHandleClick: (nodeId: string, type: 'input' | 'output', idx?: number) => void
   connecting: { nodeId: string; handle: number } | null
 }) {
@@ -745,7 +746,7 @@ function FlowNodeComp({ node, selected, isStart, onMouseDown, onClick, onHandleC
       <div className="px-2 pb-2">
         <button
           onMouseDown={e => e.stopPropagation()}
-          onClick={e => { e.stopPropagation(); onClick(node.id, false) }}
+          onClick={e => { e.stopPropagation(); onEdit(node.id) }}
           className="w-full h-6 rounded-md text-[10.5px] font-semibold flex items-center justify-center gap-1 transition-colors"
           style={{ background: selected ? 'color-mix(in oklab, var(--primary) 15%, transparent)' : 'color-mix(in oklab, var(--border) 60%, transparent)', color: selected ? 'var(--primary)' : 'var(--text-muted)' }}
         >
@@ -1439,6 +1440,7 @@ function Canvas({ nodes, edges, vp, setVp, selectedIds, selectedEdgeId, onSelect
             <FlowNodeComp key={n.id} node={n} selected={selectedIds.has(n.id)} isStart={startNodeIds.has(n.id)}
               onMouseDown={onNodeMouseDown}
               onClick={(id, shift) => { if (!movedRef.current) { onSelectNode(id, shift); onSelectEdge(null) } }}
+              onEdit={(id) => { onSelectNode(id, false); onSelectEdge(null) }}
               onHandleClick={handleClick} connecting={connecting} />
           ))}
         </div>
