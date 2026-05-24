@@ -13,8 +13,7 @@ export default async function BotsPage() {
       .from('bots')
       .select(
         'id, name, username, status, leads, sales, conversion, revenue, ' +
-        'active_flow_id, color, telegram_id, webhook_url, last_sync, added_at, ' +
-        'description, welcome_message, fallback_message',
+        'active_flow_id, color, telegram_id, webhook_url, last_sync, added_at, description',
       )
       .eq('user_id', user.id)
       .order('added_at', { ascending: false }),
@@ -25,6 +24,13 @@ export default async function BotsPage() {
       .eq('user_id', user.id)
       .order('created_at', { ascending: false }),
   ])
+
+  if (botsRes.error) {
+    console.error('[BotsPage] Erro ao carregar bots:', botsRes.error.message)
+  }
+  if (flowsRes.error) {
+    console.error('[BotsPage] Erro ao carregar fluxos:', flowsRes.error.message)
+  }
 
   return (
     <BotsClient

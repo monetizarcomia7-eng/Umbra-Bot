@@ -6,6 +6,13 @@ import { captureEvent } from '@/lib/analytics-server'
 import { rateLimit } from '@/lib/rate-limit'
 import { revalidatePath } from 'next/cache'
 
+// Paleta de cores para novos bots — hex fixo para persistir corretamente no banco
+const BOT_COLORS = [
+  '#7C5CFF', '#10b981', '#f59e0b', '#ef4444',
+  '#3b82f6', '#8b5cf6', '#ec4899', '#06b6d4',
+  '#84cc16', '#f97316',
+]
+
 // ─── validateBotTokenAction ────────────────────────────────────────────────────
 // Chama getMe da API do Telegram para validar o token e retornar dados reais do bot.
 export async function validateBotTokenAction(token: string): Promise<{
@@ -76,7 +83,7 @@ export async function saveBotAction(params: {
     status:           'offline',
     welcome_message:  'Olá {nome}! Bem-vindo. Em que posso te ajudar?',
     fallback_message: 'Não entendi sua mensagem. Digite /menu para ver as opções.',
-    color:            'var(--primary)',
+    color:            BOT_COLORS[Math.floor(Math.random() * BOT_COLORS.length)],
     webhook_url:      '',
   }).select('id').single()
 
@@ -134,7 +141,7 @@ export async function registerWebhookAction(botId: string): Promise<{ webhookUrl
     status:      'online',
     webhook_url: webhookUrl,
     last_sync:   new Date().toISOString(),
-  }).eq('id', bot.id)
+  }).eq('id', bot.id).eq('user_id', user.id)
 
   // Detecta primeiro bot para PostHog
   const { count } = await supabase
@@ -174,7 +181,6 @@ export async function updateBotAction(
   patch: Partial<{
     name:             string
     description:      string
-    status:           'online' | 'offline' | 'banned' | 'paused'
     welcome_message:  string
     fallback_message: string
     active_flow_id:   string | null
@@ -366,6 +372,15 @@ export async function setBotPhotoAction(botId: string, photo: File): Promise<{ o
     if (photo.size > 10 * 1024 * 1024)
       return { ok: false, error: 'Imagem muito grande. Máximo 10MB.' }
 
+    // Valida magic bytes — MIME type do cliente pode ser forjado
+    const headerBuf = await photo.slice(0, 4).arrayBuffer()
+    const header = new Uint8Array(headerBuf)
+    const isJpeg = header[0] === 0xFF && header[1] === 0xD8 && header[2] === 0xFF
+    const isPng  = header[0] === 0x89 && header[1] === 0x50 && header[2] === 0x4E && header[3] === 0x47
+    const isGif  = header[0] === 0x47 && header[1] === 0x49 && header[2] === 0x46 && header[3] === 0x38
+    if (!isJpeg && !isPng && !isGif)
+      return { ok: false, error: 'Arquivo inválido. O conteúdo não é uma imagem reconhecida.' }
+
     const apiId   = parseInt(process.env.TELEGRAM_API_ID   ?? '0')
     const apiHash =           process.env.TELEGRAM_API_HASH ?? ''
     if (!apiId || !apiHash)
@@ -408,4 +423,42 @@ export async function setBotPhotoAction(botId: string, photo: File): Promise<{ o
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Erro ao enviar foto.' }
   }
+}
+
+// ─── getBotMessagesAction ──────────────────────────────────────────────────────
+// Carrega welcome_message e fallback_message de forma lazy (não vêm no SSR select).
+export async function getBotMessagesAction(botId: string): Promise<{ welcomeMessage: string; fallbackMessage: string }> {
+  const supabase = await createClient()
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
+  if (authError || !user) throw new Error('Não autorizado.')
+
+  const { data, error } = await supabase
+    .from('bots')
+    .select('welcome_message, fallback_message')
+    .eq('id', botId)
+    .eq('user_id', user.id)
+    .single()
+
+  if (error) throw new Error(error.message)
+  return {
+    welcomeMessage:  data?.welcome_message  ?? '',
+    fallbackMessage: data?.fallback_message ?? '',
+  }
+}
+
+// ─── setBotStatusAction ────────────────────────────────────────────────────────
+// Pausa ou retoma o bot (status 'paused' | 'online'), separado do updateBotAction.
+export async function setBotStatusAction(botId: string, status: 'paused' | 'online'): Promise<void> {
+  const supabase = await createClient()
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
+  if (authError || !user) throw new Error('Não autorizado.')
+
+  const { error } = await supabase
+    .from('bots')
+    .update({ status })
+    .eq('id', botId)
+    .eq('user_id', user.id)
+
+  if (error) throw new Error(error.message)
+  revalidatePath('/dashboard/bots')
 }

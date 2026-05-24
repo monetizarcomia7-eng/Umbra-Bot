@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect, useMemo, useRef } from 'react'
+import React, { useState, useEffect, useMemo, useRef, useDeferredValue } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Bot, Search, X, ArrowUpRight, Plus, BookOpen,
@@ -23,6 +23,8 @@ import {
   getBotTelegramProfileAction,
   saveBotTelegramProfileAction,
   setBotPhotoAction,
+  getBotMessagesAction,
+  setBotStatusAction,
 } from '@/app/actions/bots'
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
@@ -43,8 +45,8 @@ export interface RawBotRow {
   last_sync: string | null
   added_at: string | null
   description: string | null
-  welcome_message: string | null
-  fallback_message: string | null
+  welcome_message?: string | null
+  fallback_message?: string | null
 }
 
 interface BotData {
@@ -121,6 +123,12 @@ const DEFAULT_COMMANDS = [
   { command: 'start',   description: 'Iniciar o bot 🚀' },
   { command: 'suporte', description: 'Falar com suporte 💬' },
   { command: 'status',  description: 'Ver status do pedido 📊' },
+]
+
+const BOT_COLORS = [
+  '#7C5CFF', '#10b981', '#f59e0b', '#ef4444',
+  '#3b82f6', '#8b5cf6', '#ec4899', '#06b6d4',
+  '#84cc16', '#f97316',
 ]
 
 // ─── UI Primitives ─────────────────────────────────────────────────────────────
@@ -265,7 +273,7 @@ function ReadOnlyRow({ label, value, mono }: { label: string; value: string; mon
 }
 
 function BotAvatar({ bot, size = 48 }: { bot: BotData; size?: number }) {
-  const st = STATUS_CONFIG[bot.status]
+  const st = STATUS_CONFIG[bot.status] ?? STATUS_CONFIG.offline
   const dotSize = Math.round(size * 0.28)
   return (
     <div className="relative shrink-0" style={{ width: size, height: size }}>
@@ -480,10 +488,19 @@ function BotsList({ bots, flows, onOpen, onOpenTab, onAddClick }: {
   const router = useRouter()
   const [search, setSearch]   = useState('')
   const [statusF, setStatusF] = useState('Todos os status')
-  const [sortBy, setSortBy]   = useState<SortOption>('Maior receita')
+  const [sortBy, setSortBy]   = useState<SortOption>(() => {
+    if (typeof window === 'undefined') return 'Maior receita'
+    return (localStorage.getItem('umbra_bots_sort') as SortOption | null) ?? 'Maior receita'
+  })
+
+  const deferredSearch = useDeferredValue(search)
+
+  useEffect(() => {
+    localStorage.setItem('umbra_bots_sort', sortBy)
+  }, [sortBy])
 
   const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase()
+    const q = deferredSearch.trim().toLowerCase()
     return bots.filter(b => {
       if (q && !(b.name.toLowerCase().includes(q) || b.username.toLowerCase().includes(q))) return false
       if (statusF === 'Online'   && b.status !== 'online')  return false
@@ -492,7 +509,7 @@ function BotsList({ bots, flows, onOpen, onOpenTab, onAddClick }: {
       if (statusF === 'Pausados' && b.status !== 'paused')  return false
       return true
     })
-  }, [bots, search, statusF])
+  }, [bots, deferredSearch, statusF])
 
   const sorted = useMemo(() => sortBots(filtered, sortBy), [filtered, sortBy])
 
@@ -648,7 +665,7 @@ function AddBotModal({ open, onClose, flows, onAdded }: {
         status,
         leads: 0, sales: 0, conversion: 0, revenue: 0,
         activeFlowId:   flowId,
-        color:          'var(--primary)',
+        color:          BOT_COLORS[Math.floor(Math.random() * BOT_COLORS.length)],
         telegramId:     foundBot.telegramId,
         webhookUrl,
         welcomeMessage: 'Olá {nome}! Bem-vindo. Em que posso te ajudar?',
@@ -1239,10 +1256,23 @@ function GeneralTab({ bot, onUpdate, onStateUpdate, onDelete }: {
 // ─── MessagesTab ───────────────────────────────────────────────────────────────
 
 function MessagesTab({ bot, onUpdate }: { bot: BotData; onUpdate: (p: Partial<BotData>) => Promise<void> }) {
-  const [welcome,  setWelcome]  = useState(bot.welcomeMessage)
-  const [fallback, setFallback] = useState(bot.fallbackMessage)
-  const [saving, setSaving]     = useState(false)
-  const dirty = welcome !== bot.welcomeMessage || fallback !== bot.fallbackMessage
+  const [welcome,  setWelcome]  = useState('')
+  const [fallback, setFallback] = useState('')
+  const [loaded,   setLoaded]   = useState(false)
+  const [saving,   setSaving]   = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    getBotMessagesAction(bot.id).then(({ welcomeMessage, fallbackMessage }) => {
+      if (cancelled) return
+      setWelcome(welcomeMessage)
+      setFallback(fallbackMessage)
+      setLoaded(true)
+    }).catch(() => { if (!cancelled) setLoaded(true) })
+    return () => { cancelled = true }
+  }, [bot.id])
+
+  const dirty = loaded && (welcome !== (bot.welcomeMessage ?? '') || fallback !== (bot.fallbackMessage ?? ''))
 
   async function save() {
     setSaving(true)
@@ -1253,19 +1283,28 @@ function MessagesTab({ bot, onUpdate }: { bot: BotData; onUpdate: (p: Partial<Bo
   return (
     <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-4 items-start">
       <div className="space-y-4">
-        <Card title="Mensagem de boas-vindas" subtitle="Enviada automaticamente quando um usuário inicia conversa pela primeira vez.">
-          <TextareaWithVars value={welcome} onChange={setWelcome} rows={5} placeholder="Olá {nome}! Bem-vindo…" />
-        </Card>
-        <Card title="Mensagem fallback" subtitle="Resposta automática quando o bot não entende a mensagem do usuário.">
-          <TextareaWithVars value={fallback} onChange={setFallback} rows={4} placeholder="Não entendi sua mensagem…" />
-        </Card>
-        {dirty && (
-          <div className="flex justify-end gap-2">
-            <Btn variant="ghost" onClick={() => { setWelcome(bot.welcomeMessage); setFallback(bot.fallbackMessage) }}>Descartar</Btn>
-            <Btn variant="primary" onClick={save} disabled={saving}>
-              {saving ? <><Loader2 size={13} className="animate-spin" /> Salvando…</> : <><Save size={13} /> Salvar alterações</>}
-            </Btn>
+        {!loaded ? (
+          <div className="flex items-center justify-center py-12 text-text-muted gap-2">
+            <Loader2 size={16} className="animate-spin" />
+            <span className="text-sm">Carregando mensagens…</span>
           </div>
+        ) : (
+          <>
+            <Card title="Mensagem de boas-vindas" subtitle="Enviada automaticamente quando um usuário inicia conversa pela primeira vez.">
+              <TextareaWithVars value={welcome} onChange={setWelcome} rows={5} placeholder="Olá {nome}! Bem-vindo…" />
+            </Card>
+            <Card title="Mensagem fallback" subtitle="Resposta automática quando o bot não entende a mensagem do usuário.">
+              <TextareaWithVars value={fallback} onChange={setFallback} rows={4} placeholder="Não entendi sua mensagem…" />
+            </Card>
+            {dirty && (
+              <div className="flex justify-end gap-2">
+                <Btn variant="ghost" onClick={() => { setWelcome(bot.welcomeMessage ?? ''); setFallback(bot.fallbackMessage ?? '') }}>Descartar</Btn>
+                <Btn variant="primary" onClick={save} disabled={saving}>
+                  {saving ? <><Loader2 size={13} className="animate-spin" /> Salvando…</> : <><Save size={13} /> Salvar alterações</>}
+                </Btn>
+              </div>
+            )}
+          </>
         )}
       </div>
 
@@ -1470,10 +1509,14 @@ export default function BotsClient({ initialBots, flows, userId }: {
     const snapshot = bots.slice()
     setBotState(selectedId, patch) // optimistic
     try {
+      // Status (pause/resume) usa Server Action dedicada — não vai em updateBotAction
+      if (patch.status === 'paused' || patch.status === 'online') {
+        await setBotStatusAction(selectedId, patch.status)
+      }
+
       const dbPatch: Parameters<typeof updateBotAction>[1] = {}
       if (patch.name             !== undefined) dbPatch.name             = patch.name
       if (patch.description      !== undefined) dbPatch.description      = patch.description
-      if (patch.status           !== undefined) dbPatch.status           = patch.status as typeof dbPatch.status
       if (patch.welcomeMessage   !== undefined) dbPatch.welcome_message  = patch.welcomeMessage
       if (patch.fallbackMessage  !== undefined) dbPatch.fallback_message = patch.fallbackMessage
       if (patch.activeFlowId     !== undefined) dbPatch.active_flow_id   = patch.activeFlowId
