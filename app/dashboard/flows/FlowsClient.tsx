@@ -743,11 +743,10 @@ function FlowNodeComp({ node, selected, isStart, onMouseDown, onClick, onEdit, o
       </div>
 
       {/* Botão Editar */}
-      <div className="px-2 pb-2">
+      <div className="px-2 pb-2" style={{ position: 'relative', zIndex: 20 }}>
         <button
-          onMouseDown={e => e.stopPropagation()}
-          onClick={e => { e.stopPropagation(); onEdit(node.id) }}
-          className="w-full h-6 rounded-md text-[10.5px] font-semibold flex items-center justify-center gap-1 transition-colors"
+          onPointerDown={e => { e.stopPropagation(); e.preventDefault(); onEdit(node.id) }}
+          className="w-full h-6 rounded-md text-[10.5px] font-semibold flex items-center justify-center gap-1 transition-colors cursor-pointer"
           style={{ background: selected ? 'color-mix(in oklab, var(--primary) 15%, transparent)' : 'color-mix(in oklab, var(--border) 60%, transparent)', color: selected ? 'var(--primary)' : 'var(--text-muted)' }}
         >
           ✏️ Editar
