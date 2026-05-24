@@ -164,7 +164,7 @@ function fmtDate(d: number) { return new Date(d).toLocaleDateString('pt-BR', { d
 // ─── Node definitions ──────────────────────────────────────────────────────────
 
 const NODE_W = 220
-const NODE_H = 128
+const NODE_H = 96
 
 interface NodeTypeDef {
   label: string
@@ -696,11 +696,11 @@ function NodeHandle({ variant, x, y, label, active, highlighted, onClick }: {
 
 // ─── FlowNodeComp ──────────────────────────────────────────────────────────────
 
-function FlowNodeComp({ node, selected, isStart, onMouseDown, onClick, onEdit, onHandleClick, connecting }: {
+function FlowNodeComp({ node, selected, isStart, onMouseDown, onClick, onDoubleClick, onHandleClick, connecting }: {
   node: FlowNodeType; selected: boolean; isStart: boolean
   onMouseDown: (e: React.MouseEvent, id: string) => void
   onClick: (id: string, shift: boolean) => void
-  onEdit: (id: string) => void
+  onDoubleClick: (id: string) => void
   onHandleClick: (nodeId: string, type: 'input' | 'output', idx?: number) => void
   connecting: { nodeId: string; handle: number } | null
 }) {
@@ -715,6 +715,7 @@ function FlowNodeComp({ node, selected, isStart, onMouseDown, onClick, onEdit, o
       data-node-id={node.id}
       onMouseDown={e => onMouseDown(e, node.id)}
       onClick={e => { e.stopPropagation(); onClick(node.id, e.shiftKey) }}
+      onDoubleClick={e => { e.stopPropagation(); onDoubleClick(node.id) }}
       className={`absolute select-none rounded-xl border-2 bg-surface cursor-grab active:cursor-grabbing transition-shadow ${selected ? 'border-primary' : 'border-border hover:border-border-strong'}`}
       style={{ left: node.position.x, top: node.position.y, width: NODE_W, boxShadow: selected ? '0 0 0 4px color-mix(in oklab, var(--primary) 18%, transparent)' : 'var(--shadow-md)' }}
     >
@@ -742,16 +743,6 @@ function FlowNodeComp({ node, selected, isStart, onMouseDown, onClick, onEdit, o
         <div className="text-[12px] text-text leading-snug line-clamp-2">{preview}</div>
       </div>
 
-      {/* Botão Editar */}
-      <div className="px-2 pb-2" style={{ position: 'relative', zIndex: 20 }}>
-        <button
-          onPointerDown={e => { e.stopPropagation(); e.preventDefault(); onEdit(node.id) }}
-          className="w-full h-6 rounded-md text-[10.5px] font-semibold flex items-center justify-center gap-1 transition-colors cursor-pointer"
-          style={{ background: selected ? 'color-mix(in oklab, var(--primary) 15%, transparent)' : 'color-mix(in oklab, var(--border) 60%, transparent)', color: selected ? 'var(--primary)' : 'var(--text-muted)' }}
-        >
-          ✏️ Editar
-        </button>
-      </div>
 
       {t.outputs === 1 && (
         <NodeHandle variant="output" x={NODE_W / 2} y={NODE_H}
@@ -1439,7 +1430,7 @@ function Canvas({ nodes, edges, vp, setVp, selectedIds, selectedEdgeId, onSelect
             <FlowNodeComp key={n.id} node={n} selected={selectedIds.has(n.id)} isStart={startNodeIds.has(n.id)}
               onMouseDown={onNodeMouseDown}
               onClick={(id, shift) => { if (!movedRef.current) { onSelectNode(id, shift); onSelectEdge(null) } }}
-              onEdit={(id) => { onSelectNode(id, false); onSelectEdge(null) }}
+              onDoubleClick={(id) => { onSelectNode(id, false); onSelectEdge(null) }}
               onHandleClick={handleClick} connecting={connecting} />
           ))}
         </div>
