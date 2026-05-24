@@ -152,6 +152,8 @@ async function findEligibleContactIds(
 
 /* ── Handler principal ───────────────────────────────────────────────────── */
 
+const FSS_LIMIT = 100  // flow_scheduled_sends a processar por rodada
+
 export async function GET(request: Request) {
   const authHeader = request.headers.get('authorization')
   if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
@@ -159,9 +161,71 @@ export async function GET(request: Request) {
   }
 
   const supabase = createAdminClient()
-  let enqueued = 0
-  let sent     = 0
-  let failed   = 0
+  let enqueued  = 0
+  let sent      = 0
+  let failed    = 0
+  let fssSent   = 0
+  let fssFailed = 0
+
+  /* ── 0. Processar envios agendados pelos nós Remarketing dos fluxos ────── */
+
+  const { data: fssRows } = await supabase
+    .from('flow_scheduled_sends')
+    .select('id, bot_id, contact_id, chat_id, message')
+    .eq('status', 'pending')
+    .lte('scheduled_at', new Date().toISOString())
+    .order('scheduled_at', { ascending: true })
+    .limit(FSS_LIMIT)
+
+  if (fssRows && fssRows.length > 0) {
+    const fssBotIds = [...new Set(fssRows.map((r: { bot_id: string }) => r.bot_id))]
+    const { data: fssBots } = await supabase
+      .from('bots')
+      .select('id, token, status')
+      .in('id', fssBotIds)
+
+    const fssBotMap = new Map(
+      (fssBots ?? []).map((b: { id: string; token: string; status: string }) => [b.id, b])
+    )
+
+    for (const row of fssRows as {
+      id: string; bot_id: string; contact_id: string; chat_id: number; message: string
+    }[]) {
+      const bot = fssBotMap.get(row.bot_id)
+      try {
+        if (!bot?.token || bot.status === 'paused') {
+          await supabase
+            .from('flow_scheduled_sends')
+            .update({ status: 'failed', error: 'bot indisponível', sent_at: new Date().toISOString() })
+            .eq('id', row.id)
+          fssFailed++
+          continue
+        }
+
+        const token = decryptToken(bot.token as string)
+        await sendTelegramMessage(token, row.chat_id, row.message, 'HTML')
+
+        await supabase
+          .from('flow_scheduled_sends')
+          .update({ status: 'sent', sent_at: new Date().toISOString() })
+          .eq('id', row.id)
+
+        fssSent++
+      } catch (err) {
+        fssFailed++
+        const errMsg = err instanceof Error ? err.message : 'Erro desconhecido'
+        await supabase
+          .from('flow_scheduled_sends')
+          .update({ status: 'failed', error: errMsg, sent_at: new Date().toISOString() })
+          .eq('id', row.id)
+          .then(() => {}, () => {})
+
+        Sentry.captureException(err, {
+          extra: { fssId: row.id, context: 'flow_scheduled_sends_send' },
+        })
+      }
+    }
+  }
 
   /* ── 1. Enfileirar novos contatos nas campanhas ativas ─────────────────── */
 
@@ -217,8 +281,8 @@ export async function GET(request: Request) {
 
   if (!pending?.length) {
     return NextResponse.json({
-      enqueued, sent, failed,
-      message: `${enqueued} enfileirados, ${sent} enviados, ${failed} falhas.`,
+      enqueued, sent, failed, fssSent, fssFailed,
+      message: `${enqueued} enfileirados, ${sent} enviados, ${failed} falhas. Fluxos: ${fssSent} enviados, ${fssFailed} falhas.`,
     })
   }
 
@@ -328,6 +392,8 @@ export async function GET(request: Request) {
     enqueued,
     sent,
     failed,
-    message: `${enqueued} enfileirados, ${sent} enviados, ${failed} falhas.`,
+    fssSent,
+    fssFailed,
+    message: `${enqueued} enfileirados, ${sent} enviados, ${failed} falhas. Fluxos: ${fssSent} enviados, ${fssFailed} falhas.`,
   })
 }

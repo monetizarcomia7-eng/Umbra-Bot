@@ -11,6 +11,7 @@ import {
   ShoppingBag, Tag, UserRound, Loader2, AlertCircle, AlertTriangle, Bot,
   Flag, Copy, ChevronRight, Undo2, Redo2,
   Image as LucideImage, Link2, Settings, Hash, ShoppingCart, Phone,
+  TrendingUp, TrendingDown, PackagePlus, Megaphone,
 } from 'lucide-react'
 
 // ─── Public types (imported by page.tsx) ───────────────────────────────────────
@@ -67,6 +68,12 @@ interface NodeData {
   imageUrl?: string
   caption?: string
   url?: string
+  description?: string
+  originalPrice?: number
+  discountPrice?: number
+  campaignName?: string
+  delayAmount?: number
+  delayUnit?: string
 }
 
 interface FlowNodeType {
@@ -181,6 +188,10 @@ const nodeTypes: Record<string, NodeTypeDef> = {
   link:      { label: 'Link/Botão',  Icon: Link2,             color: 'oklch(0.52 0.18 250)',   category: 'Mídia',      description: 'Envia um botão inline com URL (Telegram InlineKeyboard).',           defaultData: { text: 'Clique aqui!', url: '' },                                  outputs: 1 },
   checkout:  { label: 'Checkout',    Icon: ShoppingCart,      color: 'var(--success)',          category: 'Comercial',  description: 'Envia link de pagamento como botão inline. Avança automaticamente.', defaultData: { text: 'Clique para comprar:', url: '' },                          outputs: 1 },
   phone:     { label: 'Telefone',    Icon: Phone,             color: 'oklch(0.58 0.12 200)',   category: 'Conversa',   description: 'Pede o número de telefone e salva na variável do contato.',          defaultData: { text: 'Qual é o seu telefone? (ex: 11999998888)', variable: 'telefone' }, outputs: 1 },
+  upsell:    { label: 'Upsell',      Icon: TrendingUp,        color: 'oklch(0.55 0.19 145)',   category: 'Comercial',  description: 'Oferece um produto de maior valor após a compra inicial.',           defaultData: { product: 'Produto Premium', originalPrice: 997, discountPrice: 697, description: 'Aproveite essa oferta exclusiva por tempo limitado!', cta: 'Quero o upgrade', url: '' }, outputs: 1 },
+  downsell:  { label: 'Downsell',    Icon: TrendingDown,      color: 'oklch(0.58 0.16 30)',    category: 'Comercial',  description: 'Oferece uma alternativa mais acessível quando o lead recusa a oferta principal.', defaultData: { product: 'Produto Básico', originalPrice: 497, discountPrice: 197, description: 'Tudo bem! Tenho uma opção mais em conta para você.', cta: 'Quero essa opção', url: '' }, outputs: 1 },
+  orderbump: { label: 'Order Bump',  Icon: PackagePlus,       color: 'oklch(0.58 0.16 200)',   category: 'Comercial',  description: 'Adiciona um produto complementar com desconto na mesma compra.',      defaultData: { product: 'Bônus Especial', price: 97, description: 'Inclua também por apenas:', cta: 'Sim, quero o bônus!' },                                                             outputs: 1 },
+  remarketing: { label: 'Remarketing', Icon: Megaphone,       color: 'oklch(0.52 0.18 285)',   category: 'CRM',        description: 'Agenda uma mensagem de follow-up para contatos que não converteram.', defaultData: { text: 'Oi {nome}! Vi que você ainda não finalizou. Posso te ajudar? 😊', delayAmount: 1, delayUnit: 'horas', tag: '' },                                               outputs: 1 },
 }
 
 const flowStatusMap: Record<string, { label: string; tone: string }> = {
@@ -286,8 +297,12 @@ function getNodePreview(node: FlowNodeType): string {
     case 'handoff':   return `Encaminhar para ${node.data.team}`
     case 'image':    return node.data.caption || (node.data.imageUrl ? 'Imagem com URL' : 'Imagem (sem URL)')
     case 'link':     return `${node.data.text || 'Botão'} → ${node.data.url || 'sem URL'}`
-    case 'checkout': return `🛒 ${node.data.url || 'URL do checkout'}`
-    case 'phone':    return (node.data.text as string) || 'Solicitar telefone'
+    case 'checkout':    return `🛒 ${node.data.url || 'URL do checkout'}`
+    case 'phone':       return (node.data.text as string) || 'Solicitar telefone'
+    case 'upsell':      return `${node.data.product || 'Produto'} · ${fmtBRLdec(node.data.discountPrice || 0)}`
+    case 'downsell':    return `${node.data.product || 'Alternativa'} · ${fmtBRLdec(node.data.discountPrice || 0)}`
+    case 'orderbump':   return `${node.data.product || 'Bônus'} por ${fmtBRLdec(node.data.price || 0)}`
+    case 'remarketing': return `Em ${node.data.delayAmount} ${node.data.delayUnit}: "${(node.data.text || '').slice(0, 40)}…"`
     default: return ''
   }
 }
@@ -1005,6 +1020,82 @@ function Inspector({ node, onUpdate, onClose, onDelete }: {
                 <input value={node.data.variable ?? 'telefone'} onChange={e => setData({ variable: e.target.value.replace(/[^a-z0-9_]/gi, '') })} className="flex-1 h-9 bg-transparent text-text font-mono text-[12px] focus:outline-none" />
                 <span className="px-2 text-text-subtle text-[12px] font-mono">{'}'}</span>
               </div>
+            </InspField>
+          </>
+        )}
+        {node.type === 'upsell' && (
+          <>
+            <InspField label="Nome do produto"><input value={node.data.product ?? ''} onChange={e => setData({ product: e.target.value })} className={inspInput} /></InspField>
+            <InspField label="Preço original (riscado)">
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted text-[12px]">R$</span>
+                <input type="number" min="0" step="0.01" value={node.data.originalPrice ?? 0} onChange={e => setData({ originalPrice: parseFloat(e.target.value) || 0 })} className={inspInput + ' pl-9'} />
+              </div>
+            </InspField>
+            <InspField label="Preço com desconto">
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted text-[12px]">R$</span>
+                <input type="number" min="0" step="0.01" value={node.data.discountPrice ?? 0} onChange={e => setData({ discountPrice: parseFloat(e.target.value) || 0 })} className={inspInput + ' pl-9'} />
+              </div>
+            </InspField>
+            <InspField label="Descrição da oferta"><textarea rows={3} value={node.data.description ?? ''} onChange={e => setData({ description: e.target.value })} className={inspTextarea} /></InspField>
+            <InspField label="Texto do botão"><input value={node.data.cta ?? 'Quero o upgrade'} onChange={e => setData({ cta: e.target.value })} className={inspInput} /></InspField>
+            <InspField label="URL do checkout"><input value={node.data.url ?? ''} onChange={e => setData({ url: e.target.value })} placeholder="https://umbrabot.com.br/c/…" className={inspInput} /></InspField>
+          </>
+        )}
+        {node.type === 'downsell' && (
+          <>
+            <InspField label="Nome do produto alternativo"><input value={node.data.product ?? ''} onChange={e => setData({ product: e.target.value })} className={inspInput} /></InspField>
+            <InspField label="Preço original (riscado)">
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted text-[12px]">R$</span>
+                <input type="number" min="0" step="0.01" value={node.data.originalPrice ?? 0} onChange={e => setData({ originalPrice: parseFloat(e.target.value) || 0 })} className={inspInput + ' pl-9'} />
+              </div>
+            </InspField>
+            <InspField label="Preço com desconto">
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted text-[12px]">R$</span>
+                <input type="number" min="0" step="0.01" value={node.data.discountPrice ?? 0} onChange={e => setData({ discountPrice: parseFloat(e.target.value) || 0 })} className={inspInput + ' pl-9'} />
+              </div>
+            </InspField>
+            <InspField label="Descrição da oferta"><textarea rows={3} value={node.data.description ?? ''} onChange={e => setData({ description: e.target.value })} className={inspTextarea} /></InspField>
+            <InspField label="Texto do botão"><input value={node.data.cta ?? 'Quero essa opção'} onChange={e => setData({ cta: e.target.value })} className={inspInput} /></InspField>
+            <InspField label="URL do checkout"><input value={node.data.url ?? ''} onChange={e => setData({ url: e.target.value })} placeholder="https://umbrabot.com.br/c/…" className={inspInput} /></InspField>
+          </>
+        )}
+        {node.type === 'orderbump' && (
+          <>
+            <InspField label="Nome do produto bônus"><input value={node.data.product ?? ''} onChange={e => setData({ product: e.target.value })} className={inspInput} /></InspField>
+            <InspField label="Preço do bônus">
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted text-[12px]">R$</span>
+                <input type="number" min="0" step="0.01" value={node.data.price ?? 0} onChange={e => setData({ price: parseFloat(e.target.value) || 0 })} className={inspInput + ' pl-9'} />
+              </div>
+            </InspField>
+            <InspField label="Descrição do bônus"><textarea rows={3} value={node.data.description ?? ''} onChange={e => setData({ description: e.target.value })} className={inspTextarea} /></InspField>
+            <InspField label="Texto do botão"><input value={node.data.cta ?? 'Sim, quero o bônus!'} onChange={e => setData({ cta: e.target.value })} className={inspInput} /></InspField>
+          </>
+        )}
+        {node.type === 'remarketing' && (
+          <>
+            <InspField label="Mensagem de follow-up">
+              <textarea rows={4} value={node.data.text ?? ''} onChange={e => setData({ text: e.target.value })} placeholder="Oi {nome}! Vi que você ainda não finalizou…" className={inspTextarea} />
+              <div className="flex flex-wrap gap-1 mt-1.5">
+                {['{nome}', '{bot}', '{produto}', '{data}'].map(v => (
+                  <button key={v} onClick={() => setData({ text: (node.data.text ?? '') + v })} className="px-1.5 py-0.5 rounded text-[10.5px] bg-surface-2 border border-border text-text-subtle hover:text-primary hover:border-primary font-mono">{v}</button>
+                ))}
+              </div>
+            </InspField>
+            <InspField label="Enviar após">
+              <div className="flex items-center gap-2">
+                <input type="number" min="1" value={node.data.delayAmount ?? 1} onChange={e => setData({ delayAmount: parseInt(e.target.value, 10) || 1 })} className={inspInput + ' w-20 text-center'} />
+                <select value={node.data.delayUnit ?? 'horas'} onChange={e => setData({ delayUnit: e.target.value })} className={inspInput}>
+                  <option>minutos</option><option>horas</option><option>dias</option>
+                </select>
+              </div>
+            </InspField>
+            <InspField label="Tag (opcional — aplica ao contato)">
+              <input value={node.data.tag ?? ''} onChange={e => setData({ tag: e.target.value })} placeholder="ex: remarketing" className={inspInput} />
             </InspField>
           </>
         )}

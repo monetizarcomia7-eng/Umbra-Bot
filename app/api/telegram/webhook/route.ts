@@ -297,6 +297,95 @@ async function executeFlowNode(
       break
     }
 
+    case 'remarketing': {
+      const rawText     = (node.data.text        as string) ?? ''
+      const delayAmount = Number(node.data.delayAmount ?? 1)
+      const delayUnit   = (node.data.delayUnit   as string) ?? 'horas'
+      const tag         = (node.data.tag         as string) ?? ''
+
+      const unitMs: Record<string, number> = {
+        minutos: 60_000,
+        horas:   3_600_000,
+        dias:    86_400_000,
+      }
+      const ms          = delayAmount * (unitMs[delayUnit] ?? 3_600_000)
+      const scheduledAt = new Date(Date.now() + ms).toISOString()
+      const message     = subVars(rawText, flowVars, firstName, botName)
+
+      // Busca user_id e bot_id do contato (sem alterar a assinatura da função)
+      const { data: contactMeta } = await supabase
+        .from('contacts')
+        .select('user_id, bot_id')
+        .eq('id', contact.id)
+        .single()
+
+      if (contactMeta?.user_id && contactMeta?.bot_id) {
+        supabase.from('flow_scheduled_sends').insert({
+          user_id:      contactMeta.user_id,
+          bot_id:       contactMeta.bot_id,
+          contact_id:   contact.id,
+          chat_id:      chatId,
+          message,
+          scheduled_at: scheduledAt,
+          flow_id:      flowId,
+        }).then(({ error }) => {
+          if (error) console.error('[webhook] flow_scheduled_sends insert error:', error.message)
+        })
+      }
+
+      // Aplica tag opcional ao contato
+      if (tag) {
+        const { data: curr } = await supabase
+          .from('contacts')
+          .select('tags')
+          .eq('id', contact.id)
+          .single()
+        const tags: string[] = curr?.tags ?? []
+        if (!tags.includes(tag)) {
+          await supabase.from('contacts').update({ tags: [...tags, tag] }).eq('id', contact.id)
+        }
+      }
+
+      await advance()
+      break
+    }
+
+    case 'upsell':
+    case 'downsell': {
+      const product      = subVars((node.data.product      as string) ?? '', flowVars, firstName, botName)
+      const discountPrice = node.data.discountPrice as number | undefined
+      const description  = subVars((node.data.description  as string) ?? '', flowVars, firstName, botName)
+      const cta          = subVars((node.data.cta          as string) ?? '', flowVars, firstName, botName)
+      const url          = (node.data.url as string) ?? ''
+      const lines = [
+        product && `<b>${product}</b>`,
+        discountPrice != null && `💰 R$ ${Number(discountPrice).toFixed(2)}`,
+        description,
+      ].filter(Boolean).join('\n\n')
+      if (lines) await sendTelegramMessage(plainToken, chatId, lines).catch(() => {})
+      if (url && cta) {
+        await sendTelegramWithKeyboard(plainToken, chatId, cta, [[{ text: cta, url }]])
+      }
+      await advance()
+      break
+    }
+
+    case 'orderbump': {
+      const product     = subVars((node.data.product     as string) ?? '', flowVars, firstName, botName)
+      const price       = node.data.price as number | undefined
+      const description = subVars((node.data.description as string) ?? '', flowVars, firstName, botName)
+      const cta         = subVars((node.data.cta         as string) ?? '', flowVars, firstName, botName)
+      const lines = [
+        description,
+        product && `📦 <b>${product}</b>`,
+        price != null && `➕ por apenas R$ ${Number(price).toFixed(2)}`,
+      ].filter(Boolean).join('\n')
+      if (lines) await sendTelegramMessage(plainToken, chatId, lines).catch(() => {})
+      if (cta) await sendTelegramMessage(plainToken, chatId, cta).catch(() => {})
+      await advance()
+      break
+    }
+
     case 'end':
     case 'handoff':
     default:
