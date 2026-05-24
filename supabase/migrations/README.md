@@ -126,6 +126,23 @@ action_taken:   text
 viewed_at:      timestamptz
 ```
 
+### UI — AlertsClient (pendências conhecidas)
+
+Todos os campos necessários para as melhorias abaixo já existem no banco — nenhuma migração nova necessária.
+
+| Melhoria | Campo relevante | Prioridade |
+|---|---|---|
+| Empty state educativo (cards de tipos de alertas) | `type`, `severity` | 🔴 Alta |
+| Botão "Configurar alertas" duplicado — remover do empty state | — (UI only) | 🔴 Alta |
+| KPI "Resolvidos hoje" → "Resolvidos (7 dias)" + link filter | `resolved`, `resolved_at` | 🟡 Média |
+| Seletor de período nos KPIs (Hoje / 7d / 30d) | `created_at`, `resolved_at` | 🟡 Média |
+| Contagens por tipo no dropdown filtro ("Bot (3)", "Gateway (1)") | `type` | 🟡 Média |
+| 4º KPI card "Gerados (30 dias)" | `created_at` | 🟡 Média |
+| Indicador Realtime pulsante no contador | — (canal `alerts-feed` já existe) | 🟡 Média |
+| Badge de status de configuração no botão "Configurar alertas" | — (join notification_prefs) | 🟢 Baixa |
+| Filtro por origem no FilterBar | `source` ('cron','webhook','sistema (auto)') | 🟢 Baixa |
+| Toggle "Silenciar por 1 hora" (acesso rápido a quiet_hours) | — (join notification_prefs) | 🟢 Baixa |
+
 ---
 
 ## public.audit_log

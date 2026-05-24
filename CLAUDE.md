@@ -641,6 +641,16 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Alertas — mount: batch UPDATE viewed_at=now() para alertas ainda não vistos | ✅ Implementado |
 | Alertas — resolve: salva resolved_by_id=userId (além de resolved_by=userName) | ✅ Implementado |
 | Alertas — action click: salva action_taken=actionLabel no banco (fire-and-forget) | ✅ Implementado |
+| Alertas — botão "Configurar alertas" duplicado: aparece no header E no empty state — remover do empty state | ⏳ Pendente |
+| Alertas — empty state sem educação: adicionar cards informativos com tipos de alertas disponíveis (Bot offline, Gateway, Webhook, Venda) | ⏳ Pendente |
+| Alertas — KPI "Resolvidos hoje" confuso: subtexto "0 ainda ativos · 0 no total" contradiz "resolvidos" — reescrever como "Resolvidos (7 dias)" com link para filtrar status=resolved | ⏳ Pendente |
+| Alertas — ausência de seletor de período nos KPIs: adicionar toggle "Hoje / 7 dias / 30 dias" nos cards de Resolvidos e Atenção | ⏳ Pendente |
+| Alertas — filtro "Todos os tipos" sem contagens: exibir badge N ao lado de cada tipo no dropdown (ex: "Bot (3)", "Gateway (1)") | ⏳ Pendente |
+| Alertas — 4º KPI card "Gerados (30 dias)": volume total de alertas criados no período independente de status | ⏳ Pendente |
+| Alertas — indicador Realtime ausente no contador: ponto verde pulsante quando canal está conectado (como botão "Ao vivo" em Atividade) | ⏳ Pendente |
+| Alertas — botão "Configurar alertas" sem status de configuração: substituir por badge contextual ("Telegram vinculado ✓" ou "Configurar notificações" warning) | ⏳ Pendente |
+| Alertas — filtro por origem ausente: campo `source` ('cron','webhook','sistema (auto)') não exposto no FilterBar | ⏳ Pendente |
+| Alertas — sem "Silenciar temporariamente": toggle rápido de quiet_hours diretamente na tela de Alertas (ex: "Silenciar por 1 hora") | ⏳ Pendente |
 | CSV export (Financeiro + Clientes + Atividade) + evento csv_exported | ✅ Funcional |
 | Atalhos de teclado | ✅ Funcional |
 | Busca global (14 tabelas, race-condition safe, sem any) | ✅ Funcional |

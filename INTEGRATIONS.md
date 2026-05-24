@@ -406,6 +406,8 @@ supabase
 | `alert_reopened` | AlertsClient |
 | `all_alerts_resolved` | AlertsClient |
 | `alert_action_clicked` | AlertsClient |
+| `alerts_period_changed` | AlertsClient — ⏳ **Pendente** (seletor de período nos KPIs não implementado) |
+| `alerts_origin_filtered` | AlertsClient — ⏳ **Pendente** (filtro por source não implementado) |
 | `redirect_created` | RedirectsClient |
 | `redirect_updated` | RedirectsClient |
 | `redirect_status_changed` | RedirectsClient |
