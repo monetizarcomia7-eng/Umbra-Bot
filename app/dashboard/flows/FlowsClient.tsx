@@ -1317,6 +1317,13 @@ function Canvas({ nodes, edges, vp, setVp, selectedIds, selectedEdgeId, onSelect
     const node = nodes.find(n => n.id === nodeId)
     if (!node) return
     movedRef.current = false
+    // Seleciona imediatamente no mousedown para abrir o Inspector sem depender do onClick
+    if (e.shiftKey) {
+      onSelectNode(nodeId, true)
+    } else if (!selectedIds.has(nodeId)) {
+      onSelectNode(nodeId, false)
+      onSelectEdge(null)
+    }
     // Se o nó já está selecionado (sem shift), arrasta toda a seleção. Senão, só este nó.
     const dragIds = (selectedIds.has(nodeId) && !e.shiftKey) ? [...selectedIds] : [nodeId]
     const initialPositions: Record<string, { x: number; y: number }> = {}
