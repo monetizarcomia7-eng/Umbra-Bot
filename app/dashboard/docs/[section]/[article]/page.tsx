@@ -118,7 +118,7 @@ export default async function DocArticlePage({ params }: Props) {
       {/* Hero */}
       <div className="mb-8 pb-6 border-b border-[var(--border)]">
         <div className="flex items-center gap-2 mb-2">
-          <span className="text-xs px-2 py-0.5 rounded-full bg-[var(--accent-soft)] text-[var(--accent-fg)] font-medium">
+          <span className="text-xs px-2 py-0.5 rounded-full bg-[var(--accent-soft)] text-[var(--primary)] font-medium">
             {sec.title}
           </span>
           <span className="text-xs text-[var(--muted-foreground)]">· {readTime} min de leitura</span>
@@ -143,14 +143,14 @@ export default async function DocArticlePage({ params }: Props) {
             [&_h4]:mt-5 [&_h4]:mb-1.5
           [&_p]:text-[14.5px] [&_p]:text-[var(--muted-foreground)] [&_p]:leading-[1.75] [&_p]:mb-4
           [&_strong]:text-[var(--foreground)] [&_strong]:font-semibold
-          [&_a]:text-[var(--accent-fg)] [&_a]:font-medium [&_a]:no-underline
+          [&_a]:text-[var(--primary)] [&_a]:font-medium [&_a]:no-underline
             hover:[&_a]:underline
           [&_ul]:mb-4 [&_ul]:space-y-1.5 [&_ul]:pl-5
           [&_ol]:mb-4 [&_ol]:space-y-1.5 [&_ol]:pl-5
           [&_li]:text-[14.5px] [&_li]:text-[var(--muted-foreground)] [&_li]:leading-relaxed
           [&_ul>li]:list-disc [&_ol>li]:list-decimal
           [&_li>ul]:mt-1.5 [&_li>ul]:mb-0
-          [&_li_input[type=checkbox]]:mr-2 [&_li_input[type=checkbox]]:accent-[var(--accent-fg)]
+          [&_li_input[type=checkbox]]:mr-2 [&_li_input[type=checkbox]]:accent-[var(--primary)]
           [&_code]:bg-[var(--surface-2)] [&_code]:text-[var(--foreground)] [&_code]:font-mono
             [&_code]:text-[12.5px] [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:rounded-md
             [&_code]:border [&_code]:border-[var(--border)]
@@ -158,7 +158,7 @@ export default async function DocArticlePage({ params }: Props) {
             [&_pre]:p-4 [&_pre]:overflow-x-auto [&_pre]:mb-5
             [&_pre>code]:bg-transparent [&_pre>code]:border-none [&_pre>code]:p-0
             [&_pre>code]:text-[13px]
-          [&_blockquote]:border-l-2 [&_blockquote]:border-[var(--accent-fg)]
+          [&_blockquote]:border-l-2 [&_blockquote]:border-[var(--primary)]
             [&_blockquote]:bg-[var(--accent-soft)] [&_blockquote]:rounded-r-xl
             [&_blockquote]:px-4 [&_blockquote]:py-3 [&_blockquote]:my-5 [&_blockquote]:not-italic
           [&_blockquote_p]:mb-0 [&_blockquote_p]:text-[var(--foreground)]
@@ -175,9 +175,9 @@ export default async function DocArticlePage({ params }: Props) {
           [&_hr]:my-8 [&_hr]:border-[var(--border)]
           [&_img]:rounded-xl [&_img]:border [&_img]:border-[var(--border)] [&_img]:my-4 [&_img]:w-full
           [&_.tldr-box]:flex [&_.tldr-box]:gap-3 [&_.tldr-box]:items-start
-            [&_.tldr-box]:bg-[var(--accent-soft)] [&_.tldr-box]:border [&_.tldr-box]:border-[var(--accent-fg)]/30
+            [&_.tldr-box]:bg-[var(--accent-soft)] [&_.tldr-box]:border [&_.tldr-box]:border-[var(--primary)]/30
             [&_.tldr-box]:rounded-xl [&_.tldr-box]:px-4 [&_.tldr-box]:py-3 [&_.tldr-box]:mb-6 [&_.tldr-box]:mt-0
-          [&_.tldr-box_strong]:text-[var(--accent-fg)] [&_.tldr-box_strong]:text-xs [&_.tldr-box_strong]:font-bold
+          [&_.tldr-box_strong]:text-[var(--primary)] [&_.tldr-box_strong]:text-xs [&_.tldr-box_strong]:font-bold
             [&_.tldr-box_strong]:uppercase [&_.tldr-box_strong]:tracking-wider [&_.tldr-box_strong]:shrink-0
             [&_.tldr-box_strong]:mt-0.5
           [&_.tldr-box_span]:text-[var(--foreground)] [&_.tldr-box_span]:text-[14px] [&_.tldr-box_span]:leading-relaxed

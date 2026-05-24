@@ -58,7 +58,7 @@
 |---|---|---|---|
 | `/api/cron/process-withdrawals` | `0 6 * * *` (06:00 diário) | Marca saques pendentes há +24h como `completed` | `Authorization: Bearer CRON_SECRET` |
 | `/api/cron/cleanup-activity` | `0 2 * * *` (02:00 diário) | Deleta `activity_events` com +90 dias | `Authorization: Bearer CRON_SECRET` |
-| `/api/cron/check-bots` | `0 8 * * *` (08:00 diário) | Verifica conectividade dos bots via Telegram `getWebhookInfo` | `Authorization: Bearer CRON_SECRET` |
+| `/api/cron/check-bots` | `0 8 * * *` (08:00 diário) | Verifica conectividade dos bots via Telegram `getWebhookInfo`; CONCURRENCY=15 bots em paralelo (`Promise.allSettled`); detecta `banned` (Forbidden); `Sentry.captureCheckIn` monitor slug `check-bots`; insere alerta com `bot_id` (migração 100) | `Authorization: Bearer CRON_SECRET` |
 | `/api/cron/cleanup-alerts` | `0 4 * * *` (04:00 diário) | Deleta alertas resolvidos com +30 dias | `Authorization: Bearer CRON_SECRET` |
 
 > **Nota:** O CLAUDE.md descreve `check-bots` como executando a cada 30 min (`*/30 * * * *`), mas o `vercel.json` registra `0 8 * * *` (uma vez ao dia). A frequência real depende do valor em `vercel.json`.
@@ -85,7 +85,7 @@ Ambos usam `Authorization: Bearer CRON_SECRET`.
   - `lib/supabase/server.ts` — `createClient()` com anon key + cookies (Server Components, API Routes autenticadas)
   - `lib/supabase/client.ts` — `createClient()` browser (Client Components)
   - `lib/supabase/admin.ts` — `createAdminClient()` com service role key (webhooks externos, cron jobs — bypassa RLS)
-- **Total de arquivos de migração:** 98 arquivos `.sql` (numerados 000–098 + timestamps)
+- **Total de arquivos de migração:** 101 arquivos `.sql` (numerados 000–100 + timestamps)
 - **Migrações auxiliares (não executáveis diretamente):** `_combined.sql`, `_pending_analytics_037_to_041.sql`, `_pending_run_now.sql`
 
 ### Supabase Auth
@@ -167,7 +167,7 @@ supabase
 - `app/api/telegram/webhook/route.ts` — recebe updates (sendMessage, sendPhoto, InlineKeyboard, answerCallbackQuery)
 - `app/api/telegram/register/route.ts` — registra webhook via `setWebhook`
 - `app/api/cron/check-bots/route.ts` — `getWebhookInfo` para verificar conectividade
-- `app/actions/bots.ts` — `getMe`, `setWebhook`, `getMyDescription`, `getMyShortDescription`, `getMyCommands`, `setMyName`, `setMyDescription`, `setMyShortDescription`, `setMyCommands`, `getUserProfilePhotos`, `getFile`, `setMyPhoto`
+- `app/actions/bots.ts` — `getMe`, `setWebhook`, `getMyDescription`, `getMyShortDescription`, `getMyCommands`, `setMyName`, `setMyDescription`, `setMyShortDescription`, `setMyCommands`, `getUserProfilePhotos`, `getFile`, `setMyPhoto`; `getBotMessagesAction` (lazy-load `welcome_message`/`fallback_message`); `setBotStatusAction` (pause/resume dedicado)
 - `app/api/broadcasts/send/route.ts` e `app/api/cron/process-broadcasts/route.ts` — `sendMessage` em lote (rate limit 35ms/msg)
 
 **URL base:** `https://api.telegram.org/bot{token}/{method}`
@@ -345,7 +345,7 @@ supabase
 - **Habilitado apenas em produção** (`enabled: process.env.NODE_ENV === 'production'`)
 - **Carregado via** `instrumentation.ts` (hook Next.js)
 - **`captureException` usado em:** MP webhook, PIX route, broadcasts, remarketing, checkout pay, etc.
-- **`captureCheckIn` usado em:** cron process-broadcasts
+- **`captureCheckIn` usado em:** cron process-broadcasts e check-bots
 
 **Variáveis de ambiente:**
 
@@ -966,7 +966,7 @@ Fonte: `.env.example` na raiz do repositório.
 
 ## 11. TABELAS DO BANCO
 
-Total de migrações: **100 arquivos** (numeradas de 000 a 099, mais arquivos de timestamp).
+Total de migrações: **101 arquivos** (numeradas de 000 a 100, mais arquivos de timestamp).
 
 | Tabela | Função |
 |---|---|
@@ -990,7 +990,7 @@ Total de migrações: **100 arquivos** (numeradas de 000 a 099, mais arquivos de
 | `broadcasts` | Disparos em massa (message, audience, status, sent, delivered, failed) |
 | `redirects` | Links de redirecionamento (slug, destination, cloaking, utm) |
 | `redirect_click_events` | Eventos de clique em redirecionadores (ip_hash, device_type, referrer) |
-| `alerts` | Alertas do dashboard (type, severity, source, context, resolved_by_id) |
+| `alerts` | Alertas do dashboard (type, severity, source, context, resolved_by_id, bot_id FK → bots — migração 100) |
 | `activity_events` | Feed de atividade (type, title, description, bot_id, contact_id) — tipos: sale/lead/payment/refund/reconnect/disconnect/limit/newBot/webhookFailed/flowPublished/cancellation/failure/team_invite/courseCompleted (migração 098) |
 | `notification_prefs` | Preferências de notificação por canal (email, panel, telegram) |
 | `push_subscriptions` | Subscriptions WebPush por usuário |

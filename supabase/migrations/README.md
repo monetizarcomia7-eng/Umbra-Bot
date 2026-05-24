@@ -3,7 +3,7 @@
 Schema extraído diretamente do banco Supabase (projeto: `aoycxcepjvpmeptdafxn`).
 **38 tabelas** no schema `public`.
 
-> **Última migração aplicada:** 099 (contacts: notes column + RPCs contacts_kpis, contacts_filter_options v2 com tags+counts+states, find_duplicate_contacts).
+> **Última migração aplicada:** 100 (bots improvements: `bot_id` FK em `alerts` + índice parcial `alerts_bot_id_idx` + colunas `welcome_message`/`fallback_message` defensivas em `bots`; +2 Server Actions: `getBotMessagesAction` (lazy-load mensagens por demanda), `setBotStatusAction` (pause/resume dedicado)).
 > **Próximas migrações pendentes:** nenhuma.
 
 ---
@@ -124,6 +124,7 @@ resolved_by_id: uuid        FK → auth.users(id)
 source:         text
 action_taken:   text
 viewed_at:      timestamptz
+bot_id:         uuid        FK → bots(id)  ON DELETE SET NULL  (migração 100)
 ```
 
 ### UI — AlertsClient (pendências conhecidas)

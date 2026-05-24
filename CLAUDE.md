@@ -33,11 +33,13 @@ umbra-bot/
 │   ├── page.tsx                  # Redirect para /dashboard
 │   ├── globals.css               # Design tokens (light/dark), Tailwind v4
 │   ├── actions/
-│   │   ├── bots.ts               # 9 Server Actions: validateBotTokenAction (getMe real), saveBotAction (AES-256-GCM),
+│   │   ├── bots.ts               # 11 Server Actions: validateBotTokenAction (getMe real), saveBotAction (AES-256-GCM),
 │   │   │                         # registerWebhookAction (decryptToken + status='online'), getBotTokenAction,
 │   │   │                         # updateBotAction, deleteBotAction — userId sempre do servidor (sem IDOR)
 │   │   │                         # getBotTelegramProfileAction (perfil + foto base64), saveBotTelegramProfileAction,
 │   │   │                         # setBotPhotoAction (multipart → setMyPhoto Bot API 7.3)
+│   │   │                         # getBotMessagesAction (lazy-load welcome_message/fallback_message por demanda),
+│   │   │                         # setBotStatusAction (pause/resume dedicado — não passa por updateBotAction)
 │   │   ├── gateways.ts           # 5 Server Actions: validateGatewayCredentialsAction (chama API do gateway),
 │   │   │                         # connectGatewayAction (valida + encryptToken + upsert), disconnectGatewayAction,
 │   │   │                         # updateGatewayAction (só conta bancária), testGatewayConnectionAction (decryptToken + API)
@@ -936,6 +938,14 @@ DashboardLayout (components/dashboard/Layout.tsx)
 | Bots — getBotTelegramProfileAction: getMe + getMyDescription + getMyShortDescription + getMyCommands + foto base64 | ✅ Implementado |
 | Bots — saveBotTelegramProfileAction: setMyName/setMyDescription/setMyShortDescription/setMyCommands em paralelo | ✅ Implementado |
 | Bots — setBotPhotoAction: upload multipart → setMyPhoto (Bot API 7.3); foto como base64 sem expor token | ✅ Implementado |
+| Bots — BOT_COLORS: cor aleatória atribuída ao criar bot (saveBotAction + BotsClient compartilham array duplicado) | ✅ Implementado |
+| Bots — getBotMessagesAction: lazy-load welcome_message/fallback_message ao abrir MessagesTab (removido do SSR) | ✅ Implementado |
+| Bots — setBotStatusAction: Server Action dedicado para pause/resume — status não passa mais por updateBotAction | ✅ Implementado |
+| Bots — BotAvatar: exibe iniciais + cor quando bot não tem @username no Telegram | ✅ Implementado |
+| Bots — migração 100: `bot_id uuid FK → bots(id)` em `alerts` + índice parcial `alerts_bot_id_idx` | ✅ Implementado |
+| Bots — cron check-bots: CONCURRENCY=15 bots em paralelo via `Promise.allSettled` | ✅ Implementado |
+| Bots — cron check-bots: detecção de bot banido (Forbidden) → alerta `type='bot_offline'` + `bots.status='banned'` | ✅ Implementado |
+| Bots — cron check-bots: `Sentry.captureCheckIn` com monitor slug `'check-bots'` | ✅ Implementado |
 | Gateways — SSR + GatewaysClient (dados reais, migração 074) | ✅ Funcional |
 | Gateways — CRUD real: connect/disconnect/update/test (5 Server Actions) | ✅ Implementado |
 | Gateways — ConnectModal: OAuth azul (Globe) + fallback token manual | ✅ Implementado |
@@ -2598,18 +2608,20 @@ app/dashboard/bots/
   ├── page.tsx       # Server Component — busca bots (sem token) + flows em paralelo; passa ao BotsClient
   └── BotsClient.tsx # Client Component — lista, detalhe, CRUD, Realtime, modais, tabs
 
-app/actions/bots.ts  # 9 Server Actions (todas autenticadas + rate-limit)
+app/actions/bots.ts  # 11 Server Actions (todas autenticadas + rate-limit)
   ├── validateBotTokenAction(token)              # Chama getMe, verifica is_bot, retorna { username, firstName, telegramId }
-  ├── saveBotAction(params)                      # encryptToken + INSERT com user_id do servidor
+  ├── saveBotAction(params)                      # encryptToken + INSERT com user_id do servidor; BOT_COLORS aleatório
   ├── registerWebhookAction(botId)               # decryptToken + setWebhook + status='online' + PostHog
   ├── getBotTokenAction(botId)                   # decryptToken — chamado só ao clicar "Revelar"
-  ├── updateBotAction(id, patch)                 # UPDATE com .eq('user_id', user.id)
+  ├── updateBotAction(id, patch)                 # UPDATE com .eq('user_id', user.id) — NÃO inclui status (rota separada)
   ├── deleteBotAction(id)                        # DELETE com .eq('user_id', user.id)
   ├── getBotTelegramProfileAction(botId)         # getMe + getMyDescription + getMyShortDescription + getMyCommands
   │                                              # + foto via getUserProfilePhotos → getFile → base64 data URL
   ├── saveBotTelegramProfileAction(botId, data)  # setMyName / setMyDescription / setMyShortDescription / setMyCommands
   │                                              # em Promise.allSettled — primeiro erro lançado ao caller
-  └── setBotPhotoAction(botId, photo: File)      # valida tipo/tamanho → multipart → setMyPhoto (Bot API 7.3)
+  ├── setBotPhotoAction(botId, photo: File)      # valida tipo/tamanho → multipart → setMyPhoto (Bot API 7.3)
+  ├── getBotMessagesAction(botId)                # lazy-load welcome_message + fallback_message — chamado ao abrir MessagesTab
+  └── setBotStatusAction(botId, status)          # UPDATE status='paused'|'online' dedicado — não passa por updateBotAction
 ```
 
 ### Fluxo de dados
