@@ -737,8 +737,20 @@ function FlowNodeComp({ node, selected, isStart, onMouseDown, onClick, onHandleC
         <span className="text-[9.5px] text-text-subtle font-mono">#{node.id.slice(-4)}</span>
       </div>
 
-      <div className="px-3 py-2.5 min-h-[44px]">
+      <div className="px-3 pt-2.5 pb-1 min-h-[44px]">
         <div className="text-[12px] text-text leading-snug line-clamp-2">{preview}</div>
+      </div>
+
+      {/* Botão Editar */}
+      <div className="px-2 pb-2">
+        <button
+          onMouseDown={e => e.stopPropagation()}
+          onClick={e => { e.stopPropagation(); onClick(node.id, false) }}
+          className="w-full h-6 rounded-md text-[10.5px] font-semibold flex items-center justify-center gap-1 transition-colors"
+          style={{ background: selected ? 'color-mix(in oklab, var(--primary) 15%, transparent)' : 'color-mix(in oklab, var(--border) 60%, transparent)', color: selected ? 'var(--primary)' : 'var(--text-muted)' }}
+        >
+          ✏️ Editar
+        </button>
       </div>
 
       {t.outputs === 1 && (
