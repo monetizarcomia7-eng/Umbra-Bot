@@ -48,14 +48,17 @@ umbra-bot/
 │   │   │                         # voteArticleAction (toggle vote via RPC + rate limit 10/min), getUserVoteAction,
 │   │   │                         # logGuideSearchAction (INSERT em guide_search_logs se query ≥ 2 chars)
 │   │   │                         # fire-and-forget com void .then({error}) — nunca .catch() no PostgrestFilterBuilder
-│   │   ├── flows.ts              # 8 Server Actions: createFlowAction (Zod + rate-limit 30/min + limite 500/user),
-│   │   │                         # saveFlowAction (Zod + size limit 800KB + bot_id lookup + rate-limit 120/min),
-│   │   │                         # publishFlowAction (valida URLs http/https + snapshot via create_flow_version RPC),
+│   │   ├── flows.ts              # 10 Server Actions: createFlowAction (Zod + rate-limit 30/min + limite 500/user),
+│   │   │                         # saveFlowAction (Zod discriminated union por tipo de nó + size limit 800 KB + bot_id lookup + rate-limit 120/min),
+│   │   │                         # publishFlowAction (usa _doSave interno — sem duplicação de parse/rate-limit; valida URLs + create_flow_version RPC),
 │   │   │                         # duplicateFlowAction (rate-limit 20/min), deleteFlowAction,
 │   │   │                         # getFlowNodeStatsAction (lazy load — RPC flow_node_stats por 30 dias),
+│   │   │                         # getFlowAnalyticsAction (dashboard /flows/[id]/analytics — RPCs flow_node_stats_v2 + flow_events_timeseries em paralelo),
 │   │   │                         # listFlowVersionsAction + rollbackFlowVersionAction (rate-limit 10/min),
-│   │   │                         # simulateFlowAction (modo de teste server-side — sem enviar ao Telegram)
-│   │   │                         # isSafeUrl() bloqueia localhost/169.254/10.x/192.168 (SSRF guard)
+│   │   │                         # simulateFlowAction (modo de teste server-side — sem enviar ao Telegram; aceita buttonChoices + keywordInput)
+│   │   │                         # NODE_SCHEMA é discriminated union por type (16 shapes específicos por tipo de nó)
+│   │   │                         # EDGE_SCHEMA.sourceHandle apertado para z.number().min(0).max(20)
+│   │   │                         # isSafeUrl() bloqueia localhost/169.254/10.x/192.168 (SSRF guard) — também no UrlInput do Inspector
 │   │   └── recaptcha.ts          # verifyRecaptchaAction: Server Action para verificar token reCAPTCHA v2
 │   │                             # Chama verifyRecaptchaToken de lib/recaptcha — secret key nunca exposta ao browser
 │   ├── (auth)/
@@ -107,16 +110,27 @@ umbra-bot/
 │   │   │   │                                 # reconnect  → insere activity_event + auto-resolve alert (resolved_by='sistema (auto)')
 │   │   │   ├── process-remarketing/route.ts  # GET: enfileira contatos elegíveis + envia mensagens pendentes
 │   │   │   │                                     # Protegido por CRON_SECRET — chamado via cron-job.org (1x/hora)
+│   │   │   │                                     # Task 0: SENTINEL __delay__:<nodeId> em flow_scheduled_sends —
+│   │   │   │                                     #   importa executeFlowNode/loadFlow/buildEdgeMap de lib/flow-engine.ts
+│   │   │   │                                     #   carrega snapshot da versão do contato (contacts.flow_version)
+│   │   │   │                                     #   executa o nó alvo de verdade (não envia só ⏳ como antes)
 │   │   │   │                                     # Task 1: findEligibleContactIds por trigger_type + audience → INSERT remarketing_executions
 │   │   │   │                                     # Task 2: SELECT pending WHERE scheduled_at<=now → sendTelegramMessage → sent/failed
 │   │   │   │                                     # Agenda próxima etapa (step_index+1) com scheduled_at = now + delay
 │   │   │   │                                     # Atualiza total_sent via RPC increment_campaign_sent (atômico)
-│   │   │   └── process-broadcasts/route.ts   # GET: processa 1 broadcast agendado por rodada (CRON_SECRET)
-│   │   │                                     # Protegido por CRON_SECRET — chamado via cron-job.org (a cada 15 min)
-│   │   │                                     # CAS lock: UPDATE WHERE status='scheduled' evita duplo-processamento
-│   │   │                                     # Segmentação idêntica ao /api/broadcasts/send (all/leads/buyers/tag:)
-│   │   │                                     # Rate limit 35ms/msg, cancellation check a cada 50 msgs
-│   │   │                                     # Registra no cron_log fire-and-forget + Sentry captureCheckIn
+│   │   │   ├── process-broadcasts/route.ts   # GET: processa 1 broadcast agendado por rodada (CRON_SECRET)
+│   │   │   │                                     # Protegido por CRON_SECRET — chamado via cron-job.org (a cada 15 min)
+│   │   │   │                                     # CAS lock: UPDATE WHERE status='scheduled' evita duplo-processamento
+│   │   │   │                                     # Segmentação idêntica ao /api/broadcasts/send (all/leads/buyers/tag:)
+│   │   │   │                                     # Rate limit 35ms/msg, cancellation check a cada 50 msgs
+│   │   │   │                                     # Registra no cron_log fire-and-forget + Sentry captureCheckIn
+│   │   │   ├── recompute-flow-conversion/route.ts # GET: recalcula flows.conversion% (CRON_SECRET, 1x/dia 03:00)
+│   │   │   │                                     # Chama RPC recompute_all_flow_conversions() (mig 105 — 1 UPDATE com JOIN)
+│   │   │   │                                     # Retorna { ok, updated, duration_ms }
+│   │   │   │                                     # Sentry.captureCheckIn monitor 'recompute-flow-conversion'
+│   │   │   └── cleanup-flow-events/route.ts  # GET: TTL flow_node_events > 30 dias (CRON_SECRET, 1x/dia 06:00)
+│   │   │                                     # Chama RPC cleanup_flow_node_events(30) (mig 105)
+│   │   │                                     # Retorna { ok, deleted, duration_ms } + Sentry checkIn 'cleanup-flow-events'
 │   │   ├── push/
 │   │   │   ├── subscribe/route.ts
 │   │   │   └── notify/route.ts
@@ -414,6 +428,16 @@ umbra-bot/
 │   ├── utils.ts                  # cn()
 │   ├── crypto.ts                 # encryptToken / decryptToken — AES-256-GCM para tokens de bot
 │   ├── telegram.ts               # sendTelegramMessage() — centralizado (usado em 2 webhooks)
+│   ├── flow-engine.ts            # Motor de execução de fluxos extraído do webhook (compartilhado com cron):
+│   │                             # executeFlowNode({ ... }) recursivo (depth ≤ 20) com telemetria automática
+│   │                             # loadFlow(id, supabase, version?) — carrega snapshot imutável de flow_versions
+│   │                             # getLatestFlowVersion(id) — versão mais recente publicada
+│   │                             # buildEdgeMap / findStartNode / subVars / clearFlowState / evaluateCondition
+│   │                             # sendTelegramPhoto/Video/WithKeyboard / answerCallbackQuery — todos retornam boolean
+│   │                             # logNodeEvent(supabase, args) — fire-and-forget em flow_node_events (silencia 42P01)
+│   │                             # 17 tipos de nó suportados (message/question/buttons/condition/delay real/
+│   │                             # image/video/link/checkout/offer/tag/phone/upsell/downsell/orderbump/
+│   │                             # remarketing/handoff). Nó delay agenda em flow_scheduled_sends sentinel __delay__:<nodeId>
 │   ├── rate-limit.ts             # Redis (Upstash) + fallback memória
 │   ├── analytics-server.ts       # PostHog server-side capture
 │   ├── csv.ts                    # exportCSV()
@@ -454,9 +478,10 @@ umbra-bot/
 │                                 # variaveis, triggers-keyword, conectar-fluxo-bot, templates,
 │                                 # modo-de-teste, versionamento, atalhos-de-teclado,
 │                                 # exportar-importar, debugar-fluxo
-├── supabase/migrations/          # 69 migrações SQL (000 a 069)
+├── supabase/migrations/          # 104 migrações SQL (000 a 105 + auxiliares)
 ├── vercel.json                   # 4 Cron jobs Vercel (Hobby só executa 2 — os primeiros da lista): process-withdrawals (06:00 UTC) + cleanup-activity (02:00 UTC) + check-bots + cleanup-alerts
-│                                 # Crons adicionais via cron-job.org (gratuitos): process-remarketing (1x/hora) + process-broadcasts (a cada 15 min)
+│                                 # Crons adicionais via cron-job.org (gratuitos): process-remarketing (1x/hora — também retoma delays via sentinel __delay__) +
+│                                 # process-broadcasts (a cada 15 min) + recompute-flow-conversion (1x/dia 03:00) + cleanup-flow-events (1x/dia 06:00 TTL 30d)
 ├── sentry.*.config.ts            # Sentry (client com Replay / server com tracePropagation)
 ├── instrumentation.ts            # Next.js hook para Sentry server
 ├── middleware.ts                 # Auth guard + security headers + CSP (unsafe-eval só em dev)

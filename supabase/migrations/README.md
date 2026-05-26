@@ -1,9 +1,12 @@
 # Umbra Bot — Schema do Banco de Dados
 
 Schema extraído diretamente do banco Supabase (projeto: `aoycxcepjvpmeptdafxn`).
-**38 tabelas** no schema `public`.
+**40 tabelas** no schema `public` (adicionadas `flow_versions` + `flow_node_events` na mig 103).
 
-> **Última migração aplicada:** 100 (bots improvements: `bot_id` FK em `alerts` + índice parcial `alerts_bot_id_idx` + colunas `welcome_message`/`fallback_message` defensivas em `bots`; +2 Server Actions: `getBotMessagesAction` (lazy-load mensagens por demanda), `setBotStatusAction` (pause/resume dedicado)).
+> **Última migração aplicada:** 105 (Flows: refactor `recompute_all_flow_conversions` O(N²)→O(N) com CTE+JOIN; RPC `cleanup_flow_node_events` (TTL 30d); RPCs `flow_node_stats_v2` + `flow_events_timeseries` para o dashboard analytics por fluxo; CHECK `contacts.flow_vars ≤ 64 KB`).
+>
+> **Migrações dos Fluxos:** 103 (bot_id FK + telemetria + versionamento + 5 RPCs), 104 (user_id NOT NULL + CHECK 1MB + view debug), 105 (performance + TTL + dashboard).
+>
 > **Próximas migrações pendentes:** nenhuma.
 
 ---
@@ -1204,6 +1207,70 @@ courses  (sem user_id — conteúdo global gerenciado pelo admin)
 | 096 | Criou `course_certificates` (UNIQUE user_id+course_id) + RPCs `issue_certificate` + `get_user_certificates` |
 | 097 | Criou camada relacional `course_modules` + `course_lessons`; RPCs `get_course_with_modules` (fallback JSONB) + `import_course_modules_from_jsonb` (admin) |
 | 098 | DROP/ADD `activity_events_type_check` para incluir `'courseCompleted'`; seed curso "Dominando o Umbra Bot" (4 módulos, 13 aulas, `ON CONFLICT DO NOTHING`) |
+
+---
+
+## Migrações dos Fluxos de venda (103–105)
+
+### Contexto
+
+Após auditoria do módulo Fluxos, 3 migrações em sequência endurecem o schema,
+adicionam telemetria, versionamento e analytics. A engine foi extraída para
+`lib/flow-engine.ts` e é compartilhada por webhook + cron.
+
+| Migração | Resumo |
+|---|---|
+| **103** | bot_id FK, índice composto, telemetria (`flow_node_events`), versionamento (`flow_versions`), 5 RPCs |
+| **104** | Hardening (user_id NOT NULL, CHECK em nodes/edges 1 MB, view debug, RPC recompute) |
+| **105** | Performance (recompute O(N²)→O(N)), TTL telemetria, 2 RPCs novas para dashboard, CHECK flow_vars |
+
+### Migração 103 — Audit improvements
+
+| Item | Detalhe |
+|---|---|
+| Índice composto | `flows_user_id_updated_at_idx (user_id, updated_at desc)` — listagem ordenada |
+| Índice parcial | `flows_bot_id_idx (bot_id) WHERE bot_id IS NOT NULL` |
+| Coluna `flows.bot_id` | `uuid references bots(id) on delete set null` — substitui string `bot` fragil em renames |
+| Coluna `contacts.flow_version` | `integer` — snapshot da versão do fluxo em execução por contato |
+| Tabela `flow_node_events` | Telemetria por nó: `event in (entered, sent, failed, completed, abandoned)` + `latency_ms` + `error_msg`. RLS `fne_owner` (SELECT). 3 índices |
+| Tabela `flow_versions` | Snapshot imutável de cada `publishFlowAction`: `version` int, `nodes`, `edges`, `trigger_type`, `keywords`. UNIQUE `(flow_id, version)`. RLS `fv_owner` (ALL) |
+| RPC `flows_stats_by_user(p_user_id)` | Retorna `(flow_id, revenue, sales, leads)` em 1 query (era 2 queries N+1 no SSR) |
+| RPC `recompute_flow_conversion(p_flow_id)` | Recalcula `flows.conversion` = `count(approved) / executions * 100` para um fluxo |
+| RPC `flow_node_stats(p_flow_id, p_days=30)` | Agrega `flow_node_events` por `node_id` — usado pelo Inspector para mini-stats |
+| RPC `create_flow_version(p_flow_id)` | Cria snapshot atômico em `flow_versions` com auto-increment de `version` por `flow_id` |
+| RPC `rollback_flow_to_version(p_flow_id, p_version)` | Sobrescreve `flows.*` com os dados do snapshot |
+
+### Migração 104 — Schema hardening + recompute diário
+
+| Item | Detalhe |
+|---|---|
+| `DELETE flows WHERE user_id IS NULL` | Limpa órfãos antes do NOT NULL |
+| `flows.user_id SET NOT NULL` | Bloqueia INSERTs sem owner |
+| CHECK `flows_nodes_is_array` | `jsonb_typeof(nodes) = 'array'` — bloqueia objetos/strings |
+| CHECK `flows_edges_is_array` | `jsonb_typeof(edges) = 'array'` |
+| CHECK `flows_nodes_size` | `octet_length(nodes::text) <= 1_048_576` (1 MB) |
+| CHECK `flows_edges_size` | `octet_length(edges::text) <= 1_048_576` (1 MB) |
+| Trigger `flows_updated_at` | Idempotente via `DO $$ IF NOT EXISTS` |
+| RPC `recompute_all_flow_conversions()` | Implementação inicial (laço PL/pgSQL — substituída na mig 105) |
+| View `flows_orphaned` | Debug: fluxos com `bot_id` apontando para bots deletados |
+
+### Migração 105 — Performance + TTL + dashboard
+
+| Item | Detalhe |
+|---|---|
+| RPC `recompute_all_flow_conversions()` (refactor) | **1 UPDATE com CTE agregada** — O(N²) → O(N). Subselect com `count() GROUP BY flow_id` faz JOIN com `flows`. Retorna `row_count` |
+| RPC `cleanup_flow_node_events(p_days=30)` | DELETE de eventos com `created_at < now() - p_days days`. Retorna `row_count`. Usado pelo cron diário |
+| RPC `flow_node_stats_v2(p_flow_id, p_days=30)` | v2 com `abandoned` + `avg_latency_ms` (round) — usada pelo dashboard analytics por fluxo |
+| RPC `flow_events_timeseries(p_flow_id, p_days=7)` | Série diária para gráfico: `generate_series` + LEFT JOIN agrupado por dia (`America/Sao_Paulo`) |
+| CHECK `contacts_flow_vars_size` | `octet_length(flow_vars::text) <= 65_536` (64 KB) — previne payload bomb |
+
+### Crons relacionados aos fluxos
+
+| Cron (cron-job.org) | Schedule | Função |
+|---|---|---|
+| `/api/cron/recompute-flow-conversion` | 1x/dia 03:00 | Chama RPC `recompute_all_flow_conversions()` — atualiza `flows.conversion%` |
+| `/api/cron/cleanup-flow-events` | 1x/dia 06:00 | Chama RPC `cleanup_flow_node_events(30)` — TTL telemetria |
+| `/api/cron/process-remarketing` | 1x/hora | Também retoma fluxos com nó `delay` via `executeFlowNode` (importa `lib/flow-engine.ts`) |
 
 ---
 

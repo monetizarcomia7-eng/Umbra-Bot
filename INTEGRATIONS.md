@@ -69,10 +69,12 @@ Configurados manualmente no cron-job.org, não estão no `vercel.json`:
 
 | Rota | Frequência | Função |
 |---|---|---|
-| `/api/cron/process-remarketing` | 1x/hora | Enfileira contatos e envia mensagens de remarketing |
+| `/api/cron/process-remarketing` | 1x/hora | Enfileira contatos e envia mensagens de remarketing. **Também retoma fluxos com nó `delay`** via sentinel `__delay__:<nodeId>` (importa `executeFlowNode` de `lib/flow-engine.ts`) |
 | `/api/cron/process-broadcasts` | A cada 15 min | Processa broadcasts agendados (1 por rodada) |
+| `/api/cron/recompute-flow-conversion` | 1x/dia (03:00) | Recalcula `flows.conversion` em 1 UPDATE com JOIN (RPC `recompute_all_flow_conversions` — mig 105) |
+| `/api/cron/cleanup-flow-events` | 1x/dia (06:00) | Apaga `flow_node_events` com +30 dias (RPC `cleanup_flow_node_events` — mig 105) |
 
-Ambos usam `Authorization: Bearer CRON_SECRET`.
+Todos usam `Authorization: Bearer CRON_SECRET`. Os 4 contam para o `cron-job.org` (plano gratuito permite até 50 jobs).
 
 ---
 
@@ -85,7 +87,7 @@ Ambos usam `Authorization: Bearer CRON_SECRET`.
   - `lib/supabase/server.ts` — `createClient()` com anon key + cookies (Server Components, API Routes autenticadas)
   - `lib/supabase/client.ts` — `createClient()` browser (Client Components)
   - `lib/supabase/admin.ts` — `createAdminClient()` com service role key (webhooks externos, cron jobs — bypassa RLS)
-- **Total de arquivos de migração:** 101 arquivos `.sql` (numerados 000–100 + timestamps)
+- **Total de arquivos de migração:** 104 arquivos `.sql` (numerados 000–105 + timestamps)
 - **Migrações auxiliares (não executáveis diretamente):** `_combined.sql`, `_pending_analytics_037_to_041.sql`, `_pending_run_now.sql`
 
 ### Supabase Auth
@@ -113,8 +115,8 @@ Ambos usam `Authorization: Bearer CRON_SECRET`.
 
 - **Estado geral:** habilitado em todas as tabelas com dados de usuário
 - **Política padrão:** `auth.uid() = user_id` para leitura e escrita
-- **Exceção documentada:** tabelas acessadas por `createAdminClient()` (service role bypassa RLS) — usado em webhook Telegram, cron check-bots, cron process-remarketing, cron process-broadcasts, checkout pay (busca dados do dono do checkout), route `/r/[slug]`
-- **Funções com `security definer`:** `track_checkout_event`, `track_affiliate_click`, `submit_affiliate_application`, `get_public_affiliate_program`, `credit_affiliate_sale`, `record_redirect_click`, `redirect_analytics`, `validate_and_apply_coupon`, `checkout_tx_status`, `record_biolink_visit`, `record_biolink_link_click`, `enroll_in_course`, `upsert_lesson_progress`, `get_course_progress`, `issue_certificate`, `get_user_certificates`, `get_course_with_modules`
+- **Exceção documentada:** tabelas acessadas por `createAdminClient()` (service role bypassa RLS) — usado em webhook Telegram, cron check-bots, cron process-remarketing (delay resume via flow-engine), cron process-broadcasts, cron recompute-flow-conversion, cron cleanup-flow-events, checkout pay (busca dados do dono do checkout), route `/r/[slug]`
+- **Funções com `security definer`:** `track_checkout_event`, `track_affiliate_click`, `submit_affiliate_application`, `get_public_affiliate_program`, `credit_affiliate_sale`, `record_redirect_click`, `redirect_analytics`, `validate_and_apply_coupon`, `checkout_tx_status`, `record_biolink_visit`, `record_biolink_link_click`, `enroll_in_course`, `upsert_lesson_progress`, `get_course_progress`, `issue_certificate`, `get_user_certificates`, `get_course_with_modules`, `recompute_flow_conversion`, `recompute_all_flow_conversions`, `cleanup_flow_node_events`, `flow_node_stats`, `flow_node_stats_v2`, `flow_events_timeseries`, `create_flow_version`, `rollback_flow_to_version` (migrações 103/104/105 — fluxos)
 
 ### Supabase Realtime — Canais em uso
 
@@ -368,7 +370,7 @@ supabase
 |---|---|
 | `bot_connected` | OnboardingWizard, após registrar webhook |
 | `flow_created` | `FlowsClient.tsx` (CRUD thin orchestrator) |
-| `flow_published` | `FlowsClient.tsx` (CRUD thin orchestrator) |
+| `flow_published` | `FlowsClient.tsx` (após `publishFlowAction` retornar version) |
 | `flow_deleted` | `FlowsClient.tsx` (CRUD thin orchestrator) |
 | `gateway_connected` | GatewaysClient (manual + OAuth callback) |
 | `gateway_disconnected` | GatewaysClient |
@@ -608,28 +610,35 @@ supabase
 
 #### Telegram → `/api/telegram/webhook?bot_id=<uuid>`
 
+**Engine extraída em `lib/flow-engine.ts`** (compartilhada com o cron de delay) — exports principais: `executeFlowNode({ ... })`, `loadFlow(flowId, supabase, version?)`, `getLatestFlowVersion`, `buildEdgeMap`, `findStartNode`, `evaluateCondition`, `logNodeEvent`, `sendTelegramPhoto/Video/WithKeyboard` (todos retornam `boolean`), `clearFlowState`.
+
 **Fluxo completo:**
 
 1. Telegram envia `POST` com `X-Telegram-Bot-Api-Secret-Token` no header
 2. Rota busca bot pelo `bot_id` na tabela `bots` via `createAdminClient()`
 3. Compara header com `bot.webhook_secret` — retorna 401 se inválido
-4. **Update é `message` com texto `/start` (novo contato):**
+4. **Rate-limit por contato:** `rateLimit('flow-exec:{bot_id}:{telegram_id}', 60, 60_000)` — retorna 429 se excedido (evita loop de callback_query)
+5. **Update é `message` com texto `/start` (novo contato):**
    - Faz upsert do contato em `contacts`
-   - Insere `activity_event` tipo `lead`
+   - Insere `activity_event` tipo `lead` + dispara webhook externo `lead.created`
    - Insere `checkout_event` `conversation_started` (fire-and-forget)
-   - Se bot tem `active_flow_id`: executa motor de fluxo (`executeFlowNode` recursivo, depth ≤ 20)
+   - Se bot tem `active_flow_id`: busca a **última versão publicada** (`getLatestFlowVersion`) e executa via `loadFlow(id, supabase, version)` — **snapshot imutável** (mig 103: `contacts.flow_version`)
    - Senão: envia `welcome_message` com substituição de variáveis `{nome}/{bot}/{data}`
-5. **Update é `message` com texto (contato com fluxo ativo):**
+6. **Update é `message` com texto (contato com fluxo ativo):**
+   - Carrega o fluxo na **versão em execução do contato** (não na atual!) — `loadFlow(id, supabase, contact.flow_version)`
    - Salva resposta em `flow_vars[variavel_do_nó]`
    - Avança para próximo nó no fluxo
-6. **Update é `callback_query` (botão pressionado):**
+7. **Update é `callback_query` (botão pressionado):**
    - `answerCallbackQuery` para dispensar spinner
    - Identifica botão pelo índice em `flow_btn_{i}`
+   - Carrega snapshot da versão em execução
    - Avança fluxo pelo `sourceHandle` correspondente
-7. **Mensagem sem fluxo ativo:** envia `fallback_message` se configurado
-8. Sempre retorna 200 (Telegram não reenvia se receber 200)
+8. **Mensagem sem fluxo ativo:** verifica fluxos com `trigger_type='keyword'` — se bater, executa; senão envia `fallback_message`
+9. Sempre retorna 200 (Telegram não reenvia se receber 200)
 
-**Tipos de nó executados:** `message`, `question`, `buttons`, `tag`, `delay` (pulado), `image`, `link`, `offer`, `condition` (pega primeiro branch), `end`/`handoff` (terminal).
+**Telemetria automática:** cada nó executado insere em `flow_node_events` (eventos `entered`/`sent`/`failed`/`completed`/`abandoned` + `latency_ms` + `error_msg`). Fire-and-forget — silencia erro `42P01` se tabela ainda não existe.
+
+**Tipos de nó executados (17):** `message`, `question`, `buttons` (até 6 saídas), `tag` (add/remove), `delay` (agenda em `flow_scheduled_sends` com sentinel `__delay__:<nodeId>` — cron retoma), `image`, `video`, `link`, `checkout`, `offer`, `condition` (9 operadores reais: equals/not_equals/contains/starts_with/ends_with/not_empty/empty/gt/lt), `phone`, `upsell`, `downsell`, `orderbump`, `remarketing` (agenda mensagem futura), `end`/`handoff` (terminal — registra `completed`).
 
 ---
 
@@ -972,8 +981,11 @@ Total de migrações: **101 arquivos** (numeradas de 000 a 100, mais arquivos de
 |---|---|
 | `profiles` | Perfil público do usuário (nome, plano, saldo, avatar) |
 | `bots` | Bots Telegram cadastrados (token criptografado, webhook_secret, status) |
-| `flows` | Fluxos de automação (nodes, edges, trigger_type, keywords) |
-| `contacts` | Leads/compradores capturados pelos bots (city, state, flow_vars, notes, telegram_id; RPCs: contacts_kpis, contacts_filter_options v2, find_duplicate_contacts — migração 099) |
+| `flows` | Fluxos de automação (nodes, edges, trigger_type, keywords, **bot_id FK** mig 103, executions, conversion, **CHECK 1MB + array** mig 104) |
+| `flow_versions` | Snapshots imutáveis criados a cada `publishFlowAction` — permite rollback (mig 103, RLS owner) |
+| `flow_node_events` | Telemetria por nó (entered/sent/failed/completed/abandoned + latency_ms + error_msg) — mig 103. TTL 30 dias via cron `cleanup-flow-events` (mig 105) |
+| `flow_scheduled_sends` | Mensagens agendadas pelos nós `remarketing` + `delay` (sentinel `__delay__:<nodeId>`) — mig 102 |
+| `contacts` | Leads/compradores capturados pelos bots (city, state, flow_vars, notes, telegram_id; RPCs: contacts_kpis, contacts_filter_options v2, find_duplicate_contacts — migração 099; **flow_id/flow_node_id/flow_vars** mig 064; **flow_version** mig 103 — snapshot da versão do fluxo em execução; **CHECK flow_vars ≤ 64 KB** mig 105) |
 | `transactions` | Transações financeiras (PIX, status, customer, UTMs, affiliate_id, checkout_id, customer_device) |
 | `withdrawals` | Solicitações de saque (amount, status, account_id, notes, payout_tx_id) |
 | `bank_accounts` | Contas bancárias dos usuários (pix_key, kind, label) |
