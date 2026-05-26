@@ -1,10 +1,10 @@
 'use client'
 import { useRef, useState, useCallback, useEffect } from 'react'
-import { snapGrid } from '../../_shared/constants'
-import { NODE_W, NODE_H } from '../../_shared/nodeTypes'
+import { snapGrid, nodeUid, MIN_ZOOM, MAX_ZOOM, DRAG_THRESHOLD, PAN_THRESHOLD, edgeUid } from '../../_shared/constants'
+import { NODE_W, NODE_H, nodeTypes } from '../../_shared/nodeTypes'
 import FlowEdges from './FlowEdges'
 import FlowNode from './FlowNode'
-import type { FlowNodeType, FlowEdgeType } from '../../_shared/types'
+import type { FlowNodeType, FlowEdgeType, FlowNodeStatsRow } from '../../_shared/types'
 
 interface CanvasProps {
   nodes: FlowNodeType[]
@@ -25,6 +25,9 @@ interface CanvasProps {
   containerRef: React.RefObject<HTMLDivElement | null>
   reconnectEdgeId: string | null
   onReconnectEdge: (edgeId: string, targetId: string) => void
+  onAddNode: (node: FlowNodeType) => void
+  nodeStats: Map<string, FlowNodeStatsRow>
+  errorNodeIds: Set<string>
 }
 
 interface DragState {
@@ -47,23 +50,21 @@ interface BoxState {
   curY: number
 }
 
-const MIN_ZOOM = 0.2
-const MAX_ZOOM = 2
-
 export default function Canvas({
   nodes, edges, vp, setVp, selectedIds, selectedEdgeId,
   onSelectNode, onSelectNodes, onSelectEdge, onUpdateNode, onUpdateNodes,
   onAddEdge, onDragEnd, connecting, setConnecting, containerRef,
-  reconnectEdgeId, onReconnectEdge,
+  reconnectEdgeId, onReconnectEdge, onAddNode, nodeStats, errorNodeIds,
 }: CanvasProps) {
   const [dragging, setDragging] = useState<DragState | null>(null)
   const [panning, setPanning] = useState<PanState | null>(null)
   const [boxSelect, setBoxSelect] = useState<BoxState | null>(null)
   const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null)
+  const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null)
+  const [dragOverActive, setDragOverActive] = useState(false)
   const movedRef = useRef(false)
   const bgPannedRef = useRef(false)
 
-  // Fix #1: single startNodeId string (first node with no incoming edges)
   const startNodeId = (() => {
     const hasIncoming = new Set(edges.map(e => e.target))
     return nodes.find(n => !hasIncoming.has(n.id))?.id ?? null
@@ -100,6 +101,7 @@ export default function Canvas({
 
   const onBgMouseDown = useCallback((e: React.MouseEvent) => {
     if (e.button !== 0) return
+    // FIX médio: reset explícito ao iniciar nova ação de fundo
     bgPannedRef.current = false
 
     if (e.shiftKey) {
@@ -114,9 +116,8 @@ export default function Canvas({
   useEffect(() => {
     const onMouseMove = (e: MouseEvent) => {
       if (dragging) {
-        // Fix #5: drag threshold 10px
-        const movedEnough = Math.abs(e.clientX - dragging.startX) > 10 ||
-          Math.abs(e.clientY - dragging.startY) > 10
+        const movedEnough = Math.abs(e.clientX - dragging.startX) > DRAG_THRESHOLD ||
+          Math.abs(e.clientY - dragging.startY) > DRAG_THRESHOLD
         if (movedEnough) {
           movedRef.current = true
           const dx = (e.clientX - dragging.startX) / vp.zoom
@@ -134,7 +135,7 @@ export default function Canvas({
       if (panning) {
         const dx = e.clientX - panning.startX
         const dy = e.clientY - panning.startY
-        if (Math.abs(dx) > 3 || Math.abs(dy) > 3) bgPannedRef.current = true
+        if (Math.abs(dx) > PAN_THRESHOLD || Math.abs(dy) > PAN_THRESHOLD) bgPannedRef.current = true
         setVp({ x: panning.origVp.x + dx, y: panning.origVp.y + dy, zoom: vp.zoom })
       }
 
@@ -149,7 +150,7 @@ export default function Canvas({
       }
     }
 
-    const onMouseUp = (e: MouseEvent) => {
+    const onMouseUp = () => {
       if (dragging) {
         if (movedRef.current) onDragEnd()
         setDragging(null)
@@ -184,10 +185,9 @@ export default function Canvas({
       window.removeEventListener('mousemove', onMouseMove)
       window.removeEventListener('mouseup', onMouseUp)
     }
-  }, [dragging, panning, boxSelect, connecting, vp, nodes, selectedIds, toCanvas, onUpdateNodes, onDragEnd, setVp, setConnecting])
+  }, [dragging, panning, boxSelect, connecting, vp, nodes, selectedIds, toCanvas, onUpdateNodes, onDragEnd, setVp, setConnecting, onSelectNodes])
 
   const onWheel = useCallback((e: React.WheelEvent) => {
-    e.preventDefault()
     const rect = containerRef.current?.getBoundingClientRect()
     if (!rect) return
     const cx = e.clientX - rect.left
@@ -201,8 +201,12 @@ export default function Canvas({
     })
   }, [vp, containerRef, setVp])
 
-  const handleClick = useCallback((e: React.MouseEvent) => {
-    if (bgPannedRef.current) return
+  const handleClick = useCallback(() => {
+    if (bgPannedRef.current) {
+      // FIX médio: reset após consumir
+      bgPannedRef.current = false
+      return
+    }
     onSelectNode(null)
     onSelectEdge(null)
   }, [onSelectNode, onSelectEdge])
@@ -221,7 +225,7 @@ export default function Canvas({
       const exists = edges.some(e => e.source === connecting.nodeId && e.target === targetId && (e.sourceHandle ?? 0) === connecting.handle)
       if (!exists) {
         onAddEdge({
-          id: `e-${Date.now()}`,
+          id: edgeUid(),
           source: connecting.nodeId,
           target: targetId,
           sourceHandle: connecting.handle,
@@ -231,6 +235,35 @@ export default function Canvas({
     setConnecting(null)
     setMousePos(null)
   }, [connecting, reconnectEdgeId, edges, onAddEdge, onReconnectEdge, setConnecting])
+
+  // ── Drag & drop da palette para o canvas ────────────────────────────────────
+  const onDragOver = useCallback((e: React.DragEvent) => {
+    if (e.dataTransfer.types.includes('application/x-flow-node')) {
+      e.preventDefault()
+      e.dataTransfer.dropEffect = 'copy'
+      if (!dragOverActive) setDragOverActive(true)
+    }
+  }, [dragOverActive])
+
+  const onDragLeave = useCallback((e: React.DragEvent) => {
+    // só desativa quando sai do container raiz (não filhos)
+    if (e.currentTarget === e.target) setDragOverActive(false)
+  }, [])
+
+  const onDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    setDragOverActive(false)
+    const type = e.dataTransfer.getData('application/x-flow-node')
+    if (!type || !nodeTypes[type]) return
+    const pos = toCanvas(e.clientX, e.clientY)
+    const t = nodeTypes[type]
+    onAddNode({
+      id: nodeUid(),
+      type,
+      position: { x: snapGrid(pos.x - NODE_W / 2), y: snapGrid(pos.y - NODE_H / 2) },
+      data: { ...(t.defaultData ?? {}) },
+    })
+  }, [toCanvas, onAddNode])
 
   const boxRect = boxSelect ? {
     x: Math.min(boxSelect.startX, boxSelect.curX),
@@ -249,10 +282,15 @@ export default function Canvas({
         backgroundSize: `${20 * vp.zoom}px ${20 * vp.zoom}px`,
         backgroundPosition: `${vp.x}px ${vp.y}px`,
         cursor: panning ? 'grabbing' : connecting ? 'crosshair' : 'default',
+        outline: dragOverActive ? '2px dashed var(--primary)' : 'none',
+        outlineOffset: -2,
       }}
       onMouseDown={onBgMouseDown}
       onClick={handleClick}
       onWheel={onWheel}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
     >
       <svg
         style={{
@@ -269,7 +307,9 @@ export default function Canvas({
             nodes={nodes}
             edges={edges}
             selectedEdgeId={selectedEdgeId}
+            hoveredEdgeId={hoveredEdgeId}
             onSelectEdge={onSelectEdge}
+            onHoverEdge={setHoveredEdgeId}
             connecting={connecting}
             mousePos={mousePos}
           />
@@ -278,7 +318,9 @@ export default function Canvas({
               key={n.id}
               node={n}
               isSelected={selectedIds.has(n.id)}
-              isStart={n.id === startNodeId}  // Fix #1: single string comparison
+              isStart={n.id === startNodeId}
+              isError={errorNodeIds.has(n.id)}
+              stats={nodeStats.get(n.id) ?? null}
               connecting={connecting}
               onMouseDown={onNodeMouseDown}
               onDoubleClick={onNodeDoubleClick}

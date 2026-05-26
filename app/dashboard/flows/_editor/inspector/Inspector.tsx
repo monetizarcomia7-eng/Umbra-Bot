@@ -1,20 +1,27 @@
 'use client'
+import { Copy, Trash2, AlertCircle, CheckCircle2 } from 'lucide-react'
 import { nodeTypes } from '../../_shared/nodeTypes'
-import type { FlowNodeType } from '../../_shared/types'
+import { isSafeUrl } from '../../_shared/constants'
+import type { FlowNodeType, FlowNodeStatsRow } from '../../_shared/types'
 
 interface Props {
   node: FlowNodeType
+  stats: FlowNodeStatsRow | null
   onChange: (updated: FlowNodeType) => void
   onDelete: () => void
+  onDuplicate: () => void
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <div className="mb-3">
       <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>
         {label}
       </label>
       {children}
+      {hint && (
+        <p className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>{hint}</p>
+      )}
     </div>
   )
 }
@@ -26,7 +33,58 @@ const inputStyle = {
   color: 'var(--text)',
 }
 
-export default function Inspector({ node, onChange, onDelete }: Props) {
+function UrlInput({
+  value,
+  onChange,
+  placeholder,
+}: {
+  value: string
+  onChange: (v: string) => void
+  placeholder?: string
+}) {
+  const trimmed = (value ?? '').trim()
+  const isEmpty = trimmed.length === 0
+  const isValid = !isEmpty && isSafeUrl(trimmed)
+  const hasError = !isEmpty && !isValid
+
+  return (
+    <div>
+      <div className="relative">
+        <input
+          className={inputCls}
+          style={{
+            ...inputStyle,
+            paddingRight: 30,
+            border: hasError
+              ? '1px solid var(--danger)'
+              : isValid
+              ? '1px solid color-mix(in oklab, var(--success) 60%, var(--border))'
+              : '1px solid var(--border)',
+          }}
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          placeholder={placeholder}
+          inputMode="url"
+        />
+        {isValid && (
+          <CheckCircle2 size={14} className="absolute right-2 top-1/2 -translate-y-1/2"
+            style={{ color: 'var(--success)' }} />
+        )}
+        {hasError && (
+          <AlertCircle size={14} className="absolute right-2 top-1/2 -translate-y-1/2"
+            style={{ color: 'var(--danger)' }} />
+        )}
+      </div>
+      {hasError && (
+        <p className="text-[10px] mt-1" style={{ color: 'var(--danger)' }}>
+          URL inválida. Use http(s):// e evite endereços privados (localhost, 10.x, etc.).
+        </p>
+      )}
+    </div>
+  )
+}
+
+export default function Inspector({ node, stats, onChange, onDelete, onDuplicate }: Props) {
   const t = nodeTypes[node.type]
   const set = (patch: Partial<typeof node.data>) =>
     onChange({ ...node, data: { ...node.data, ...patch } })
@@ -39,23 +97,54 @@ export default function Inspector({ node, onChange, onDelete }: Props) {
           <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
             {t?.label ?? node.type}
           </p>
-          <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-            ID: {node.id}
+          <p className="text-xs mt-0.5 font-mono" style={{ color: 'var(--text-muted)' }}>
+            ID: {node.id.slice(0, 12)}…
           </p>
         </div>
-        <button
-          onClick={onDelete}
-          className="text-xs px-2 py-1 rounded-lg hover:bg-surface-2 transition-colors"
-          style={{ color: 'var(--danger)' }}
-        >
-          Apagar
-        </button>
+        <div className="flex gap-1">
+          <button
+            onClick={onDuplicate}
+            className="text-xs px-2 py-1 rounded-lg hover:bg-surface-2 transition-colors flex items-center gap-1"
+            style={{ color: 'var(--text-muted)' }}
+            title="Duplicar (D)"
+          >
+            <Copy size={12} />
+          </button>
+          <button
+            onClick={onDelete}
+            className="text-xs px-2 py-1 rounded-lg hover:bg-surface-2 transition-colors flex items-center gap-1"
+            style={{ color: 'var(--danger)' }}
+          >
+            <Trash2 size={12} />
+          </button>
+        </div>
       </div>
+
+      {/* Mini-stats (30d) */}
+      {stats && (stats.sent > 0 || stats.entered > 0 || stats.failed > 0) && (
+        <div className="px-4 py-2 border-b grid grid-cols-3 gap-2 text-center"
+          style={{ borderColor: 'var(--border)', background: 'var(--surface-2)' }}>
+          <div>
+            <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>Enviados</p>
+            <p className="text-xs font-semibold" style={{ color: 'var(--text)' }}>{stats.sent}</p>
+          </div>
+          <div>
+            <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>Concluíram</p>
+            <p className="text-xs font-semibold" style={{ color: 'var(--success)' }}>{stats.completed}</p>
+          </div>
+          <div>
+            <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>Falhas</p>
+            <p className="text-xs font-semibold" style={{ color: stats.failed > 0 ? 'var(--danger)' : 'var(--text)' }}>
+              {stats.failed}
+            </p>
+          </div>
+        </div>
+      )}
 
       <div className="flex-1 overflow-y-auto p-4">
         {/* Message */}
         {node.type === 'message' && (
-          <Field label="Mensagem">
+          <Field label="Mensagem" hint="Suporta {nome}, {email}, {bot}, {data}">
             <textarea
               className={inputCls}
               style={{ ...inputStyle, resize: 'vertical', minHeight: 80 }}
@@ -83,7 +172,7 @@ export default function Inspector({ node, onChange, onDelete }: Props) {
                 className={inputCls}
                 style={inputStyle}
                 value={node.data.variable ?? ''}
-                onChange={e => set({ variable: e.target.value })}
+                onChange={e => set({ variable: e.target.value.replace(/[^a-zA-Z0-9_]/g, '') })}
                 placeholder="nome"
               />
             </Field>
@@ -102,12 +191,15 @@ export default function Inspector({ node, onChange, onDelete }: Props) {
                 placeholder="Escolha uma opção:"
               />
             </Field>
-            <Field label="Opções (uma por linha)">
+            <Field label="Opções (uma por linha — máx 6)">
               <textarea
                 className={inputCls}
                 style={{ ...inputStyle, resize: 'vertical', minHeight: 80 }}
                 value={(node.data.options ?? []).join('\n')}
-                onChange={e => set({ options: e.target.value.split('\n').filter(Boolean) })}
+                onChange={e => {
+                  const opts = e.target.value.split('\n').filter(Boolean).slice(0, 6)
+                  set({ options: opts })
+                }}
                 placeholder="Opção 1&#10;Opção 2&#10;Opção 3"
               />
             </Field>
@@ -117,33 +209,32 @@ export default function Inspector({ node, onChange, onDelete }: Props) {
         {/* Condition */}
         {node.type === 'condition' && (
           <>
-            <Field label="Variável">
-              <input
-                className={inputCls}
-                style={inputStyle}
+            <Field label="Variável" hint="Nome da variável a comparar (ex: nome)">
+              <input className={inputCls} style={inputStyle}
                 value={node.data.variable ?? ''}
                 onChange={e => set({ variable: e.target.value })}
                 placeholder="nome"
               />
             </Field>
             <Field label="Operador">
-              <select
-                className={inputCls}
-                style={inputStyle}
+              <select className={inputCls} style={inputStyle}
                 value={node.data.operator ?? 'equals'}
                 onChange={e => set({ operator: e.target.value })}
               >
                 <option value="equals">é igual a</option>
+                <option value="not_equals">é diferente de</option>
                 <option value="contains">contém</option>
                 <option value="starts_with">começa com</option>
+                <option value="ends_with">termina com</option>
                 <option value="not_empty">não está vazio</option>
+                <option value="empty">está vazio</option>
+                <option value="gt">maior que (número)</option>
+                <option value="lt">menor que (número)</option>
               </select>
             </Field>
-            {node.data.operator !== 'not_empty' && (
+            {!['not_empty', 'empty'].includes(node.data.operator ?? '') && (
               <Field label="Valor">
-                <input
-                  className={inputCls}
-                  style={inputStyle}
+                <input className={inputCls} style={inputStyle}
                   value={node.data.value ?? ''}
                   onChange={e => set({ value: e.target.value })}
                   placeholder="valor"
@@ -157,23 +248,16 @@ export default function Inspector({ node, onChange, onDelete }: Props) {
         {node.type === 'delay' && (
           <>
             <Field label="Quantidade">
-              <input
-                type="number"
-                min={1}
-                className={inputCls}
-                style={inputStyle}
+              <input type="number" min={1} className={inputCls} style={inputStyle}
                 value={node.data.amount ?? 1}
                 onChange={e => set({ amount: Number(e.target.value) })}
               />
             </Field>
-            <Field label="Unidade">
-              <select
-                className={inputCls}
-                style={inputStyle}
+            <Field label="Unidade" hint="O contato recebe a mensagem do próximo nó após este intervalo. Processado pelo cron a cada 1 hora.">
+              <select className={inputCls} style={inputStyle}
                 value={node.data.unit ?? 'minutos'}
                 onChange={e => set({ unit: e.target.value })}
               >
-                <option value="segundos">Segundos</option>
                 <option value="minutos">Minutos</option>
                 <option value="horas">Horas</option>
                 <option value="dias">Dias</option>
@@ -232,7 +316,7 @@ export default function Inspector({ node, onChange, onDelete }: Props) {
 
         {/* Handoff */}
         {node.type === 'handoff' && (
-          <Field label="Time / Atendente">
+          <Field label="Time / Atendente" hint="O atendimento via humano ainda não está disponível. Este nó marca o fluxo como concluído.">
             <input className={inputCls} style={inputStyle}
               value={node.data.team ?? ''}
               onChange={e => set({ team: e.target.value })}
@@ -244,10 +328,10 @@ export default function Inspector({ node, onChange, onDelete }: Props) {
         {/* Image */}
         {node.type === 'image' && (
           <>
-            <Field label="URL da imagem">
-              <input className={inputCls} style={inputStyle}
+            <Field label="URL da imagem" hint="Use HTTPS. Domínios privados são bloqueados.">
+              <UrlInput
                 value={node.data.imageUrl ?? ''}
-                onChange={e => set({ imageUrl: e.target.value })}
+                onChange={v => set({ imageUrl: v })}
                 placeholder="https://..."
               />
             </Field>
@@ -263,10 +347,10 @@ export default function Inspector({ node, onChange, onDelete }: Props) {
         {/* Video */}
         {node.type === 'video' && (
           <>
-            <Field label="URL do vídeo">
-              <input className={inputCls} style={inputStyle}
+            <Field label="URL do vídeo" hint="MP4 público. Use HTTPS.">
+              <UrlInput
                 value={node.data.videoUrl ?? ''}
-                onChange={e => set({ videoUrl: e.target.value })}
+                onChange={v => set({ videoUrl: v })}
                 placeholder="https://..."
               />
             </Field>
@@ -290,9 +374,9 @@ export default function Inspector({ node, onChange, onDelete }: Props) {
               />
             </Field>
             <Field label="URL">
-              <input className={inputCls} style={inputStyle}
+              <UrlInput
                 value={node.data.url ?? ''}
-                onChange={e => set({ url: e.target.value })}
+                onChange={v => set({ url: v })}
                 placeholder="https://..."
               />
             </Field>
@@ -301,24 +385,41 @@ export default function Inspector({ node, onChange, onDelete }: Props) {
 
         {/* Checkout */}
         {node.type === 'checkout' && (
-          <Field label="URL do checkout">
-            <input className={inputCls} style={inputStyle}
-              value={node.data.url ?? ''}
-              onChange={e => set({ url: e.target.value })}
-              placeholder="https://..."
-            />
-          </Field>
+          <>
+            <Field label="Texto do botão (opcional)">
+              <input className={inputCls} style={inputStyle}
+                value={node.data.text ?? ''}
+                onChange={e => set({ text: e.target.value })}
+                placeholder="Comprar agora"
+              />
+            </Field>
+            <Field label="URL do checkout" hint="Link da página de checkout Umbra Bot ou externo.">
+              <UrlInput
+                value={node.data.url ?? ''}
+                onChange={v => set({ url: v })}
+                placeholder="https://umbrabot.com.br/c/..."
+              />
+            </Field>
+          </>
         )}
 
         {/* Phone */}
         {node.type === 'phone' && (
-          <Field label="Texto da solicitação">
-            <input className={inputCls} style={inputStyle}
-              value={(node.data.text as string) ?? ''}
-              onChange={e => set({ text: e.target.value })}
-              placeholder="Por favor, compartilhe seu telefone"
-            />
-          </Field>
+          <>
+            <Field label="Texto da solicitação">
+              <input className={inputCls} style={inputStyle}
+                value={(node.data.text as string) ?? ''}
+                onChange={e => set({ text: e.target.value })}
+                placeholder="Por favor, compartilhe seu telefone"
+              />
+            </Field>
+            <Field label="Salvar em variável">
+              <input className={inputCls} style={inputStyle}
+                value={node.data.variable ?? 'telefone'}
+                onChange={e => set({ variable: e.target.value.replace(/[^a-zA-Z0-9_]/g, '') })}
+              />
+            </Field>
+          </>
         )}
 
         {/* Upsell / Downsell */}
@@ -343,6 +444,19 @@ export default function Inspector({ node, onChange, onDelete }: Props) {
                 onChange={e => set({ description: e.target.value })}
               />
             </Field>
+            <Field label="Texto do botão (CTA)">
+              <input className={inputCls} style={inputStyle}
+                value={node.data.cta ?? ''}
+                onChange={e => set({ cta: e.target.value })}
+              />
+            </Field>
+            <Field label="URL do botão (opcional)">
+              <UrlInput
+                value={node.data.url ?? ''}
+                onChange={v => set({ url: v })}
+                placeholder="https://..."
+              />
+            </Field>
           </>
         )}
 
@@ -361,20 +475,27 @@ export default function Inspector({ node, onChange, onDelete }: Props) {
                 onChange={e => set({ price: Number(e.target.value) })}
               />
             </Field>
+            <Field label="Descrição">
+              <textarea className={inputCls}
+                style={{ ...inputStyle, resize: 'vertical', minHeight: 60 }}
+                value={node.data.description ?? ''}
+                onChange={e => set({ description: e.target.value })}
+              />
+            </Field>
           </>
         )}
 
         {/* Remarketing */}
         {node.type === 'remarketing' && (
           <>
-            <Field label="Mensagem">
+            <Field label="Mensagem" hint="Suporta {nome}, {email}.">
               <textarea className={inputCls}
                 style={{ ...inputStyle, resize: 'vertical', minHeight: 80 }}
                 value={node.data.text ?? ''}
                 onChange={e => set({ text: e.target.value })}
               />
             </Field>
-            <Field label="Atraso">
+            <Field label="Atraso" hint="Processado pelo cron a cada hora.">
               <div className="flex gap-2">
                 <input type="number" min={1} className={inputCls} style={inputStyle}
                   value={node.data.delayAmount ?? 1}
@@ -389,6 +510,13 @@ export default function Inspector({ node, onChange, onDelete }: Props) {
                   <option value="dias">Dias</option>
                 </select>
               </div>
+            </Field>
+            <Field label="Adicionar tag (opcional)">
+              <input className={inputCls} style={inputStyle}
+                value={node.data.tag ?? ''}
+                onChange={e => set({ tag: e.target.value })}
+                placeholder="seguindo"
+              />
             </Field>
           </>
         )}

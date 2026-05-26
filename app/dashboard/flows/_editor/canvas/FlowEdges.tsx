@@ -1,18 +1,22 @@
 'use client'
-import { bezierPath, getHandlePos, getButtonHandleX } from '../../_shared/constants'
-import { nodeTypes, NODE_W, NODE_H } from '../../_shared/nodeTypes'
+import { bezierPath, getHandlePos } from '../../_shared/constants'
 import type { FlowNodeType, FlowEdgeType } from '../../_shared/types'
 
 interface Props {
   nodes: FlowNodeType[]
   edges: FlowEdgeType[]
   selectedEdgeId: string | null
+  hoveredEdgeId: string | null
   onSelectEdge: (id: string | null) => void
+  onHoverEdge: (id: string | null) => void
   connecting: { nodeId: string; handle: number } | null
   mousePos: { x: number; y: number } | null
 }
 
-export default function FlowEdges({ nodes, edges, selectedEdgeId, onSelectEdge, connecting, mousePos }: Props) {
+export default function FlowEdges({
+  nodes, edges, selectedEdgeId, hoveredEdgeId,
+  onSelectEdge, onHoverEdge, connecting, mousePos,
+}: Props) {
   const nodeById = new Map(nodes.map(n => [n.id, n]))
 
   return (
@@ -27,8 +31,8 @@ export default function FlowEdges({ nodes, edges, selectedEdgeId, onSelectEdge, 
         const tp = getHandlePos(tgt, 'input')
         const d = bezierPath(sp.x, sp.y, tp.x, tp.y)
         const isSelected = edge.id === selectedEdgeId
+        const isHovered  = !isSelected && edge.id === hoveredEdgeId
 
-        const t = nodeTypes[src.type]
         let color = 'var(--primary)'
         if (src.type === 'condition') {
           color = oi === 0 ? 'var(--success)' : 'var(--danger)'
@@ -38,15 +42,21 @@ export default function FlowEdges({ nodes, edges, selectedEdgeId, onSelectEdge, 
         }
 
         return (
-          <g key={edge.id} onClick={e => { e.stopPropagation(); onSelectEdge(edge.id) }}>
-            <path d={d} stroke="transparent" strokeWidth={12} fill="none" style={{ cursor: 'pointer' }} />
+          <g
+            key={edge.id}
+            onClick={e => { e.stopPropagation(); onSelectEdge(edge.id) }}
+            onMouseEnter={() => onHoverEdge(edge.id)}
+            onMouseLeave={() => onHoverEdge(null)}
+          >
+            {/* Hit area larger for easier interaction */}
+            <path d={d} stroke="transparent" strokeWidth={14} fill="none" style={{ cursor: 'pointer' }} />
             <path
               d={d}
-              stroke={isSelected ? 'var(--warning)' : color}
-              strokeWidth={isSelected ? 2.5 : 1.5}
+              stroke={isSelected ? 'var(--warning)' : isHovered ? 'var(--primary)' : color}
+              strokeWidth={isSelected ? 2.5 : isHovered ? 2.2 : 1.5}
               fill="none"
               strokeDasharray={isSelected ? '6 3' : undefined}
-              style={{ transition: 'stroke 0.15s' }}
+              style={{ transition: 'stroke 0.15s, stroke-width 0.15s' }}
             />
             {edge.label && (() => {
               const mx = (sp.x + tp.x) / 2

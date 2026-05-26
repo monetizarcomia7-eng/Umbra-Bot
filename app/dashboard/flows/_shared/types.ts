@@ -6,6 +6,7 @@ export interface RawFlowRow {
   id: string
   name: string
   bot: string
+  bot_id: string | null
   bot_color: string
   status: string
   executions: number
@@ -32,31 +33,41 @@ export interface FlowStatsMap {
   }
 }
 
-// ─── Internal types ────────────────────────────────────────────────────────────
+// ─── Node data (kept as wide bag for backwards compat) ─────────────────────────
+// Keep this union-friendly so we can refactor per-type later, but maintain the
+// full bag of optional fields to not break existing JSONB rows in the DB.
 
 export interface NodeData {
+  // Conversa
   text?: string
   question?: string
   variable?: string
   options?: string[]
+  // Lógica
   operator?: string
   value?: string
   amount?: number
   unit?: string
+  // Comercial
   product?: string
   price?: number
   cta?: string
+  // CRM
   action?: string
   tag?: string
   team?: string
+  // Mensagem genérica
   message?: string
+  // Mídia
   imageUrl?: string
   videoUrl?: string
   caption?: string
   url?: string
   description?: string
+  // Upsell / Downsell
   originalPrice?: number
   discountPrice?: number
+  // Outros
   campaignName?: string
   delayAmount?: number
   delayUnit?: string
@@ -80,7 +91,8 @@ export interface FlowEdgeType {
 export interface FlowMeta {
   id: string
   name: string
-  bot: string
+  bot: string           // label legacy ("@username" ou nome)
+  botId: string | null  // FK real (substitui `bot` em comparações)
   botColor: string
   status: 'published' | 'draft'
   executions: number
@@ -103,7 +115,28 @@ export interface FlowTemplate {
   id: string
   name: string
   description: string
+  category: 'inicio' | 'captura' | 'vendas' | 'pos-venda' | 'engajamento'
   icon: React.ElementType
   nodes: FlowNodeType[]
   edges: FlowEdgeType[]
+}
+
+// ─── Node stats (lazy-loaded) ──────────────────────────────────────────────────
+
+export interface FlowNodeStatsRow {
+  node_id: string
+  node_type: string
+  entered: number
+  sent: number
+  failed: number
+  completed: number
+}
+
+// ─── Versions ──────────────────────────────────────────────────────────────────
+
+export interface FlowVersionRow {
+  id: string
+  version: number
+  name: string
+  published_at: string
 }

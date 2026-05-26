@@ -5,9 +5,17 @@ import { Loader2 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { PageHeader } from '@/components/dashboard/PageHeader'
 import { useAnalytics } from '@/hooks/use-analytics'
+import {
+  createFlowAction,
+  duplicateFlowAction,
+  deleteFlowAction,
+  saveFlowAction,
+  publishFlowAction,
+} from '@/app/actions/flows'
 import type { RawFlowRow, RawBotOption, FlowMeta, FlowEditorData, FlowTemplate } from './_shared/types'
 import { mapRawMeta, mapRawFull } from './_shared/mappers'
 import { Toast } from './_shared/ui'
+import { TOAST_MS } from './_shared/constants'
 import FlowsList from './_list/FlowsList'
 import TemplatesModal from './_list/TemplatesModal'
 import FlowEditor from './_editor/FlowEditor'
@@ -30,25 +38,33 @@ export default function FlowsClient({ initialFlows, bots, userId }: Props) {
 
   const showToast = useCallback((msg: string, type: 'success' | 'error' = 'success') => {
     setToast({ msg, type })
-    setTimeout(() => setToast(null), 4000)
+    setTimeout(() => setToast(null), TOAST_MS)
   }, [])
 
   // Realtime — sincroniza listagem entre dispositivos
+  // FIX 1.1: preserva revenue/sales/leads (não estão na row do banco, vêm da RPC)
   useEffect(() => {
     const supabase = createClient()
     const channel = supabase
       .channel('flows-realtime')
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'flows', filter: `user_id=eq.${userId}` },
+      .on('postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'flows', filter: `user_id=eq.${userId}` },
         (payload) => {
           const updated = payload.new as RawFlowRow
-          setFlows(arr => arr.map(f => f.id === updated.id ? mapRawMeta(updated) : f))
+          setFlows(arr => arr.map(f => {
+            if (f.id !== updated.id) return f
+            const mapped = mapRawMeta(updated)
+            return { ...mapped, revenue: f.revenue, sales: f.sales, leads: f.leads }
+          }))
         })
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'flows', filter: `user_id=eq.${userId}` },
+      .on('postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'flows', filter: `user_id=eq.${userId}` },
         (payload) => {
           const inserted = payload.new as RawFlowRow
           setFlows(arr => arr.some(f => f.id === inserted.id) ? arr : [mapRawMeta(inserted), ...arr])
         })
-      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'flows', filter: `user_id=eq.${userId}` },
+      .on('postgres_changes',
+        { event: 'DELETE', schema: 'public', table: 'flows', filter: `user_id=eq.${userId}` },
         (payload) => {
           const deleted = payload.old as { id: string }
           setFlows(arr => arr.filter(f => f.id !== deleted.id))
@@ -64,138 +80,173 @@ export default function FlowsClient({ initialFlows, bots, userId }: Props) {
     const supabase = createClient()
     supabase
       .from('flows')
-      .select('id, name, bot, bot_color, status, executions, conversion, description, updated_at, nodes, edges, trigger_type, keywords')
+      .select('id, name, bot, bot_id, bot_color, status, executions, conversion, description, updated_at, nodes, edges, trigger_type, keywords')
       .eq('id', editingId)
       .single()
       .then(({ data, error }) => {
         if (!error && data) {
-          setEditorData(mapRawFull(data as unknown as Record<string, unknown>))
+          // Preserve stats already known
+          const existing = flows.find(f => f.id === editingId)
+          const full = mapRawFull(data as unknown as Record<string, unknown>)
+          if (existing) {
+            full.revenue = existing.revenue
+            full.sales = existing.sales
+            full.leads = existing.leads
+          }
+          setEditorData(full)
         } else {
           showToast('Erro ao carregar o fluxo.', 'error')
           setEditingId(null)
         }
         setEditorLoading(false)
       })
-  }, [editingId, showToast])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingId])
 
+  // ─── createFlow ─────────────────────────────────────────────────────────────
   async function createFlow(template?: FlowTemplate) {
     if (creating) return
     setCreating(true)
-    const supabase = createClient()
-    const name = template && template.id !== 'blank' ? template.name : 'Novo fluxo'
-    const nodes = template?.nodes ?? []
-    const edges = template?.edges ?? []
+    try {
+      const name = template && template.id !== 'blank' ? template.name : 'Novo fluxo'
+      const { id } = await createFlowAction({
+        name,
+        description: '',
+        nodes: (template?.nodes ?? []).map(n => ({
+          id: n.id, type: n.type, position: n.position,
+          data: n.data as unknown as Record<string, unknown>,
+        })),
+        edges: template?.edges ?? [],
+      })
 
-    const { data, error } = await supabase
-      .from('flows')
-      .insert({ user_id: userId, name, status: 'draft', description: '', nodes, edges })
-      .select('id')
-      .single()
-
-    if (error || !data) {
-      showToast('Erro ao criar fluxo. Tente novamente.', 'error')
+      const newMeta: FlowMeta = {
+        id, name, bot: '', botId: null, botColor: '#6366f1', status: 'draft',
+        executions: 0, conversion: 0, revenue: 0, sales: 0, leads: 0,
+        updatedAt: Date.now(), description: '',
+      }
+      setFlows(arr => [newMeta, ...arr])
+      setShowTemplates(false)
+      setEditingId(id)
+      track('flow_created', { flow_name: name })
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Erro ao criar fluxo.', 'error')
+    } finally {
       setCreating(false)
-      return
     }
-
-    const newMeta: FlowMeta = {
-      id: data.id, name, bot: '', botColor: '#6366f1', status: 'draft',
-      executions: 0, conversion: 0, revenue: 0, sales: 0, leads: 0,
-      updatedAt: Date.now(), description: '',
-    }
-    setFlows(arr => [newMeta, ...arr])
-    setCreating(false)
-    setShowTemplates(false)
-    setEditingId(data.id)
-    track('flow_created', { flow_name: name })
   }
 
+  // ─── duplicateFlow ──────────────────────────────────────────────────────────
   async function duplicateFlow(id: string) {
-    const supabase = createClient()
-
-    const { data: src, error: srcErr } = await supabase
-      .from('flows')
-      .select('name, bot, bot_color, description, nodes, edges, trigger_type, keywords')
-      .eq('id', id)
-      .eq('user_id', userId)
-      .single()
-
-    if (srcErr || !src) { showToast('Erro ao duplicar o fluxo.', 'error'); return }
-
-    const { data, error } = await supabase
-      .from('flows')
-      .insert({
-        user_id: userId, name: `${src.name} (cópia)`,
-        bot: src.bot, bot_color: src.bot_color,
-        description: src.description, status: 'draft',
-        nodes: src.nodes ?? [], edges: src.edges ?? [],
-        trigger_type: (src as Record<string, unknown>).trigger_type ?? 'start',
-        keywords: (src as Record<string, unknown>).keywords ?? [],
-      })
-      .select('id')
-      .single()
-
-    if (error || !data) { showToast('Erro ao duplicar o fluxo.', 'error'); return }
-
-    const original = flows.find(f => f.id === id)
-    const newMeta: FlowMeta = {
-      id: data.id, name: `${src.name} (cópia)`,
-      bot: original?.bot ?? '', botColor: original?.botColor ?? '#6366f1',
-      status: 'draft', executions: 0, conversion: 0, revenue: 0, sales: 0, leads: 0,
-      updatedAt: Date.now(), description: src.description ?? '',
+    try {
+      const { id: newId } = await duplicateFlowAction(id)
+      const original = flows.find(f => f.id === id)
+      const newMeta: FlowMeta = {
+        id: newId,
+        name: `${original?.name ?? 'Fluxo'} (cópia)`,
+        bot: original?.bot ?? '',
+        botId: original?.botId ?? null,
+        botColor: original?.botColor ?? '#6366f1',
+        status: 'draft', executions: 0, conversion: 0, revenue: 0, sales: 0, leads: 0,
+        updatedAt: Date.now(), description: original?.description ?? '',
+      }
+      setFlows(arr => [newMeta, ...arr])
+      showToast('Fluxo duplicado com sucesso.', 'success')
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Erro ao duplicar fluxo.', 'error')
     }
-    setFlows(arr => [newMeta, ...arr])
-    showToast('Fluxo duplicado com sucesso.', 'success')
   }
 
+  // ─── saveFlow ───────────────────────────────────────────────────────────────
   async function saveFlow(updated: FlowEditorData): Promise<boolean> {
-    const supabase = createClient()
-    const { error } = await supabase
-      .from('flows')
-      .update({
-        name: updated.name, bot: updated.bot, bot_color: updated.botColor,
-        status: updated.status, description: updated.description,
-        nodes: updated.nodes, edges: updated.edges,
-        trigger_type: updated.triggerType, keywords: updated.keywords,
+    try {
+      await saveFlowAction({
+        id: updated.id,
+        name: updated.name,
+        description: updated.description,
+        botId: updated.botId,
+        botColor: updated.botColor,
+        status: updated.status,
+        nodes: updated.nodes.map(n => ({
+          id: n.id, type: n.type, position: n.position,
+          data: n.data as unknown as Record<string, unknown>,
+        })),
+        edges: updated.edges,
+        triggerType: updated.triggerType,
+        keywords: updated.keywords,
       })
-      .eq('id', updated.id)
-      .eq('user_id', userId)
 
-    if (error) { showToast('Erro ao salvar. Verifique sua conexão.', 'error'); return false }
-
-    setFlows(arr => arr.map(f => f.id === updated.id
-      ? { ...f, name: updated.name, bot: updated.bot, botColor: updated.botColor, status: updated.status, description: updated.description, updatedAt: Date.now() }
-      : f
-    ))
-    return true
-  }
-
-  async function publishFlow(updated: FlowEditorData): Promise<void> {
-    const toPublish = { ...updated, status: 'published' as const }
-    const ok = await saveFlow(toPublish)
-    if (!ok) return
-
-    const supabase = createClient()
-    const botEntry = bots.find(b => (b.username ? `@${b.username}` : b.name) === updated.bot)
-    if (botEntry) {
-      supabase.from('bots').update({ active_flow_id: updated.id }).eq('id', botEntry.id).eq('user_id', userId).then()
+      // Optimistic local update (preserva stats)
+      setFlows(arr => arr.map(f => f.id === updated.id
+        ? { ...f,
+            name: updated.name,
+            bot: updated.bot,
+            botId: updated.botId,
+            botColor: updated.botColor,
+            status: updated.status,
+            description: updated.description,
+            updatedAt: Date.now(),
+          }
+        : f
+      ))
+      return true
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Erro ao salvar.', 'error')
+      return false
     }
-    supabase.from('activity_events').insert({
-      user_id: userId, type: 'flowPublished',
-      title: 'Fluxo publicado',
-      description: `Fluxo "${updated.name}" publicado com ${updated.nodes.length} nós.`,
-    }).then()
-
-    track('flow_published', { flow_name: updated.name, node_count: updated.nodes.length })
-    showToast(`Fluxo "${updated.name}" publicado!`, 'success')
   }
 
+  // ─── publishFlow ────────────────────────────────────────────────────────────
+  async function publishFlow(updated: FlowEditorData): Promise<void> {
+    try {
+      const { version } = await publishFlowAction({
+        id: updated.id,
+        name: updated.name,
+        description: updated.description,
+        botId: updated.botId,
+        botColor: updated.botColor,
+        status: 'published',
+        nodes: updated.nodes.map(n => ({
+          id: n.id, type: n.type, position: n.position,
+          data: n.data as unknown as Record<string, unknown>,
+        })),
+        edges: updated.edges,
+        triggerType: updated.triggerType,
+        keywords: updated.keywords,
+      })
+
+      // Local sync (preserva stats)
+      setFlows(arr => arr.map(f => f.id === updated.id
+        ? { ...f,
+            name: updated.name,
+            bot: updated.bot,
+            botId: updated.botId,
+            botColor: updated.botColor,
+            status: 'published',
+            description: updated.description,
+            updatedAt: Date.now(),
+          }
+        : f
+      ))
+
+      track('flow_published', { flow_name: updated.name, node_count: updated.nodes.length })
+      showToast(
+        `Fluxo "${updated.name}" publicado${version != null ? ` (v${version})` : ''}!`,
+        'success',
+      )
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Erro ao publicar.', 'error')
+    }
+  }
+
+  // ─── deleteFlow ─────────────────────────────────────────────────────────────
   async function deleteFlow(id: string) {
-    const supabase = createClient()
-    const { error } = await supabase.from('flows').delete().eq('id', id).eq('user_id', userId)
-    if (error) { showToast('Erro ao apagar o fluxo.', 'error'); return }
-    setFlows(arr => arr.filter(f => f.id !== id))
-    track('flow_deleted', {})
+    try {
+      await deleteFlowAction(id)
+      setFlows(arr => arr.filter(f => f.id !== id))
+      track('flow_deleted', {})
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Erro ao apagar fluxo.', 'error')
+    }
   }
 
   // ── Editor carregando ──────────────────────────────────────────────────────

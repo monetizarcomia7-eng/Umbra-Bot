@@ -2,12 +2,14 @@
 import { nodeTypes, NODE_W, NODE_H } from '../../_shared/nodeTypes'
 import { getNodePreview, getButtonHandleX } from '../../_shared/constants'
 import NodeHandle from './NodeHandle'
-import type { FlowNodeType, FlowEdgeType } from '../../_shared/types'
+import type { FlowNodeType, FlowNodeStatsRow } from '../../_shared/types'
 
 interface Props {
   node: FlowNodeType
   isSelected: boolean
-  isStart: boolean  // Fix #1: single boolean comparison
+  isStart: boolean
+  isError: boolean
+  stats: FlowNodeStatsRow | null
   connecting: { nodeId: string; handle: number } | null
   onMouseDown: (e: React.MouseEvent, id: string) => void
   onDoubleClick: (id: string) => void
@@ -35,7 +37,7 @@ const NODE_COLORS: Record<string, { bg: string; accent: string }> = {
   remarketing:{ bg: 'var(--danger)',  accent: 'var(--danger)' },
 }
 
-export default function FlowNode({ node, isSelected, isStart, connecting, onMouseDown, onDoubleClick, onStartConnect, onEndConnect }: Props) {
+export default function FlowNode({ node, isSelected, isStart, isError, stats, connecting, onMouseDown, onDoubleClick, onStartConnect, onEndConnect }: Props) {
   const t = nodeTypes[node.type]
   const colors = NODE_COLORS[node.type] ?? { bg: 'var(--primary)', accent: 'var(--primary)' }
   const preview = getNodePreview(node)
@@ -46,13 +48,21 @@ export default function FlowNode({ node, isSelected, isStart, connecting, onMous
     ? Math.max(2, node.data.options?.length ?? 2)
     : (t?.outputs ?? 1)
 
+  // Stroke prioridade: error > selected > default
+  const stroke = isError ? 'var(--danger)' : isSelected ? 'var(--primary)' : 'var(--border)'
+  const strokeWidth = isError ? 2 : isSelected ? 2 : 1
+  const filter = isSelected
+    ? 'drop-shadow(0 0 8px color-mix(in oklab, var(--primary) 40%, transparent))'
+    : isError
+    ? 'drop-shadow(0 0 6px color-mix(in oklab, var(--danger) 30%, transparent))'
+    : undefined
+
   return (
     <g
       onMouseDown={e => onMouseDown(e, node.id)}
       onDoubleClick={() => onDoubleClick(node.id)}
       style={{ cursor: 'grab' }}
     >
-      {/* START badge — Fix #1: only one node gets this */}
       {isStart && (
         <text
           x={x + NODE_W / 2}
@@ -67,7 +77,6 @@ export default function FlowNode({ node, isSelected, isStart, connecting, onMous
         </text>
       )}
 
-      {/* Card background */}
       <rect
         x={x}
         y={y}
@@ -75,12 +84,11 @@ export default function FlowNode({ node, isSelected, isStart, connecting, onMous
         height={NODE_H}
         rx={12}
         fill="var(--surface)"
-        stroke={isSelected ? 'var(--primary)' : 'var(--border)'}
-        strokeWidth={isSelected ? 2 : 1}
-        filter={isSelected ? 'drop-shadow(0 0 8px color-mix(in oklab, var(--primary) 40%, transparent))' : undefined}
+        stroke={stroke}
+        strokeWidth={strokeWidth}
+        filter={filter}
       />
 
-      {/* Accent left bar */}
       <rect
         x={x + 2}
         y={y + 10}
@@ -90,7 +98,6 @@ export default function FlowNode({ node, isSelected, isStart, connecting, onMous
         fill={colors.accent}
       />
 
-      {/* Type label */}
       <text
         x={x + 16}
         y={y + 22}
@@ -102,7 +109,6 @@ export default function FlowNode({ node, isSelected, isStart, connecting, onMous
         {t?.label ?? node.type}
       </text>
 
-      {/* Preview text */}
       <foreignObject x={x + 16} y={y + 30} width={NODE_W - 32} height={NODE_H - 44}>
         <div
           style={{
@@ -119,6 +125,23 @@ export default function FlowNode({ node, isSelected, isStart, connecting, onMous
           {preview}
         </div>
       </foreignObject>
+
+      {/* Mini-stats (30d) */}
+      {stats && (stats.sent > 0 || stats.entered > 0) && (
+        <foreignObject x={x + NODE_W - 60} y={y + 6} width={54} height={14}>
+          <div style={{
+            fontSize: 9,
+            color: 'var(--text-muted)',
+            textAlign: 'right',
+            fontFamily: 'ui-monospace, monospace',
+          }}>
+            {stats.sent > 0 ? `${stats.sent}↗` : `${stats.entered}↘`}
+            {stats.failed > 0 && (
+              <span style={{ color: 'var(--danger)', marginLeft: 4 }}>!{stats.failed}</span>
+            )}
+          </div>
+        </foreignObject>
+      )}
 
       {/* Input handle */}
       <NodeHandle

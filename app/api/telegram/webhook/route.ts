@@ -139,6 +139,75 @@ async function clearFlowState(contactId: string, supabase: SupabaseAdmin) {
     .eq('id', contactId)
 }
 
+// ─── Telemetria de execução ───────────────────────────────────────────────────
+// Insere evento em flow_node_events fire-and-forget.
+// Migração 103 cria a tabela; em ambientes sem ela, a falha é silenciosa.
+function logNodeEvent(
+  supabase: SupabaseAdmin,
+  args: {
+    userId: string
+    flowId: string
+    nodeId: string
+    nodeType: string
+    contactId: string | null
+    event: 'entered' | 'sent' | 'failed' | 'completed' | 'abandoned'
+    errorMsg?: string
+    latencyMs?: number
+  },
+) {
+  supabase.from('flow_node_events').insert({
+    user_id:    args.userId,
+    flow_id:    args.flowId,
+    node_id:    args.nodeId,
+    node_type:  args.nodeType,
+    contact_id: args.contactId,
+    event:      args.event,
+    error_msg:  args.errorMsg ?? null,
+    latency_ms: args.latencyMs ?? null,
+  }).then(({ error }) => {
+    // Silencioso — tabela pode não existir em ambientes sem migração 103
+    if (error && error.code !== '42P01' /* relation does not exist */) {
+      console.error('[webhook] flow_node_events insert:', error.message)
+    }
+  })
+}
+
+// ─── Avaliador de condições (B5 fix — operadores reais) ──────────────────────
+function evaluateCondition(
+  operator: string,
+  variableValue: string | undefined,
+  compareValue: string,
+): boolean {
+  const v = (variableValue ?? '').toString().trim()
+  const c = (compareValue ?? '').toString().trim()
+
+  switch (operator) {
+    case 'equals':       return v.toLowerCase() === c.toLowerCase()
+    case 'not_equals':   return v.toLowerCase() !== c.toLowerCase()
+    case 'contains':     return v.toLowerCase().includes(c.toLowerCase())
+    case 'starts_with':  return v.toLowerCase().startsWith(c.toLowerCase())
+    case 'ends_with':    return v.toLowerCase().endsWith(c.toLowerCase())
+    case 'not_empty':    return v.length > 0
+    case 'empty':        return v.length === 0
+    case 'gt': {
+      const a = Number(v); const b = Number(c)
+      return Number.isFinite(a) && Number.isFinite(b) && a > b
+    }
+    case 'lt': {
+      const a = Number(v); const b = Number(c)
+      return Number.isFinite(a) && Number.isFinite(b) && a < b
+    }
+    default:
+      return true // fallback: primeiro branch
+  }
+}
+
+const DELAY_UNIT_MS: Record<string, number> = {
+  minutos: 60_000,
+  horas:   3_600_000,
+  dias:    86_400_000,
+}
+
 // ─── Flow execution engine ─────────────────────────────────────────────────────
 
 async function executeFlowNode(
@@ -151,29 +220,48 @@ async function executeFlowNode(
   plainToken: string,
   chatId: number,
   flowId: string,
+  userId: string,
   supabase: SupabaseAdmin,
   depth = 0,
 ): Promise<void> {
   if (depth > 20) return // guard against infinite loops
 
-  const node = nodes.find(n => n.id === nodeId)
-  if (!node) {
+  const foundNode = nodes.find(n => n.id === nodeId)
+  if (!foundNode) {
     await clearFlowState(contact.id, supabase)
     return
   }
+  // Captura final (TS narrowing dentro da closure de advance)
+  const node: FlowNode = foundNode
+
+  const t0 = Date.now()
+  // Telemetria — sempre marca entrada no nó
+  logNodeEvent(supabase, {
+    userId, flowId, nodeId: node.id, nodeType: node.type,
+    contactId: contact.id, event: 'entered',
+  })
 
   const flowVars = contact.flow_vars ?? {}
   const outEdges = edgeMap.get(nodeId) ?? []
 
   async function advance(edgeIndex = 0) {
+    logNodeEvent(supabase, {
+      userId, flowId, nodeId: node.id, nodeType: node.type,
+      contactId: contact.id, event: 'sent',
+      latencyMs: Date.now() - t0,
+    })
     // Prefer edge at given index, fallback to first
     const next = outEdges[edgeIndex] ?? outEdges[0]
     if (next) {
       await executeFlowNode(
         next.target, nodes, edgeMap, contact, firstName, botName,
-        plainToken, chatId, flowId, supabase, depth + 1,
+        plainToken, chatId, flowId, userId, supabase, depth + 1,
       )
     } else {
+      logNodeEvent(supabase, {
+        userId, flowId, nodeId: node.id, nodeType: node.type,
+        contactId: contact.id, event: 'completed',
+      })
       await clearFlowState(contact.id, supabase)
     }
   }
@@ -238,8 +326,53 @@ async function executeFlowNode(
     }
 
     case 'delay': {
-      // Serverless: skip the wait, advance immediately
-      await advance()
+      // FIX B6: agora respeita o delay real usando flow_scheduled_sends.
+      // O cron process-remarketing processa o "wake up" e continua a partir
+      // do próximo nó (target da primeira aresta de saída).
+      const amount = Number(node.data.amount ?? 0)
+      const unit   = (node.data.unit as string) ?? 'minutos'
+      const nextEdge = outEdges[0]
+
+      if (!nextEdge || amount <= 0) {
+        // Sem destino ou delay zero — segue imediatamente
+        await advance()
+        break
+      }
+
+      const ms = amount * (DELAY_UNIT_MS[unit] ?? 60_000)
+      const scheduledAt = new Date(Date.now() + ms).toISOString()
+
+      const { data: contactMeta } = await supabase
+        .from('contacts')
+        .select('user_id, bot_id')
+        .eq('id', contact.id)
+        .single()
+
+      if (contactMeta?.user_id && contactMeta?.bot_id) {
+        // Marca payload especial: message vazio + node_id alvo no error/notes
+        // Reutilizamos a tabela flow_scheduled_sends adicionando metadata via campo
+        // 'message' = JSON sentinel iniciado por __delay__:<target_node_id>
+        supabase.from('flow_scheduled_sends').insert({
+          user_id:      contactMeta.user_id,
+          bot_id:       contactMeta.bot_id,
+          contact_id:   contact.id,
+          chat_id:      chatId,
+          message:      `__delay__:${nextEdge.target}`,
+          scheduled_at: scheduledAt,
+          flow_id:      flowId,
+        }).then(({ error }) => {
+          if (error) console.error('[webhook] delay schedule insert error:', error.message)
+        })
+
+        // Persiste posição para o cron retomar com contexto correto
+        await supabase
+          .from('contacts')
+          .update({ flow_id: flowId, flow_node_id: nodeId })
+          .eq('id', contact.id)
+      } else {
+        // Sem metadata: fallback para advance imediato
+        await advance()
+      }
       break
     }
 
@@ -288,8 +421,32 @@ async function executeFlowNode(
     }
 
     case 'condition': {
-      // Basic: take first edge (true branch). Full evaluation is future work.
-      await advance(0)
+      // FIX B5: avalia operador real (não pega sempre o primeiro branch).
+      // sourceHandle 0 = "Sim", sourceHandle 1 = "Não"
+      const variable = (node.data.variable as string) ?? ''
+      const operator = (node.data.operator as string) ?? 'equals'
+      const compare  = (node.data.value    as string) ?? ''
+      const value    = flowVars[variable]
+      const result   = evaluateCondition(operator, value, compare)
+      // Procura aresta cujo sourceHandle bate (preferida); senão usa índice
+      const desiredHandle = result ? 0 : 1
+      const edge =
+        outEdges.find(e => Number(e.sourceHandle) === desiredHandle) ??
+        outEdges[desiredHandle] ??
+        outEdges[0]
+      if (edge) {
+        logNodeEvent(supabase, {
+          userId, flowId, nodeId: node.id, nodeType: node.type,
+          contactId: contact.id, event: 'sent',
+          latencyMs: Date.now() - t0,
+        })
+        await executeFlowNode(
+          edge.target, nodes, edgeMap, contact, firstName, botName,
+          plainToken, chatId, flowId, userId, supabase, depth + 1,
+        )
+      } else {
+        await clearFlowState(contact.id, supabase)
+      }
       break
     }
 
@@ -517,7 +674,7 @@ export async function POST(request: NextRequest) {
           await executeFlowNode(
             targetEdge.target, flow.nodes, edgeMap, contactState,
             cbContact.first_name, bot.name as string,
-            plainToken, cbChatId, flow.id, supabase,
+            plainToken, cbChatId, flow.id, bot.user_id as string, supabase,
           )
         }
       }
@@ -633,7 +790,7 @@ export async function POST(request: NextRequest) {
           await executeFlowNode(
             startNode.id, flow.nodes, edgeMap, contactState,
             firstName, bot.name as string,
-            plainToken, chatId, flow.id, supabase,
+            plainToken, chatId, flow.id, bot.user_id as string, supabase,
           )
           return new NextResponse(null, { status: 200 })
         }
@@ -738,7 +895,7 @@ export async function POST(request: NextRequest) {
           await executeFlowNode(
             nextEdge.target, flow.nodes, edgeMap, contactState,
             contactState.first_name, bot.name as string,
-            plainToken, chatId, flow.id, supabase,
+            plainToken, chatId, flow.id, bot.user_id as string, supabase,
           )
         } else {
           await clearFlowState(contactState.id, supabase)
@@ -787,7 +944,7 @@ export async function POST(request: NextRequest) {
           await executeFlowNode(
             startNode.id, matchedFlow.nodes, edgeMap, contactState,
             firstName, bot.name as string,
-            plainToken, chatId, matchedFlow.id, supabase,
+            plainToken, chatId, matchedFlow.id, bot.user_id as string, supabase,
           )
           return new NextResponse(null, { status: 200 })
         }

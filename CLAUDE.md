@@ -48,6 +48,14 @@ umbra-bot/
 │   │   │                         # voteArticleAction (toggle vote via RPC + rate limit 10/min), getUserVoteAction,
 │   │   │                         # logGuideSearchAction (INSERT em guide_search_logs se query ≥ 2 chars)
 │   │   │                         # fire-and-forget com void .then({error}) — nunca .catch() no PostgrestFilterBuilder
+│   │   ├── flows.ts              # 8 Server Actions: createFlowAction (Zod + rate-limit 30/min + limite 500/user),
+│   │   │                         # saveFlowAction (Zod + size limit 800KB + bot_id lookup + rate-limit 120/min),
+│   │   │                         # publishFlowAction (valida URLs http/https + snapshot via create_flow_version RPC),
+│   │   │                         # duplicateFlowAction (rate-limit 20/min), deleteFlowAction,
+│   │   │                         # getFlowNodeStatsAction (lazy load — RPC flow_node_stats por 30 dias),
+│   │   │                         # listFlowVersionsAction + rollbackFlowVersionAction (rate-limit 10/min),
+│   │   │                         # simulateFlowAction (modo de teste server-side — sem enviar ao Telegram)
+│   │   │                         # isSafeUrl() bloqueia localhost/169.254/10.x/192.168 (SSRF guard)
 │   │   └── recaptcha.ts          # verifyRecaptchaAction: Server Action para verificar token reCAPTCHA v2
 │   │                             # Chama verifyRecaptchaToken de lib/recaptcha — secret key nunca exposta ao browser
 │   ├── (auth)/
@@ -3057,46 +3065,55 @@ bq-tip (verde) | bq-warn (amarelo) | bq-note (azul)
 
 ```
 app/dashboard/flows/
-  ├── page.tsx              # Server Component — SSR flows metadata + bots em paralelo
+  ├── page.tsx              # Server Component — SSR: flows metadata (LIMIT 500) + bots +
+  │                         # RPC flows_stats_by_user (mig 103, agregada em 1 query)
   │                         # select sem nodes/edges (lazy load); passa initialFlows + bots + userId
-  ├── FlowsClient.tsx       # Client Component — orquestrador thin: CRUD, Realtime, roteamento lista↔editor
+  ├── FlowsClient.tsx       # Client Component — usa Server Actions (createFlowAction,
+  │                         # saveFlowAction, publishFlowAction, duplicateFlowAction, deleteFlowAction)
+  │                         # FIX 1.1: Realtime UPDATE preserva revenue/sales/leads (não estão na row)
   ├── _shared/
-  │   ├── types.ts          # FlowMeta, FlowEditorData, FlowNodeType, FlowEdgeType, RawFlowRow, etc.
+  │   ├── types.ts          # FlowMeta (inclui botId), FlowEditorData, FlowNodeType, FlowEdgeType,
+  │   │                     # FlowNodeStatsRow, FlowVersionRow, RawFlowRow (com bot_id)
   │   ├── nodeTypes.tsx     # NODE_TYPES, NODE_CATEGORIES, ícones e cores por tipo de nó
-  │   ├── mappers.ts        # mapRawMeta, mapRawFull, fmtBRLdec
-  │   ├── constants.ts      # autoLayout, snapGrid(v: number), NODE_W, NODE_H, MAX_HISTORY
+  │   ├── mappers.ts        # mapRawMeta (inclui botId), mapRawFull, fmtBRLdec
+  │   ├── constants.ts      # MAX_HISTORY/AUTO_SAVE_MS/PREVIEW_MAX_DEPTH/DRAG_THRESHOLD/PAN_THRESHOLD/
+  │   │                     # MIN_ZOOM/MAX_ZOOM/TOAST_MS centralizados; autoLayout (DYNAMIC import dagre);
+  │   │                     # snapGrid, nodeUid()/edgeUid() (crypto.randomUUID); validateFlow();
+  │   │                     # isSafeUrl (bloqueia localhost/169.254/10.x/192.168)
   │   └── ui.tsx            # Toast, Spinner e componentes de UI compartilhados
   ├── _list/
   │   ├── NoDataState.tsx   # Estado vazio quando flows.length === 0
   │   ├── TemplatesModal.tsx # Modal de 3 templates (branco, captura lead, vendas simples)
-  │   ├── FlowCard.tsx      # Card de fluxo na listagem (menu, status, métricas, duplicar, apagar)
+  │   ├── FlowCard.tsx      # Card de fluxo com confirmação inline de Apagar
   │   └── FlowsList.tsx     # Grid de cards com busca e filtros
   └── _editor/
-      ├── FlowEditor.tsx    # Orquestrador do editor: estado global, undo/redo, auto-save, topbar
-      ├── Palette.tsx       # Painel lateral de tipos de nó; constrói o FlowNodeType completo
-      │                     # Props: onAdd(node: FlowNodeType), canvasCenter: {x, y}
-      ├── BotSelector.tsx   # Dropdown de bots vinculados ao fluxo
-      ├── EdgePanel.tsx     # Painel de edição de aresta selecionada (redirecionar / remover)
-      ├── MiniMap.tsx       # Mapa miniatura do canvas (SVG, posição viewport)
-      ├── ZoomControls.tsx  # Botões zoom in/out e ajustar à tela
+      ├── FlowEditor.tsx    # Orquestrador: useMemo isDirty (hash leve, sem JSON.stringify),
+      │                     # auto-save 30s só quando dirty=true, atalhos D (duplicar) / Del / Ctrl+Z/Y,
+      │                     # validação ao publicar (banner de erros + bordas nos nós), versionamento,
+      │                     # modo de teste, botSelector usa botId real
+      ├── Palette.tsx       # Painel de tipos de nó: clique OU drag&drop para o canvas
+      ├── BotSelector.tsx   # Dropdown: value=botId|null, onChange(botId|null)
+      ├── EdgePanel.tsx     # Painel de edição de aresta selecionada
+      ├── MiniMap.tsx       # Mapa miniatura do canvas
+      ├── ZoomControls.tsx  # Botões zoom in/out + fit
+      ├── TestRunnerModal.tsx # Modo de teste: simulateFlowAction → trail bot/user/system
+      │                     # com variáveis customizáveis (nome, email, etc.) sem enviar ao Telegram
+      ├── FlowVersionsPanel.tsx # Lista de versões publicadas + Restaurar (rollback via RPC)
+      ├── ImportExportModal.tsx # Export JSON (clipboard/download) + Import (file upload/textarea)
+      │                     # Validação de shape + reescrita defensiva de IDs (nodeUid/edgeUid)
+      │                     # ao importar — evita colisão com nós existentes
       ├── canvas/
-      │   ├── Canvas.tsx    # Canvas principal (pan, zoom, seleção múltipla, box-select, drag)
-      │   │                 # Props: nodes, edges, vp, setVp, selectedIds, selectedEdgeId,
-      │   │                 #        onSelectNode(id, shift?), onSelectNodes(ids[]),
-      │   │                 #        onSelectEdge, onUpdateNode, onUpdateNodes,
-      │   │                 #        onAddEdge, onDragEnd, connecting, setConnecting,
-      │   │                 #        containerRef, reconnectEdgeId, onReconnectEdge
-      │   │                 # onNodeDoubleClick tratado internamente pelo Canvas
-      │   ├── FlowNode.tsx  # Renderização de nó individual (drag, handles, badge ▷ INÍCIO)
-      │   ├── FlowEdges.tsx # SVG das arestas (curvas Bézier, rótulos, seleção)
-      │   └── NodeHandle.tsx # Handle de entrada/saída para iniciar conexões
+      │   ├── Canvas.tsx    # Pan/zoom/box-select/drag/conexões + drag&drop drop da Palette,
+      │   │                 # hover de aresta (state hoveredEdgeId), bgPannedRef reset após consumo
+      │   ├── FlowNode.tsx  # Renderiza nó + mini-stats (sent↗/entered↘/!failed) no canto + borda
+      │   │                 # vermelha quando errorNodeIds inclui o id
+      │   ├── FlowEdges.tsx # SVG das arestas — hover destaca em var(--primary)
+      │   └── NodeHandle.tsx # Handle de entrada/saída
       ├── inspector/
-      │   └── Inspector.tsx # Painel de propriedades do nó selecionado
-      │                     # Props: node: FlowNodeType,
-      │                     #        onChange(updated: FlowNodeType),  ← nó completo, NÃO NodeData
-      │                     #        onDelete()                        ← sem onCommit
+      │   └── Inspector.tsx # Painel de propriedades + stats do nó (Enviados/Concluíram/Falhas)
+      │                     # + botão Duplicar (atalho D)
       └── preview/
-          └── PreviewChat.tsx # Prévia da conversa com ramificações (buildPreviewPath recursivo)
+          └── PreviewChat.tsx # Prévia da conversa com ramificações
 ```
 
 ### Fluxo de dados
@@ -3293,15 +3310,205 @@ Funções auxiliares:
 - `flow_node_id`: nó aguardando resposta (null = sem espera ativa)
 - `flow_vars`: JSONB com variáveis capturadas (`{"nome": "João", "email": "j@x.com"}`)
 
+### Webhook — execução de fluxo (atualizado — migração 103)
+
+| Nó | Comportamento na execução | Estado |
+|---|---|---|
+| `message` | Envia texto e avança | — |
+| `question`/`phone` | Envia texto, pausa em `flow_node_id` | Aguarda resposta |
+| `buttons` | Envia InlineKeyboard, pausa | Aguarda `callback_query` |
+| `tag` | Adiciona/remove tag e avança | — |
+| `delay` | **REAL**: insere `flow_scheduled_sends` com sentinel `__delay__:<targetNodeId>` + persiste `flow_node_id`. O cron `process-remarketing` processa o sentinel, retoma na posição salva e re-executa o fluxo a partir do próximo nó | `flow_node_id` |
+| `condition` | **REAL**: `evaluateCondition()` avalia operadores (equals, not_equals, contains, starts_with, ends_with, not_empty, empty, gt, lt) com case-insensitive em strings e Number em gt/lt. Escolhe branch pelo `sourceHandle` (0=Sim, 1=Não) | — |
+| `image`/`video` | Envia mídia + caption, avança | — |
+| `link`/`checkout` | Envia botão URL inline, avança | — |
+| `offer`/`upsell`/`downsell`/`orderbump` | Envia texto formatado + CTA URL, avança | — |
+| `remarketing` | Enfileira `flow_scheduled_sends` (cron envia depois) | — |
+| `handoff`/`end` | Terminal — limpa estado | — |
+
+**Telemetria (migração 103):**
+- `logNodeEvent(supabase, {...})` insere em `flow_node_events` fire-and-forget
+- Eventos: `entered`, `sent`, `failed`, `completed`, `abandoned` + `latency_ms`
+- RPC `flow_node_stats(p_flow_id, p_days=30)` agrega por `node_id` para o Inspector
+- `executeFlowNode` recebe `userId` adicional (assinatura nova)
+- Tabela pode não existir em ambientes sem migração: insert silencia erro `42P01`
+
+**Estado persistido na tabela `contacts` (migração 064):**
+- `flow_id`: fluxo ativo (FK para flows, ON DELETE SET NULL)
+- `flow_node_id`: nó aguardando resposta (null = sem espera ativa)
+- `flow_vars`: JSONB com variáveis capturadas
+- `flow_version` (mig 103): snapshot do fluxo (futuro — uso para imutabilidade)
+
+### Eventos PostHog
+
+| Evento | Quando | Props |
+|---|---|---|
+| `flow_created` | ao criar (blank ou template) | `{ flow_name }` |
+| `flow_published` | ao publicar | `{ flow_name, node_count }` |
+| `flow_deleted` | ao confirmar exclusão | `{}` |
+
+### Server Actions (app/actions/flows.ts) — Fase 2
+
+Todas autenticadas + rate-limited via Upstash Redis. Schema Zod valida tudo:
+
+| Action | Validação | Limites |
+|---|---|---|
+| `createFlowAction` | name 1–120, nodes ≤500, edges ≤1000 | 30/min; 500 fluxos/user |
+| `saveFlowAction` | + size limit 800KB por estrutura | 120/min |
+| `publishFlowAction` | + valida URLs http/https (SSRF guard) | 30/min |
+| `duplicateFlowAction` | UUID válido | 20/min |
+| `deleteFlowAction` | UUID válido | sem limit explícito (RLS protege) |
+| `getFlowNodeStatsAction` | UUID válido | — |
+| `listFlowVersionsAction` | UUID válido | — |
+| `rollbackFlowVersionAction` | UUID + version | 10/min |
+| `simulateFlowAction` | qualquer payload | — |
+
+**`publishFlowAction`** também:
+1. Valida URLs (bloqueia localhost, 169.254, 10.x, 192.168, .local)
+2. Cria snapshot via RPC `create_flow_version` → retorna `version`
+3. Atualiza `bots.active_flow_id` se `botId` estiver definido (substitui match-by-string)
+4. Insere `activity_event` (fire-and-forget)
+
+### Migração 103 — Tabelas e RPCs novas
+
+```sql
+-- Índices
+create index flows_user_id_updated_at_idx on flows(user_id, updated_at desc);
+create index flows_bot_id_idx on flows(bot_id) where bot_id is not null;
+
+-- Coluna nova em flows
+alter table flows add column bot_id uuid references bots(id) on delete set null;
+
+-- flow_node_events (telemetria, RLS owner SELECT)
+-- flow_versions (snapshots imutáveis, RLS owner ALL)
+-- contacts.flow_version (snapshot por contato — futuro)
+
+-- RPCs:
+flows_stats_by_user(p_user_id)              → table(flow_id, revenue, sales, leads)
+recompute_flow_conversion(p_flow_id)        → void
+flow_node_stats(p_flow_id, p_days=30)       → table com event aggregations
+create_flow_version(p_flow_id)              → integer (versão criada)
+rollback_flow_to_version(p_flow_id, p_ver)  → void
+```
+
+### Migração 104 — Schema hardening + cron de conversion
+
+```sql
+-- 1. user_id NOT NULL (limpa órfãos antes)
+delete from flows where user_id is null;
+alter table flows alter column user_id set not null;
+
+-- 2. CHECK constraints — nodes/edges devem ser arrays JSONB com até 1 MB cada
+alter table flows
+  add constraint flows_nodes_is_array check (jsonb_typeof(nodes) = 'array'),
+  add constraint flows_edges_is_array check (jsonb_typeof(edges) = 'array'),
+  add constraint flows_nodes_size check (octet_length(nodes::text) <= 1048576),
+  add constraint flows_edges_size check (octet_length(edges::text) <= 1048576);
+
+-- 3. RPC recompute_all_flow_conversions() — chamada 1x/dia pelo cron
+--    Atualiza conversion% = (count(approved transactions) / executions) * 100
+--    Retorna quantos fluxos foram atualizados
+
+-- 4. View flows_orphaned — debug: fluxos com bot_id apontando para bots deletados
+```
+
+**Cron:** `GET /api/cron/recompute-flow-conversion` — protegido por `CRON_SECRET`,
+chamado via cron-job.org 1x/dia (não está no vercel.json porque o plano Hobby só
+roda os 2 primeiros). Registra no `cron_log` + Sentry checkIn `recompute-flow-conversion`.
+
+### Fixes da auditoria aplicados
+
+| Fix | Onde |
+|---|---|
+| **1.1** Realtime UPDATE preserva revenue/sales/leads | [FlowsClient.tsx](app/dashboard/flows/FlowsClient.tsx) |
+| **1.2** `isDirty` via useMemo com hash leve (não JSON.stringify) | [FlowEditor.tsx](app/dashboard/flows/_editor/FlowEditor.tsx) |
+| **1.3** Auto-save só dispara quando `isDirty=true` | [FlowEditor.tsx](app/dashboard/flows/_editor/FlowEditor.tsx) |
+| **1.4** Índice composto `(user_id, updated_at desc)` | migração 103 |
+| **1.5** Server Actions com Zod + rate-limit substituem cliente Supabase | [app/actions/flows.ts](app/actions/flows.ts) |
+| **1.6** `dagre` via `await import('dagre')` (dynamic) | [_shared/constants.ts](app/dashboard/flows/_shared/constants.ts) |
+| **1.7** IDs via `crypto.randomUUID()` (nodeUid, edgeUid) | [_shared/constants.ts](app/dashboard/flows/_shared/constants.ts) |
+| **1.8** `RawFlowRow` inclui `bot_id` | [_shared/types.ts](app/dashboard/flows/_shared/types.ts) |
+| **B1** Query SSR usa RPC agregada + LIMIT 500 | [page.tsx](app/dashboard/flows/page.tsx) |
+| **B2** `bot_id` FK em flows (não string `bot`) | migração 103 + saveFlowAction |
+| **B3** BotSelector usa `b.id === value` corretamente | [BotSelector.tsx](app/dashboard/flows/_editor/BotSelector.tsx) |
+| **B4** Handoff: inspector deixa claro que é terminal | [Inspector.tsx](app/dashboard/flows/_editor/inspector/Inspector.tsx) |
+| **B5** `condition` avalia operadores reais | [webhook/route.ts](app/api/telegram/webhook/route.ts) |
+| **B6** `delay` real via `flow_scheduled_sends` + sentinel `__delay__` | webhook + [process-remarketing](app/api/cron/process-remarketing/route.ts) |
+| **médio** `pushHistory` não duplica snapshots idênticos | FlowEditor |
+| **médio** `bgPannedRef.current = false` após consumo | [Canvas.tsx](app/dashboard/flows/_editor/canvas/Canvas.tsx) |
+| **UX** highlight hover de aresta | [FlowEdges.tsx](app/dashboard/flows/_editor/canvas/FlowEdges.tsx) |
+| **UX** drag&drop palette → canvas | Palette + Canvas |
+| **UX** atalho `D` duplica nó selecionado | FlowEditor |
+| **UX** indicador "• Não salvo" no topbar | FlowEditor |
+| **UX** banner com validação ao publicar (lista de erros) | FlowEditor + validateFlow |
+| **UX** botão "Testar" — TestRunnerModal | TestRunnerModal |
+| **UX** botão "Histórico" — FlowVersionsPanel | FlowVersionsPanel |
+| **UX** mini-stats nos nós (30 dias) | FlowNode + Inspector |
+| **UX** confirmação inline de Apagar no FlowCard | FlowCard |
+| **segurança** SSRF guard nas URLs (isSafeUrl) | constants + publishFlowAction |
+
+### Atalhos de teclado (editor)
+
+| Tecla | Ação |
+|---|---|
+| `N` | Adiciona nó **mensagem** no centro do canvas |
+| `D` | Duplica nó(s) selecionado(s) |
+| `Ctrl+C` / `Cmd+C` | Copia nós selecionados (clipboard interno, não OS) |
+| `Ctrl+V` / `Cmd+V` | Cola nós do clipboard interno no centro |
+| `Ctrl+Z` / `Cmd+Z` | Desfazer |
+| `Ctrl+Y` / `Ctrl+Shift+Z` | Refazer |
+| `Delete` / `Backspace` | Apagar nó(s) ou aresta selecionada |
+| `Shift+click` | Adiciona/remove nó da seleção múltipla |
+| `Shift+drag` no fundo | Box-select (seleção por área) |
+| `Esc` | Limpa seleção, conexão em progresso, banner de erros |
+
+### Templates disponíveis (8 categorizados — `constants.ts`)
+
+| ID | Categoria | Nome | Nós | Descrição |
+|---|---|---|---|---|
+| `blank` | Começar | Fluxo em branco | 0 | Canvas limpo |
+| `lead-capture` | Captura | Captura de lead | 5 | nome + email + tag |
+| `webinar` | Captura | Webinar / Aula gratuita | 7 | inscrição + lembrete 1h antes |
+| `quiz` | Engajamento | Quiz / Diagnóstico | 7 | 3 perguntas + segmenta por resposta |
+| `reengage` | Engajamento | Reativação de inativos | 4 | mensagem + tag inativo |
+| `sales` | Vendas | Vendas simples | 6 | oferta + 3 botões |
+| `cart-recovery` | Vendas | Recuperação de carrinho | 5 | delay 1h + cupom + retry 24h |
+| `post-sale` | Pós-venda | Pós-venda + upsell | 7 | agradece + avaliação + upsell |
+
+`TemplatesModal` filtra por categoria (chips no topo) com contador por chip.
+Adicionar novo template: incluir em `FLOW_TEMPLATES` com `category` válida (definida em `FlowTemplate['category']`).
+
+### Validação inline no Inspector (URLs)
+
+`UrlInput` (componente interno do Inspector) substitui inputs de URL nos nós
+`image`, `video`, `link`, `checkout`, `upsell`, `downsell`:
+- Borda **verde** + ícone ✓ quando URL válida (HTTP/HTTPS público)
+- Borda **vermelha** + ícone ⚠ + mensagem quando inválida ou em IP privado
+- Usa o helper `isSafeUrl()` de `constants.ts` (mesma função do `publishFlowAction`)
+
+### Import / Export JSON
+
+`ImportExportModal` (botão `<FileJson>` na topbar):
+
+**Export:**
+- Snapshot completo: `{ format: 'umbra-flow', version: 1, name, description, triggerType, keywords, nodes, edges, exportedAt }`
+- Copiar para clipboard ou baixar `.json`
+
+**Import:**
+- Cole texto ou faça upload de `.json`
+- Valida `format === 'umbra-flow'`, `nodes` array (≤500), `edges` array (≤1000)
+- **Reescreve IDs** via `nodeUid()/edgeUid()` para evitar colisão com nós já existentes
+- Substitui graph atual (mas `Ctrl+Z` desfaz)
+
 ### Pendências conhecidas (backlog)
 
 | Item | Prioridade |
 |---|---|
-| Confirmação ao sair com mudanças não salvas | 🔴 Alta |
-| Copiar/colar nó (Ctrl+C/V) | 🟢 Baixa |
-| Export/Import JSON | 🟢 Baixa |
-| Estatísticas reais (executions++ no webhook) | 🟢 Baixa |
-| Keyword trigger no webhook (detectar palavras-chave e iniciar fluxo) | 🟢 Baixa |
+| `contacts.flow_version` usado para fixar nodes/edges em execuções | 🟢 Baixa |
+| Heatmap de nós (cor por taxa de conversão) | 🟢 Baixa |
+| Marketplace de templates da comunidade | 🟢 Baixa |
+| Webhook out (POST para URL externa) | 🟢 Baixa |
+| A/B test entre duas versões de fluxo | 🟢 Baixa |
 
 ---
 
