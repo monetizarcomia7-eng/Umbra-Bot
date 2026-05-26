@@ -38,6 +38,11 @@ export function mapRawFull(r: Record<string, unknown>): FlowEditorData {
   }
 }
 
+export const flowStatusMap: Record<string, { label: string; bg: string; color: string }> = {
+  published: { label: 'Publicado', bg: 'rgba(34,197,94,0.15)', color: 'var(--success)' },
+  draft:     { label: 'Rascunho',  bg: 'var(--surface-2)',     color: 'var(--text-muted)' },
+}
+
 export function fmtNum(n: number) { return n.toLocaleString('pt-BR') }
 export function fmtBRLdec(n: number) { return n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) }
 export function fmtPct(n: number) { return n.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + '%' }

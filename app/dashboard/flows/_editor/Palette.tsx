@@ -55,7 +55,7 @@ export default function Palette({ onAdd, canvasCenter }: Props) {
                 style={{ color: 'var(--text)' }}
                 title={t.description}
               >
-                <span className="text-base leading-none">{t.icon}</span>
+                <t.Icon size={14} style={{ color: t.color }} />
                 <span className="text-xs">{t.label}</span>
               </button>
             )
