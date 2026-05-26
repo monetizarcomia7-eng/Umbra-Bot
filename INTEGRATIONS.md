@@ -30,6 +30,7 @@
 | Google Measurement Protocol | Server-side GA4 | ✅ Em uso | `lib/capi.ts` |
 | Google reCAPTCHA v2 | Anti-bot / formulários | ✅ Em uso | `lib/recaptcha.ts`, `components/ReCaptchaWidget.tsx` |
 | Telegram MTProto (GramJS) | Upload de foto de bot | ✅ Dependência instalada | `package.json` — `telegram@^2.26.22` |
+| Meta Graph API (Instagram) | Agendador de posts/reels/carrosséis | ✅ Em uso | `lib/instagram/`, `app/api/auth/instagram/`, `app/api/cron/publish-instagram/`, módulo `/dashboard/instagram` |
 | PushinPay | Gateway de pagamento | ❌ Não iniciado | Apenas no `GATEWAY_CREDENTIAL` do Onboarding |
 | Pagar.me | Gateway de pagamento | ❌ Não iniciado | Apenas no `GATEWAY_CREDENTIAL` do Onboarding |
 | Stripe | Gateway de pagamento | ❌ Não iniciado | Apenas no `GATEWAY_CREDENTIAL` do Onboarding |
@@ -73,8 +74,11 @@ Configurados manualmente no cron-job.org, não estão no `vercel.json`:
 | `/api/cron/process-broadcasts` | A cada 15 min | Processa broadcasts agendados (1 por rodada) |
 | `/api/cron/recompute-flow-conversion` | 1x/dia (03:00) | Recalcula `flows.conversion` em 1 UPDATE com JOIN (RPC `recompute_all_flow_conversions` — mig 105) |
 | `/api/cron/cleanup-flow-events` | 1x/dia (06:00) | Apaga `flow_node_events` com +30 dias (RPC `cleanup_flow_node_events` — mig 105) |
+| `/api/cron/publish-instagram` | A cada 1 min | Worker que publica `instagram_posts` agendados via Meta Graph API (mig 106). CAS lock + retry com NON_RETRYABLE_CODES |
+| `/api/cron/refresh-instagram-tokens` | A cada 12h | Renova tokens Meta com expiração em <30 dias via `fb_exchange_token` |
+| `/api/cron/cleanup-instagram-logs` | 1x/dia (07:00) | Apaga `instagram_publish_logs` com +30 dias (RPC `cleanup_instagram_logs`) |
 
-Todos usam `Authorization: Bearer CRON_SECRET`. Os 4 contam para o `cron-job.org` (plano gratuito permite até 50 jobs).
+Todos usam `Authorization: Bearer CRON_SECRET`. 7 jobs ativos no `cron-job.org` (plano gratuito permite até 50).
 
 ---
 
@@ -87,7 +91,7 @@ Todos usam `Authorization: Bearer CRON_SECRET`. Os 4 contam para o `cron-job.org
   - `lib/supabase/server.ts` — `createClient()` com anon key + cookies (Server Components, API Routes autenticadas)
   - `lib/supabase/client.ts` — `createClient()` browser (Client Components)
   - `lib/supabase/admin.ts` — `createAdminClient()` com service role key (webhooks externos, cron jobs — bypassa RLS)
-- **Total de arquivos de migração:** 104 arquivos `.sql` (numerados 000–105 + timestamps)
+- **Total de arquivos de migração:** 105 arquivos `.sql` (numerados 000–106 + timestamps)
 - **Migrações auxiliares (não executáveis diretamente):** `_combined.sql`, `_pending_analytics_037_to_041.sql`, `_pending_run_now.sql`
 
 ### Supabase Auth
@@ -109,6 +113,7 @@ Todos usam `Authorization: Bearer CRON_SECRET`. Os 4 contam para o `cron-job.org
 | `avatars` | Foto de perfil do usuário (upload em `/dashboard/profile`) | Por usuário (pasta `{user_id}/`) |
 | `checkout-images` | Imagem do produto no editor de checkout | Por usuário (pasta `{user_id}/`) |
 | `bio-avatars` | Avatar do Bio Link (upload no editor `/dashboard/biolink`) | Por usuário (pasta `{user_id}/`) |
+| `instagram-medias` | Mídias para publicação no Instagram (módulo Instagram Scheduler — mig 106). **Bucket público** (Meta precisa baixar a mídia via URL). Limite 500 MB. RLS de escrita por pasta `{user_id}/` | Público SELECT + escrita por usuário |
 | `push_subscriptions` | Armazenado na tabela, não no Storage | N/A |
 
 ### RLS (Row Level Security)
@@ -138,6 +143,8 @@ Todos os canais usam `postgres_changes` (eventos de banco) ou `presence` (rastre
 | `remarketing-campaigns` | `INSERT` + `UPDATE` + `DELETE` | `remarketing_campaigns` | `RemarketingClient.tsx` | Sincroniza listagem de campanhas entre abas |
 | `finance-tx-realtime` | `INSERT` | `transactions` | `FinanceDashboard.tsx` | Prepend de novas transações sem recarregar a página; filtrado por `user_id` |
 | `affiliates-realtime` | `INSERT` + `UPDATE` | `affiliates` | `AffiliatesClient.tsx` | ⏳ **Pendente** — candidaturas novas e atualizações de cliques/vendas em tempo real (sem implementação atual) |
+| `instagram-posts-realtime` | `INSERT` + `UPDATE` + `DELETE` | `instagram_posts` | `InstagramClient.tsx` | Atualiza status de posts (scheduled → publishing → published/failed) em tempo real |
+| `instagram-accounts-realtime` | `*` | `instagram_accounts` | `InstagramClient.tsx` | Detecta desativação por token expirado (cron desativa) + novas conexões via OAuth |
 | Presence por checkout | `presence` | — | `CheckoutPageClient.tsx` | Contador de visitantes ao vivo em `/c/[slug]` quando `visitor_tracking=true` |
 
 **Padrão de assinatura (exemplo):**
@@ -985,6 +992,9 @@ Total de migrações: **101 arquivos** (numeradas de 000 a 100, mais arquivos de
 | `flow_versions` | Snapshots imutáveis criados a cada `publishFlowAction` — permite rollback (mig 103, RLS owner) |
 | `flow_node_events` | Telemetria por nó (entered/sent/failed/completed/abandoned + latency_ms + error_msg) — mig 103. TTL 30 dias via cron `cleanup-flow-events` (mig 105) |
 | `flow_scheduled_sends` | Mensagens agendadas pelos nós `remarketing` + `delay` (sentinel `__delay__:<nodeId>`) — mig 102 |
+| `instagram_accounts` | Contas IG Business conectadas via OAuth Meta. access_token/page_token criptografados AES-256-GCM. token_expires_at (60d, renovado por cron). RLS owner (mig 106) |
+| `instagram_posts` | Posts agendados (IMAGE/REELS/CAROUSEL). media_urls text[]. status (draft/scheduled/publishing/published/failed/cancelled). Processados por cron `publish-instagram` (mig 106) |
+| `instagram_publish_logs` | Log por tentativa de publicação (success/response/error_code/duration_ms). TTL 30d via cron `cleanup-instagram-logs` (mig 106) |
 | `contacts` | Leads/compradores capturados pelos bots (city, state, flow_vars, notes, telegram_id; RPCs: contacts_kpis, contacts_filter_options v2, find_duplicate_contacts — migração 099; **flow_id/flow_node_id/flow_vars** mig 064; **flow_version** mig 103 — snapshot da versão do fluxo em execução; **CHECK flow_vars ≤ 64 KB** mig 105) |
 | `transactions` | Transações financeiras (PIX, status, customer, UTMs, affiliate_id, checkout_id, customer_device) |
 | `withdrawals` | Solicitações de saque (amount, status, account_id, notes, payout_tx_id) |

@@ -9,6 +9,7 @@ import {
   AlertTriangle, Bot, GitBranch, Shuffle, Megaphone, Send, Wrench,
   CreditCard, LineChart, ShoppingCart, Link2, Webhook, User, Bell,
   BookOpen, GraduationCap, LogOut, ChevronLeft, ChevronRight, ChevronDown, X,
+  Camera,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -62,6 +63,7 @@ const navGroups: NavGroupDef[] = [
       { id: 'tracking',  label: 'Trackeamento', href: '/dashboard/tracking',  icon: LineChart },
       { id: 'checkout',  label: 'Checkout',     href: '/dashboard/checkout',  icon: ShoppingCart },
       { id: 'biolink',   label: 'Bio Link',     href: '/dashboard/biolink',   icon: Link2 },
+      { id: 'instagram', label: 'Instagram',    href: '/dashboard/instagram', icon: Camera },
       { id: 'webhooks',  label: 'Webhooks',     href: '/dashboard/webhooks',  icon: Webhook },
     ],
   },

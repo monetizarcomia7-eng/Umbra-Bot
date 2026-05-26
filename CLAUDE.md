@@ -478,10 +478,11 @@ umbra-bot/
 │                                 # variaveis, triggers-keyword, conectar-fluxo-bot, templates,
 │                                 # modo-de-teste, versionamento, atalhos-de-teclado,
 │                                 # exportar-importar, debugar-fluxo
-├── supabase/migrations/          # 104 migrações SQL (000 a 105 + auxiliares)
+├── supabase/migrations/          # 105 migrações SQL (000 a 106 + auxiliares)
 ├── vercel.json                   # 4 Cron jobs Vercel (Hobby só executa 2 — os primeiros da lista): process-withdrawals (06:00 UTC) + cleanup-activity (02:00 UTC) + check-bots + cleanup-alerts
 │                                 # Crons adicionais via cron-job.org (gratuitos): process-remarketing (1x/hora — também retoma delays via sentinel __delay__) +
-│                                 # process-broadcasts (a cada 15 min) + recompute-flow-conversion (1x/dia 03:00) + cleanup-flow-events (1x/dia 06:00 TTL 30d)
+│                                 # process-broadcasts (a cada 15 min) + recompute-flow-conversion (1x/dia 03:00) + cleanup-flow-events (1x/dia 06:00 TTL 30d) +
+│                                 # publish-instagram (a cada 1 min) + refresh-instagram-tokens (1x a cada 12h) + cleanup-instagram-logs (1x/dia 07:00 TTL 30d)
 ├── sentry.*.config.ts            # Sentry (client com Replay / server com tracePropagation)
 ├── instrumentation.ts            # Next.js hook para Sentry server
 ├── middleware.ts                 # Auth guard + security headers + CSP (unsafe-eval só em dev)
@@ -3636,6 +3637,139 @@ Adicionar novo template: incluir em `FLOW_TEMPLATES` com `category` válida (def
 | Documentação para usuário em `/docs/12-fluxos/` | ✅ Implementado (12 artigos) |
 | Hooks `useFlowEditorState/Shortcuts/AutoSave/Validation` (refactor 1.4) | 🟢 Baixa |
 | Inspector dividido por componente (refactor 1.5) | 🟢 Baixa |
+
+---
+
+## 21b. MÓDULO INSTAGRAM SCHEDULER
+
+Agendador de posts/reels/carrosséis no Instagram Business via Meta Graph API v19.0.
+
+### Arquivos
+
+```
+app/dashboard/instagram/
+  ├── page.tsx              # SSR: instagram_accounts + instagram_posts + RPC instagram_stats
+  │                         # Exporta RawIgAccount, RawIgPost, IgStats
+  ├── InstagramClient.tsx   # Client: Realtime (posts + accounts), Toast, OAuth feedback
+  └── _components/
+      ├── KpiRow.tsx        # 4 cards: contas / agendados / publicados 30d / falhas 30d
+      ├── ConnectButton.tsx # Botão gradient IG → redireciona /api/auth/instagram/connect
+      ├── AccountCard.tsx   # Card por conta: avatar + username + ExpiryBadge + Disconectar inline
+      ├── PostForm.tsx      # Modal: upload drag&drop (até 10), detecção auto IMAGE/REELS/CAROUSEL,
+      │                     # caption 2200 chars, datetime min+3min, schedulePostAction
+      └── PostList.tsx      # Lista com filtro por status, thumb, link p/ post no IG, cancel/delete
+
+app/actions/instagram.ts    # 5 Server Actions: schedulePostAction (Zod), cancelPostAction,
+                            # deletePostAction, disconnectAccountAction, getPostLogsAction
+
+lib/instagram/
+  ├── auth.ts               # OAuth Meta: buildAuthUrl, exchangeCodeForToken, getLongLivedToken,
+  │                         # getFacebookPages, getInstagramBusinessAccount (Graph API v19.0)
+  ├── publish.ts            # publishImage / publishReel / publishCarousel / publishPost (router);
+  │                         # waitForVideoProcessing (polling 5s × 120 tentativas = 10 min);
+  │                         # MetaAPIError + META_ERROR_MESSAGES (10 códigos)
+  └── tokens.ts             # refreshLongLivedToken (renova p/ +60 dias via fb_exchange_token)
+
+app/api/auth/instagram/
+  ├── connect/route.ts      # GET → CSRF state cookie httpOnly + redirect p/ Meta OAuth
+  └── callback/route.ts     # GET ← Meta: code→token curto→token longo (60d)→pages→IG Business
+                            #   → upsert criptografado AES-256-GCM + activity_event
+
+app/api/cron/
+  ├── publish-instagram/route.ts          # GET 1x/min (cron-job.org): busca 20 scheduled,
+  │                                       # CAS lock (scheduled→publishing), publishPost,
+  │                                       # NON_RETRYABLE_CODES = {190, 200, 368, 100},
+  │                                       # token expirado (190) → desativa conta + alert critical
+  ├── refresh-instagram-tokens/route.ts   # GET 1x/12h: renova tokens expirando em <30d
+  └── cleanup-instagram-logs/route.ts     # GET 1x/dia 07:00: RPC cleanup_instagram_logs(30)
+
+app/api/instagram/upload/route.ts # POST multipart: bucket instagram-medias (Supabase Storage)
+                                  # Pasta {user_id}/{uuid}.{ext}, max 8MB img / 500MB vídeo,
+                                  # rate-limit 30/min, RLS por pasta user_id
+```
+
+### Banco — migração 106
+
+| Item | Detalhe |
+|---|---|
+| `instagram_accounts` | user_id FK + ig_user_id UNIQUE + access_token/page_token (AES-256-GCM) + token_expires_at + is_active. RLS owner |
+| `instagram_posts` | media_type (IMAGE/REELS/CAROUSEL) + media_urls text[] + caption + scheduled_at + status (draft/scheduled/publishing/published/failed/cancelled) + retry_count/max_retries=3 + ig_post_id. RLS owner. Índice `ig_posts_cron_idx (scheduled_at, status) WHERE status='scheduled'` |
+| `instagram_publish_logs` | post_id FK + success bool + response JSONB + error_code + duration_ms. RLS owner SELECT. TTL 30d |
+| RPC `instagram_stats(p_user_id)` | { accounts_count, scheduled_count, published_30d, failed_30d } |
+| RPC `cleanup_instagram_logs(p_days=30)` | TTL chamada por cron diário |
+| Storage `instagram-medias` | Bucket público (Meta precisa baixar), 500MB max, MIMEs imagem+vídeo, RLS por pasta `{user_id}/` |
+
+### Fluxo OAuth
+
+```
+1. User clica "Conectar Instagram" → /api/auth/instagram/connect
+   → CSRF state em cookie httpOnly (10 min) → redirect p/ Facebook OAuth
+
+2. Facebook redireciona → /api/auth/instagram/callback?code&state
+   → valida state cookie → exchangeCodeForToken (code → token curto 1h)
+   → getLongLivedToken (token curto → token longo 60d)
+   → getFacebookPages (lista páginas FB)
+   → para cada página: getInstagramBusinessAccount → upsert
+   → activity_event + redirect ?success=connected&count=N
+
+3. Renovação automática: cron refresh-instagram-tokens (12h)
+   → busca tokens expirando <30d → fb_exchange_token → atualiza
+   → falha → is_active=false + alert critical "Instagram desconectado"
+```
+
+### Cron de publicação (worker)
+
+```
+GET /api/cron/publish-instagram (CRON_SECRET, 1x/min via cron-job.org)
+├── SELECT 20 posts WHERE status='scheduled' AND scheduled_at <= now()
+├── Para cada post:
+│   ├── CAS lock: UPDATE status='publishing' WHERE status='scheduled' (idempotência)
+│   ├── publishPost (IMAGE = container+publish; REELS/CAROUSEL = waitForVideoProcessing polling)
+│   ├── Sucesso: status='published' + ig_post_id + activity_event
+│   ├── Falha NON_RETRYABLE (190/200/368/100): status='failed' + (190: desativa conta + alert)
+│   ├── Falha retryável: retry_count++ + status='scheduled' (até max_retries=3)
+│   └── INSERT log em instagram_publish_logs (success/response/error_code/duration_ms)
+└── Sentry.captureCheckIn monitor 'publish-instagram'
+```
+
+### Limites e validações
+
+- Caption: 2200 chars (Instagram)
+- Mídia: 8 MB imagem (JPG/PNG/WEBP) / 500 MB vídeo (MP4/MOV)
+- Carrossel: 2 a 10 itens
+- Reel: vídeo MP4 H.264 mín 720p, proporção 9:16
+- Posts/dia: Instagram limita 50/conta (erro código 9)
+- Schedule mínimo: 3 minutos no futuro (cron roda a cada 1 min)
+- 500 posts por usuário (anti-spam)
+- 30 agendamentos/min (rate-limit Upstash por user_id)
+
+### Variáveis de ambiente
+
+| Var | Descrição |
+|---|---|
+| `META_APP_ID` | App ID criado em developers.facebook.com (tipo Business) |
+| `META_APP_SECRET` | App Secret (mostrado uma única vez) |
+| `META_REDIRECT_URI` | `https://yourdomain.com/api/auth/instagram/callback` |
+
+> **App Review obrigatório** para `instagram_content_publish` em produção. Em dev funciona apenas para test users.
+
+### Crons configurados em cron-job.org
+
+| Cron | Schedule | Auth |
+|---|---|---|
+| `/api/cron/publish-instagram` | A cada 1 minuto | Bearer CRON_SECRET |
+| `/api/cron/refresh-instagram-tokens` | A cada 12 horas | Bearer CRON_SECRET |
+| `/api/cron/cleanup-instagram-logs` | 1x/dia (07:00) | Bearer CRON_SECRET |
+
+### Diferenças vs. doc original
+
+| No doc | No Umbra Bot | Por quê |
+|---|---|---|
+| Cloudflare R2 | Supabase Storage (`instagram-medias`) | Já temos infra Supabase com RLS por pasta |
+| `crypto-js` | `lib/crypto` (AES-256-GCM nativo) | Já temos lib criptografando tokens de bots |
+| Stripe + plans | Sem billing (limite 500 posts/user) | Será integrado quando billing existir no projeto |
+| pg_cron + pg_net | cron-job.org + CRON_SECRET | Padrão dos demais crons do projeto |
+| Cron a cada minuto | Idem | Mesma frequência do doc |
 
 ---
 
