@@ -100,6 +100,24 @@ export const DOC_NAV: DocSection[] = [
     ],
   },
   {
+    title: 'Fluxos de venda',
+    folder: '12-fluxos',
+    articles: [
+      { title: 'O que é um fluxo de venda',           slug: 'introducao-fluxos' },
+      { title: 'Criar seu primeiro fluxo em 5 min',   slug: 'criar-primeiro-fluxo' },
+      { title: 'Tipos de nós — o que cada bloco faz', slug: 'tipos-de-nos' },
+      { title: 'Variáveis — personalizar mensagens',  slug: 'variaveis' },
+      { title: 'Gatilhos — quando o fluxo dispara',   slug: 'triggers-keyword' },
+      { title: 'Conectar o fluxo ao bot',             slug: 'conectar-fluxo-bot' },
+      { title: 'Templates prontos',                   slug: 'templates' },
+      { title: 'Modo de teste',                       slug: 'modo-de-teste' },
+      { title: 'Versionamento e rollback',            slug: 'versionamento' },
+      { title: 'Atalhos do editor',                   slug: 'atalhos-de-teclado' },
+      { title: 'Exportar e importar (JSON)',          slug: 'exportar-importar' },
+      { title: 'Debugar um fluxo que não funciona',   slug: 'debugar-fluxo' },
+    ],
+  },
+  {
     title: 'Perguntas frequentes',
     folder: '11-faq',
     articles: [

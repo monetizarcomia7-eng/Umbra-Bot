@@ -449,7 +449,11 @@ umbra-bot/
 │   ├── 08-afiliados/             # programa-afiliados, aprovar-afiliados, pagar-afiliados
 │   ├── 09-notificacoes/          # configurar-notificacoes
 │   ├── 10-perfil/                # editar-perfil
-│   └── 11-faq/                   # perguntas-frequentes (20 perguntas organizadas por tema)
+│   ├── 11-faq/                   # perguntas-frequentes (20 perguntas organizadas por tema)
+│   └── 12-fluxos/                # 12 artigos: introducao-fluxos, criar-primeiro-fluxo, tipos-de-nos,
+│                                 # variaveis, triggers-keyword, conectar-fluxo-bot, templates,
+│                                 # modo-de-teste, versionamento, atalhos-de-teclado,
+│                                 # exportar-importar, debugar-fluxo
 ├── supabase/migrations/          # 69 migrações SQL (000 a 069)
 ├── vercel.json                   # 4 Cron jobs Vercel (Hobby só executa 2 — os primeiros da lista): process-withdrawals (06:00 UTC) + cleanup-activity (02:00 UTC) + check-bots + cleanup-alerts
 │                                 # Crons adicionais via cron-job.org (gratuitos): process-remarketing (1x/hora) + process-broadcasts (a cada 15 min)
@@ -3604,7 +3608,7 @@ Adicionar novo template: incluir em `FLOW_TEMPLATES` com `category` válida (def
 | Webhook out (POST para URL externa) | 🟢 Baixa |
 | A/B test entre duas versões de fluxo | 🟢 Baixa |
 | Sistema real de handoff humano (atendimento) | 🟡 Média |
-| Documentação para usuário em `/docs/12-fluxos/` | 🟡 Alta |
+| Documentação para usuário em `/docs/12-fluxos/` | ✅ Implementado (12 artigos) |
 | Hooks `useFlowEditorState/Shortcuts/AutoSave/Validation` (refactor 1.4) | 🟢 Baixa |
 | Inspector dividido por componente (refactor 1.5) | 🟢 Baixa |
 

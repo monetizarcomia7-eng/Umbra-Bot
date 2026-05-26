@@ -1,6 +1,7 @@
 'use client'
-import { Plus, LayoutTemplate, Search, X, ChevronDown } from 'lucide-react'
+import { Plus, LayoutTemplate, Search, X, ChevronDown, BookOpen } from 'lucide-react'
 import { useState, useMemo } from 'react'
+import Link from 'next/link'
 import FlowCard from './FlowCard'
 import NoDataState from './NoDataState'
 import type { FlowMeta } from '../_shared/types'
@@ -99,6 +100,15 @@ export default function FlowsList({ flows, onCreate, onOpenTemplates, onOpen, on
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Link
+            href="/dashboard/docs/12-fluxos/introducao-fluxos"
+            className="hidden sm:flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors hover:bg-surface-2"
+            style={{ border: '1px solid var(--border)', color: 'var(--text-muted)' }}
+            title="Documentação dos fluxos"
+          >
+            <BookOpen size={16} />
+            Documentação
+          </Link>
           <button
             onClick={onOpenTemplates}
             className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors hover:bg-surface-2"
