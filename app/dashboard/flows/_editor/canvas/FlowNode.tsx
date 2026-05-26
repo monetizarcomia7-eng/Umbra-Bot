@@ -97,7 +97,7 @@ export default function FlowNode({ node, isSelected, isStart, connecting, onMous
         fontSize={9}
         fontWeight={600}
         fill={colors.accent}
-        textTransform="uppercase"
+        style={{ textTransform: 'uppercase' }}
       >
         {t?.label ?? node.type}
       </text>
