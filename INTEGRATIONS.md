@@ -125,7 +125,7 @@ Todos os canais usam `postgres_changes` (eventos de banco) ou `presence` (rastre
 | `bots-realtime` | `UPDATE` | `bots` | `BotsClient.tsx` | Atualiza status de bots em tempo real (disconnect/reconnect via cron check-bots) |
 | `activity-feed` | `INSERT` | `activity_events` | `ActivityClient.tsx` | Prepend de novos eventos no feed ao vivo; incrementa `unreadCount`; agrupamento 30 min aplicado pós-prepend |
 | `customers-realtime` | `INSERT` + `UPDATE` | `contacts` | `CustomersClient.tsx` | Novos leads (prepend) e atualizações de perfil em tempo real; inclui colunas city, state, flow_vars, notes, telegram_id |
-| `flows-realtime` | `INSERT` + `UPDATE` + `DELETE` | `flows` | `FlowsClient.tsx` | Sincroniza listagem de fluxos entre abas |
+| `flows-realtime` | `INSERT` + `UPDATE` + `DELETE` | `flows` | `FlowsClient.tsx` (thin orchestrator) | Sincroniza listagem de fluxos entre abas; o editor visual é tratado em `_editor/FlowEditor.tsx` |
 | `broadcasts-realtime` | `INSERT` + `UPDATE` | `broadcasts` | `BroadcastsClient.tsx` | Progresso de envio, status, novos disparos (stale-draft guard incluso) |
 | `alerts-feed` | `INSERT` + `UPDATE` | `alerts` | `AlertsClient.tsx` | Novos alertas e atualizações de status filtrados por `user_id` |
 | `gateways-realtime` | `INSERT` + `UPDATE` | `gateways` | `GatewaysClient.tsx` | Atualiza status de conexão do gateway (ex: após OAuth callback) |
@@ -367,9 +367,9 @@ supabase
 | Evento | Onde disparado |
 |---|---|
 | `bot_connected` | OnboardingWizard, após registrar webhook |
-| `flow_created` | FlowsClient |
-| `flow_published` | FlowsClient |
-| `flow_deleted` | FlowsClient |
+| `flow_created` | `FlowsClient.tsx` (CRUD thin orchestrator) |
+| `flow_published` | `FlowsClient.tsx` (CRUD thin orchestrator) |
+| `flow_deleted` | `FlowsClient.tsx` (CRUD thin orchestrator) |
 | `gateway_connected` | GatewaysClient (manual + OAuth callback) |
 | `gateway_disconnected` | GatewaysClient |
 | `gateway_configured` | GatewaysClient (salvar conta bancária) |

@@ -3057,9 +3057,46 @@ bq-tip (verde) | bq-warn (amarelo) | bq-note (azul)
 
 ```
 app/dashboard/flows/
-  ├── page.tsx          # Server Component — SSR flows metadata + bots em paralelo
-  │                     # select sem nodes/edges (lazy load); passa initialFlows + bots + userId
-  └── FlowsClient.tsx   # Client Component — listagem, editor visual, CRUD real, PostHog
+  ├── page.tsx              # Server Component — SSR flows metadata + bots em paralelo
+  │                         # select sem nodes/edges (lazy load); passa initialFlows + bots + userId
+  ├── FlowsClient.tsx       # Client Component — orquestrador thin: CRUD, Realtime, roteamento lista↔editor
+  ├── _shared/
+  │   ├── types.ts          # FlowMeta, FlowEditorData, FlowNodeType, FlowEdgeType, RawFlowRow, etc.
+  │   ├── nodeTypes.tsx     # NODE_TYPES, NODE_CATEGORIES, ícones e cores por tipo de nó
+  │   ├── mappers.ts        # mapRawMeta, mapRawFull, fmtBRLdec
+  │   ├── constants.ts      # autoLayout, snapGrid(v: number), NODE_W, NODE_H, MAX_HISTORY
+  │   └── ui.tsx            # Toast, Spinner e componentes de UI compartilhados
+  ├── _list/
+  │   ├── NoDataState.tsx   # Estado vazio quando flows.length === 0
+  │   ├── TemplatesModal.tsx # Modal de 3 templates (branco, captura lead, vendas simples)
+  │   ├── FlowCard.tsx      # Card de fluxo na listagem (menu, status, métricas, duplicar, apagar)
+  │   └── FlowsList.tsx     # Grid de cards com busca e filtros
+  └── _editor/
+      ├── FlowEditor.tsx    # Orquestrador do editor: estado global, undo/redo, auto-save, topbar
+      ├── Palette.tsx       # Painel lateral de tipos de nó; constrói o FlowNodeType completo
+      │                     # Props: onAdd(node: FlowNodeType), canvasCenter: {x, y}
+      ├── BotSelector.tsx   # Dropdown de bots vinculados ao fluxo
+      ├── EdgePanel.tsx     # Painel de edição de aresta selecionada (redirecionar / remover)
+      ├── MiniMap.tsx       # Mapa miniatura do canvas (SVG, posição viewport)
+      ├── ZoomControls.tsx  # Botões zoom in/out e ajustar à tela
+      ├── canvas/
+      │   ├── Canvas.tsx    # Canvas principal (pan, zoom, seleção múltipla, box-select, drag)
+      │   │                 # Props: nodes, edges, vp, setVp, selectedIds, selectedEdgeId,
+      │   │                 #        onSelectNode(id, shift?), onSelectNodes(ids[]),
+      │   │                 #        onSelectEdge, onUpdateNode, onUpdateNodes,
+      │   │                 #        onAddEdge, onDragEnd, connecting, setConnecting,
+      │   │                 #        containerRef, reconnectEdgeId, onReconnectEdge
+      │   │                 # onNodeDoubleClick tratado internamente pelo Canvas
+      │   ├── FlowNode.tsx  # Renderização de nó individual (drag, handles, badge ▷ INÍCIO)
+      │   ├── FlowEdges.tsx # SVG das arestas (curvas Bézier, rótulos, seleção)
+      │   └── NodeHandle.tsx # Handle de entrada/saída para iniciar conexões
+      ├── inspector/
+      │   └── Inspector.tsx # Painel de propriedades do nó selecionado
+      │                     # Props: node: FlowNodeType,
+      │                     #        onChange(updated: FlowNodeType),  ← nó completo, NÃO NodeData
+      │                     #        onDelete()                        ← sem onCommit
+      └── preview/
+          └── PreviewChat.tsx # Prévia da conversa com ramificações (buildPreviewPath recursivo)
 ```
 
 ### Fluxo de dados
