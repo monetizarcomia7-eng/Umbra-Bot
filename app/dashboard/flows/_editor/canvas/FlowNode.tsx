@@ -121,18 +121,16 @@ export default function FlowNode({ node, isSelected, isStart, connecting, onMous
       </foreignObject>
 
       {/* Input handle */}
-      {t?.inputs !== 0 && (
-        <NodeHandle
-          x={x + NODE_W / 2}
-          y={y}
-          kind="input"
-          nodeId={node.id}
-          handleIdx={-1}
-          connecting={connecting}
-          onStartConnect={onStartConnect}
-          onEndConnect={onEndConnect}
-        />
-      )}
+      <NodeHandle
+        x={x + NODE_W / 2}
+        y={y}
+        kind="input"
+        nodeId={node.id}
+        handleIdx={-1}
+        connecting={connecting}
+        onStartConnect={onStartConnect}
+        onEndConnect={onEndConnect}
+      />
 
       {/* Output handle(s) */}
       {t?.outputs !== 0 && outputCount === 1 && (
