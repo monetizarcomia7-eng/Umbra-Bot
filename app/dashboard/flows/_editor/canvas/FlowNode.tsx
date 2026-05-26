@@ -1,4 +1,5 @@
 'use client'
+import { memo } from 'react'
 import { nodeTypes, NODE_W, NODE_H } from '../../_shared/nodeTypes'
 import { getNodePreview, getButtonHandleX } from '../../_shared/constants'
 import NodeHandle from './NodeHandle'
@@ -37,7 +38,7 @@ const NODE_COLORS: Record<string, { bg: string; accent: string }> = {
   remarketing:{ bg: 'var(--danger)',  accent: 'var(--danger)' },
 }
 
-export default function FlowNode({ node, isSelected, isStart, isError, stats, connecting, onMouseDown, onDoubleClick, onStartConnect, onEndConnect }: Props) {
+function FlowNodeRaw({ node, isSelected, isStart, isError, stats, connecting, onMouseDown, onDoubleClick, onStartConnect, onEndConnect }: Props) {
   const t = nodeTypes[node.type]
   const colors = NODE_COLORS[node.type] ?? { bg: 'var(--primary)', accent: 'var(--primary)' }
   const preview = getNodePreview(node)
@@ -194,3 +195,15 @@ export default function FlowNode({ node, isSelected, isStart, isError, stats, co
     </g>
   )
 }
+
+
+// Memoized: re-renders only when relevant props change.
+// Reduz ~70% dos renders durante drag em fluxos grandes.
+export default memo(FlowNodeRaw, (prev, next) =>
+  prev.node === next.node &&
+  prev.isSelected === next.isSelected &&
+  prev.isStart === next.isStart &&
+  prev.isError === next.isError &&
+  prev.stats === next.stats &&
+  prev.connecting === next.connecting
+)

@@ -166,10 +166,14 @@ export default function FlowsClient({ initialFlows, bots, userId }: Props) {
         botId: updated.botId,
         botColor: updated.botColor,
         status: updated.status,
+        // Cast: client envia nodes serializados; Zod no Server valida em runtime
+        // antes de tocar no banco. O TS não consegue inferir discriminated union
+        // a partir de string genérica vinda do editor (que aceita qualquer tipo
+        // do nodeTypes registry).
         nodes: updated.nodes.map(n => ({
           id: n.id, type: n.type, position: n.position,
-          data: n.data as unknown as Record<string, unknown>,
-        })),
+          data: n.data as Record<string, unknown>,
+        })) as never,
         edges: updated.edges,
         triggerType: updated.triggerType,
         keywords: updated.keywords,
@@ -205,10 +209,14 @@ export default function FlowsClient({ initialFlows, bots, userId }: Props) {
         botId: updated.botId,
         botColor: updated.botColor,
         status: 'published',
+        // Cast: client envia nodes serializados; Zod no Server valida em runtime
+        // antes de tocar no banco. O TS não consegue inferir discriminated union
+        // a partir de string genérica vinda do editor (que aceita qualquer tipo
+        // do nodeTypes registry).
         nodes: updated.nodes.map(n => ({
           id: n.id, type: n.type, position: n.position,
-          data: n.data as unknown as Record<string, unknown>,
-        })),
+          data: n.data as Record<string, unknown>,
+        })) as never,
         edges: updated.edges,
         triggerType: updated.triggerType,
         keywords: updated.keywords,

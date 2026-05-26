@@ -4,22 +4,117 @@ import { createClient } from '@/lib/supabase/server'
 import { rateLimit } from '@/lib/rate-limit'
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
+import { SupabaseClient } from '@supabase/supabase-js'
 
-// ─── Tipos ──────────────────────────────────────────────────────────────────
+// ─── Schemas Zod ────────────────────────────────────────────────────────────
 
-const NODE_SCHEMA = z.object({
-  id:       z.string().min(1).max(64),
-  type:     z.string().min(1).max(32),
-  position: z.object({ x: z.number(), y: z.number() }),
-  data:     z.record(z.string(), z.unknown()).default({}),
+// Validação por tipo de nó (3.4 + 7.1) — discriminated union evita aceitar
+// payloads malformados. Cada tipo tem o shape exato do que o engine espera.
+const POSITION = z.object({ x: z.number(), y: z.number() })
+const NODE_BASE = { id: z.string().min(1).max(64), position: POSITION }
+
+const MESSAGE_DATA      = z.object({ text: z.string().max(4096).default('') })
+const QUESTION_DATA     = z.object({
+  text:     z.string().max(4096).optional(),
+  question: z.string().max(4096).optional(),
+  variable: z.string().regex(/^[a-zA-Z0-9_]{1,32}$/).default('resposta'),
+})
+const BUTTONS_DATA      = z.object({
+  text:    z.string().max(4096).default(''),
+  options: z.array(z.string().min(1).max(64)).min(1).max(6),
+})
+const CONDITION_DATA    = z.object({
+  variable: z.string().regex(/^[a-zA-Z0-9_]{1,32}$/),
+  operator: z.enum(['equals','not_equals','contains','starts_with','ends_with','not_empty','empty','gt','lt']),
+  value:    z.string().max(255).default(''),
+})
+const DELAY_DATA        = z.object({
+  amount: z.number().int().min(1).max(720),
+  unit:   z.enum(['minutos','horas','dias']),
+})
+const OFFER_DATA        = z.object({
+  product: z.string().min(1).max(255),
+  price:   z.number().min(0).max(999999),
+  cta:     z.string().max(64).default('Comprar'),
+})
+const TAG_DATA          = z.object({
+  action: z.enum(['add','remove']),
+  tag:    z.string().min(1).max(64),
+})
+const HANDOFF_DATA      = z.object({
+  team:    z.string().max(64).default(''),
+  message: z.string().max(4096).default(''),
+})
+const URL_SAFE          = z.string().max(2048).refine(v => v === '' || isSafeUrl(v), {
+  message: 'URL inválida ou em IP privado',
+})
+const IMAGE_DATA        = z.object({
+  imageUrl: URL_SAFE.default(''),
+  caption:  z.string().max(1024).default(''),
+})
+const VIDEO_DATA        = z.object({
+  videoUrl: URL_SAFE.default(''),
+  caption:  z.string().max(1024).default(''),
+})
+const LINK_DATA         = z.object({
+  text: z.string().max(64).default('Clique aqui'),
+  url:  URL_SAFE.default(''),
+})
+const CHECKOUT_DATA     = z.object({
+  text: z.string().max(64).default(''),
+  url:  URL_SAFE.default(''),
+})
+const PHONE_DATA        = z.object({
+  text:     z.string().max(4096).default('Qual é o seu telefone?'),
+  variable: z.string().regex(/^[a-zA-Z0-9_]{1,32}$/).default('telefone'),
+})
+const UPSELL_DATA       = z.object({
+  product:       z.string().max(255).default(''),
+  discountPrice: z.number().min(0).max(999999).default(0),
+  description:   z.string().max(2048).default(''),
+  cta:           z.string().max(64).default(''),
+  url:           URL_SAFE.default(''),
+})
+const ORDERBUMP_DATA    = z.object({
+  product:     z.string().max(255).default(''),
+  price:       z.number().min(0).max(999999).default(0),
+  description: z.string().max(2048).default(''),
+  cta:         z.string().max(64).default(''),
+})
+const REMARKETING_DATA  = z.object({
+  text:        z.string().max(4096).default(''),
+  delayAmount: z.number().int().min(1).max(720),
+  delayUnit:   z.enum(['minutos','horas','dias']),
+  tag:         z.string().max(64).default(''),
 })
 
+const NODE_SCHEMA = z.discriminatedUnion('type', [
+  z.object({ ...NODE_BASE, type: z.literal('message'),     data: MESSAGE_DATA }),
+  z.object({ ...NODE_BASE, type: z.literal('question'),    data: QUESTION_DATA }),
+  z.object({ ...NODE_BASE, type: z.literal('buttons'),     data: BUTTONS_DATA }),
+  z.object({ ...NODE_BASE, type: z.literal('condition'),   data: CONDITION_DATA }),
+  z.object({ ...NODE_BASE, type: z.literal('delay'),       data: DELAY_DATA }),
+  z.object({ ...NODE_BASE, type: z.literal('offer'),       data: OFFER_DATA }),
+  z.object({ ...NODE_BASE, type: z.literal('tag'),         data: TAG_DATA }),
+  z.object({ ...NODE_BASE, type: z.literal('handoff'),     data: HANDOFF_DATA }),
+  z.object({ ...NODE_BASE, type: z.literal('image'),       data: IMAGE_DATA }),
+  z.object({ ...NODE_BASE, type: z.literal('video'),       data: VIDEO_DATA }),
+  z.object({ ...NODE_BASE, type: z.literal('link'),        data: LINK_DATA }),
+  z.object({ ...NODE_BASE, type: z.literal('checkout'),    data: CHECKOUT_DATA }),
+  z.object({ ...NODE_BASE, type: z.literal('phone'),       data: PHONE_DATA }),
+  z.object({ ...NODE_BASE, type: z.literal('upsell'),      data: UPSELL_DATA }),
+  z.object({ ...NODE_BASE, type: z.literal('downsell'),    data: UPSELL_DATA }),
+  z.object({ ...NODE_BASE, type: z.literal('orderbump'),   data: ORDERBUMP_DATA }),
+  z.object({ ...NODE_BASE, type: z.literal('remarketing'), data: REMARKETING_DATA }),
+])
+
+// 1.7 — sourceHandle agora é só number (0-20)
 const EDGE_SCHEMA = z.object({
   id:           z.string().min(1).max(64),
   source:       z.string().min(1).max(64),
   target:       z.string().min(1).max(64),
-  sourceHandle: z.union([z.number(), z.string()]).optional(),
-  label:        z.string().optional(),
+  sourceHandle: z.number().int().min(0).max(20).optional(),
+  label:        z.string().max(64).optional(),
 })
 
 const MAX_NODES = 500
@@ -43,9 +138,80 @@ const SAVE_PATCH_SCHEMA = z.object({
 const CREATE_SCHEMA = z.object({
   name:        z.string().trim().min(1).max(120).default('Novo fluxo'),
   description: z.string().max(500).default(''),
-  nodes:       z.array(NODE_SCHEMA).max(MAX_NODES).default([]),
-  edges:       z.array(EDGE_SCHEMA).max(MAX_EDGES).default([]),
+  // Templates não passam pelo schema discriminado para evitar quebrar templates
+  // legados ao adicionar campos novos. Validação só no save/publish.
+  nodes:       z.array(z.object({
+    id: z.string(), type: z.string(),
+    position: POSITION, data: z.record(z.string(), z.unknown()).default({}),
+  })).max(MAX_NODES).default([]),
+  edges:       z.array(EDGE_SCHEMA.extend({
+    sourceHandle: z.union([z.number(), z.string()]).optional(),
+  })).max(MAX_EDGES).default([]),
 })
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function isSafeUrl(u: string): boolean {
+  if (!u) return false
+  try {
+    const url = new URL(u)
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return false
+    const host = url.hostname.toLowerCase()
+    if (host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0') return false
+    if (host.startsWith('169.254.') || host.startsWith('10.') ||
+        host.startsWith('192.168.') || host.endsWith('.local')) return false
+    return true
+  } catch { return false }
+}
+
+// 1.2 — função interna que aplica o save sem rate-limit nem re-parse
+// (recebe dados já parseados pelo schema)
+async function _doSave(
+  supabase: SupabaseClient,
+  userId: string,
+  p: z.output<typeof SAVE_PATCH_SCHEMA>,
+): Promise<void> {
+  // Defesa: limita tamanho serializado dos JSONB
+  const nodesSize = JSON.stringify(p.nodes).length
+  const edgesSize = JSON.stringify(p.edges).length
+  if (nodesSize > 800_000 || edgesSize > 800_000) {
+    throw new Error('Fluxo excede o tamanho máximo permitido (800 KB por estrutura).')
+  }
+
+  let botLabel = ''
+  let botColor = p.botColor ?? '#6366f1'
+  if (p.botId) {
+    const { data: bot } = await supabase
+      .from('bots')
+      .select('id, name, username, color')
+      .eq('id', p.botId)
+      .eq('user_id', userId)
+      .maybeSingle()
+    if (bot) {
+      botLabel = bot.username ? `@${bot.username}` : bot.name
+      botColor = bot.color || botColor
+    }
+  }
+
+  const { error } = await supabase
+    .from('flows')
+    .update({
+      name:         p.name,
+      description:  p.description,
+      bot_id:       p.botId,
+      bot:          botLabel,
+      bot_color:    botColor,
+      status:       p.status ?? undefined,
+      nodes:        p.nodes,
+      edges:        p.edges,
+      trigger_type: p.triggerType,
+      keywords:     p.keywords,
+    })
+    .eq('id', p.id)
+    .eq('user_id', userId)
+
+  if (error) throw new Error(error.message)
+}
 
 // ─── createFlowAction ─────────────────────────────────────────────────────────
 export async function createFlowAction(payload: z.input<typeof CREATE_SCHEMA>): Promise<{ id: string }> {
@@ -58,7 +224,6 @@ export async function createFlowAction(payload: z.input<typeof CREATE_SCHEMA>): 
 
   const parsed = CREATE_SCHEMA.parse(payload)
 
-  // Anti-spam: limita 500 fluxos por usuário
   const { count } = await supabase
     .from('flows')
     .select('id', { count: 'exact', head: true })
@@ -96,53 +261,13 @@ export async function saveFlowAction(payload: z.input<typeof SAVE_PATCH_SCHEMA>)
   if (!rl.ok) throw new Error('Muitos salvamentos. Aguarde alguns segundos.')
 
   const p = SAVE_PATCH_SCHEMA.parse(payload)
-
-  // Defesa: limita tamanho serializado dos JSONB para evitar payload bombs
-  const nodesSize = JSON.stringify(p.nodes).length
-  const edgesSize = JSON.stringify(p.edges).length
-  if (nodesSize > 800_000 || edgesSize > 800_000) {
-    throw new Error('Fluxo excede o tamanho máximo permitido (800 KB por estrutura).')
-  }
-
-  // Resolve bot label se botId foi enviado
-  let botLabel = ''
-  let botColor = p.botColor ?? '#6366f1'
-  if (p.botId) {
-    const { data: bot } = await supabase
-      .from('bots')
-      .select('id, name, username, color')
-      .eq('id', p.botId)
-      .eq('user_id', user.id)
-      .maybeSingle()
-    if (bot) {
-      botLabel = bot.username ? `@${bot.username}` : bot.name
-      botColor = bot.color || botColor
-    }
-  }
-
-  const { error } = await supabase
-    .from('flows')
-    .update({
-      name:         p.name,
-      description:  p.description,
-      bot_id:       p.botId,
-      bot:          botLabel,
-      bot_color:    botColor,
-      status:       p.status ?? undefined,
-      nodes:        p.nodes,
-      edges:        p.edges,
-      trigger_type: p.triggerType,
-      keywords:     p.keywords,
-    })
-    .eq('id', p.id)
-    .eq('user_id', user.id)
-
-  if (error) throw new Error(error.message)
+  await _doSave(supabase, user.id, p)
 
   return { ok: true }
 }
 
 // ─── publishFlowAction ────────────────────────────────────────────────────────
+// FIX 1.2 — usa _doSave (sem re-parse, sem double rate-limit).
 export async function publishFlowAction(payload: z.input<typeof SAVE_PATCH_SCHEMA>): Promise<{
   ok: true
   version: number | null
@@ -156,20 +281,8 @@ export async function publishFlowAction(payload: z.input<typeof SAVE_PATCH_SCHEM
 
   const p = SAVE_PATCH_SCHEMA.parse({ ...payload, status: 'published' })
 
-  // Valida URLs antes de publicar
-  for (const node of p.nodes) {
-    if (node.type === 'image' || node.type === 'video' || node.type === 'link' || node.type === 'checkout') {
-      const url = (node.data as Record<string, unknown>)[
-        node.type === 'image' ? 'imageUrl' : node.type === 'video' ? 'videoUrl' : 'url'
-      ] as string | undefined
-      if (url && !isSafeUrl(url)) {
-        throw new Error(`Nó "${node.type}" tem URL inválida ou bloqueada.`)
-      }
-    }
-  }
-
-  // Salva o fluxo
-  await saveFlowAction({ ...payload, status: 'published' })
+  // Salva sem re-parse (FIX 1.2)
+  await _doSave(supabase, user.id, p)
 
   // Cria snapshot da versão (RPC)
   let version: number | null = null
@@ -177,7 +290,7 @@ export async function publishFlowAction(payload: z.input<typeof SAVE_PATCH_SCHEM
     .rpc('create_flow_version', { p_flow_id: p.id })
   if (!verErr && typeof ver === 'number') version = ver
 
-  // Se botId definido, atualiza bots.active_flow_id
+  // Atualiza bots.active_flow_id se botId definido
   if (p.botId) {
     await supabase
       .from('bots')
@@ -186,7 +299,6 @@ export async function publishFlowAction(payload: z.input<typeof SAVE_PATCH_SCHEM
       .eq('user_id', user.id)
   }
 
-  // activity_event
   void supabase.from('activity_events').insert({
     user_id:     user.id,
     type:        'flowPublished',
@@ -236,7 +348,6 @@ export async function duplicateFlowAction(flowId: string): Promise<{ id: string 
     .single()
 
   if (error || !data) throw new Error(error?.message ?? 'Erro ao duplicar fluxo.')
-
   return { id: data.id }
 }
 
@@ -259,7 +370,6 @@ export async function deleteFlowAction(flowId: string): Promise<{ ok: true }> {
 }
 
 // ─── getFlowNodeStatsAction ───────────────────────────────────────────────────
-// Lazy load — chamado no editor ao abrir um fluxo
 export async function getFlowNodeStatsAction(flowId: string, days = 30): Promise<Array<{
   node_id: string
   node_type: string
@@ -281,6 +391,39 @@ export async function getFlowNodeStatsAction(flowId: string, days = 30): Promise
     node_id: string; node_type: string;
     entered: number; sent: number; failed: number; completed: number
   }>) ?? []
+}
+
+// ─── getFlowAnalyticsAction ──────────────────────────────────────────────────
+// Para o dashboard analytics por fluxo (re-auditoria 6.1)
+export async function getFlowAnalyticsAction(flowId: string, days = 7): Promise<{
+  nodes:      Array<{
+    node_id: string; node_type: string;
+    entered: number; sent: number; failed: number;
+    completed: number; abandoned: number; avg_latency_ms: number | null;
+  }>
+  timeseries: Array<{ day: string; entered: number; sent: number; failed: number; completed: number }>
+}> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) throw new Error('Não autorizado.')
+
+  if (!z.string().uuid().safeParse(flowId).success) {
+    return { nodes: [], timeseries: [] }
+  }
+
+  const [nodesRes, tsRes] = await Promise.all([
+    supabase.rpc('flow_node_stats_v2', { p_flow_id: flowId, p_days: days }),
+    supabase.rpc('flow_events_timeseries', { p_flow_id: flowId, p_days: days }),
+  ])
+
+  return {
+    nodes:      (nodesRes.data ?? []) as Array<{
+      node_id: string; node_type: string;
+      entered: number; sent: number; failed: number;
+      completed: number; abandoned: number; avg_latency_ms: number | null;
+    }>,
+    timeseries: (tsRes.data ?? []) as Array<{ day: string; entered: number; sent: number; failed: number; completed: number }>,
+  }
 }
 
 // ─── listFlowVersionsAction ───────────────────────────────────────────────────
@@ -326,20 +469,27 @@ export async function rollbackFlowVersionAction(flowId: string, version: number)
 }
 
 // ─── simulateFlowAction ───────────────────────────────────────────────────────
-// Executa o fluxo virtualmente (sem enviar mensagens reais ao Telegram)
-// Retorna o passo a passo simulado para o "Modo de teste"
+// Modo de teste. Aceita botIndex para escolher botão em nós buttons (B4)
+// e keywordInput para testar trigger keyword (B5).
 export async function simulateFlowAction(payload: {
   nodes: Array<{ id: string; type: string; data: Record<string, unknown> }>
   edges: Array<{ source: string; target: string; sourceHandle?: number | string }>
   vars?: Record<string, string>
-}): Promise<Array<{
-  nodeId: string
-  nodeType: string
-  side: 'bot' | 'user' | 'system'
-  text: string
-  options?: string[]
-  isPause?: boolean
-}>> {
+  buttonChoices?: Record<string, number>   // {nodeId: optionIndex} — B4
+  startFromNodeId?: string                  // permite testar a partir de qualquer nó
+  keywordInput?: string                     // B5: testa se a keyword matchearia trigger
+  keywords?: string[]                       // lista de keywords do fluxo para o teste keyword
+}): Promise<{
+  trail: Array<{
+    nodeId: string
+    nodeType: string
+    side: 'bot' | 'user' | 'system'
+    text: string
+    options?: string[]
+    isPause?: boolean
+  }>
+  keywordMatch?: { matched: boolean; matchedKeyword: string | null }
+}> {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) throw new Error('Não autorizado.')
@@ -347,6 +497,17 @@ export async function simulateFlowAction(payload: {
   const nodes = payload.nodes
   const edges = payload.edges
   const vars  = payload.vars ?? {}
+  const buttonChoices = payload.buttonChoices ?? {}
+
+  // B5: teste de keyword
+  let keywordMatch: { matched: boolean; matchedKeyword: string | null } | undefined
+  if (payload.keywordInput) {
+    const kws = payload.keywords ?? []
+    const lower = payload.keywordInput.toLowerCase().trim()
+    const hit = kws.find(k => lower === k.toLowerCase().trim() || lower.includes(k.toLowerCase().trim()))
+    keywordMatch = { matched: !!hit, matchedKeyword: hit ?? null }
+  }
+
   const trail: Array<{
     nodeId: string; nodeType: string; side: 'bot' | 'user' | 'system'; text: string;
     options?: string[]; isPause?: boolean
@@ -358,8 +519,16 @@ export async function simulateFlowAction(payload: {
     edgeMap.get(e.source)!.push(e)
   }
 
-  const startNode = nodes.find(n => !edges.some(e => e.target === n.id))
-  if (!startNode) return [{ nodeId: '', nodeType: 'system', side: 'system', text: 'Nenhum nó inicial encontrado.' }]
+  const startNode = payload.startFromNodeId
+    ? nodes.find(n => n.id === payload.startFromNodeId)
+    : nodes.find(n => !edges.some(e => e.target === n.id))
+
+  if (!startNode) {
+    return {
+      trail: [{ nodeId: '', nodeType: 'system', side: 'system', text: 'Nenhum nó inicial encontrado.' }],
+      keywordMatch,
+    }
+  }
 
   function sub(text: string): string {
     return (text || '')
@@ -376,7 +545,7 @@ export async function simulateFlowAction(payload: {
     if (!node) return
     visited.add(nodeId)
 
-    const data = node.data as Record<string, unknown>
+    const data = node.data
     const out = edgeMap.get(nodeId) ?? []
 
     switch (node.type) {
@@ -398,17 +567,22 @@ export async function simulateFlowAction(payload: {
           options,
           isPause: true,
         })
-        // Simula tomada do primeiro botão
-        if (out[0]) {
-          trail.push({ nodeId, nodeType: 'system', side: 'system', text: `→ Simulando clique em "${options[0] ?? 'Opção 1'}"` })
-          walk(out[0].target, depth + 1, visited)
+        // FIX B4: escolhe o botão indicado em buttonChoices (default = 0)
+        const chosen = buttonChoices[nodeId] ?? 0
+        const chosenEdge = out.find(e => Number(e.sourceHandle) === chosen) ?? out[chosen] ?? out[0]
+        if (chosenEdge) {
+          trail.push({
+            nodeId, nodeType: 'system', side: 'system',
+            text: `→ Simulando clique em "${options[chosen] ?? `Opção ${chosen + 1}`}"`,
+          })
+          walk(chosenEdge.target, depth + 1, visited)
         }
         break
       }
       case 'condition':
         trail.push({
           nodeId, nodeType: node.type, side: 'system',
-          text: `Se {${data.variable}} ${data.operator} "${data.value}" → Sim`,
+          text: `Se {${data.variable}} ${data.operator} "${data.value}" → Sim (primeiro branch)`,
         })
         if (out[0]) walk(out[0].target, depth + 1, visited)
         break
@@ -484,21 +658,5 @@ export async function simulateFlowAction(payload: {
   }
 
   walk(startNode.id, 0, new Set())
-  return trail
-}
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function isSafeUrl(u: string): boolean {
-  try {
-    const url = new URL(u)
-    if (url.protocol !== 'https:' && url.protocol !== 'http:') return false
-    const host = url.hostname.toLowerCase()
-    if (host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0') return false
-    if (host.startsWith('169.254.') || host.startsWith('10.') ||
-        host.startsWith('192.168.') || host.endsWith('.local')) return false
-    return true
-  } catch {
-    return false
-  }
+  return { trail, keywordMatch }
 }

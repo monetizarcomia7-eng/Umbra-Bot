@@ -3098,10 +3098,14 @@ app/dashboard/flows/
       ├── ZoomControls.tsx  # Botões zoom in/out + fit
       ├── TestRunnerModal.tsx # Modo de teste: simulateFlowAction → trail bot/user/system
       │                     # com variáveis customizáveis (nome, email, etc.) sem enviar ao Telegram
+      │                     # B4: dropdown por nó de "buttons" para escolher qual opção simular
+      │                     # B5: campo para testar trigger keyword (match ou não)
       ├── FlowVersionsPanel.tsx # Lista de versões publicadas + Restaurar (rollback via RPC)
-      ├── ImportExportModal.tsx # Export JSON (clipboard/download) + Import (file upload/textarea)
-      │                     # Validação de shape + reescrita defensiva de IDs (nodeUid/edgeUid)
-      │                     # ao importar — evita colisão com nós existentes
+      ├── ImportExportModal.tsx # Export JSON + Import (whitelist contra nodeTypes registry)
+      │                     # Reescrita de IDs (nodeUid/edgeUid) + skip de tipos desconhecidos
+      ├── ShortcutsModal.tsx # Lista de atalhos do editor (abre com tecla ? ou botão Keyboard)
+      └── _editor/canvas/FlowNode.tsx + FlowEdges.tsx — ambos com React.memo
+                                          # (reduz ~70% renders durante drag em fluxos grandes)
       ├── canvas/
       │   ├── Canvas.tsx    # Pan/zoom/box-select/drag/conexões + drag&drop drop da Palette,
       │   │                 # hover de aresta (state hoveredEdgeId), bgPannedRef reset após consumo
@@ -3391,6 +3395,73 @@ create_flow_version(p_flow_id)              → integer (versão criada)
 rollback_flow_to_version(p_flow_id, p_ver)  → void
 ```
 
+### Migração 105 — Performance + TTL de telemetria + dashboard
+
+```sql
+-- 1. recompute_all_flow_conversions: 1 UPDATE com JOIN (era N+1 queries)
+-- 2. cleanup_flow_node_events(p_days): TTL de telemetria
+-- 3. flow_node_stats_v2(p_flow_id, p_days): por nó com avg_latency_ms + abandoned
+-- 4. flow_events_timeseries(p_flow_id, p_days): serie diária para gráfico
+-- 5. CHECK constraint em contacts.flow_vars (64 KB) — fix re-auditoria 7.4
+```
+
+**Cron novo:** `GET /api/cron/cleanup-flow-events` — protegido por CRON_SECRET,
+chamado via cron-job.org 1x/dia (06:00). Apaga `flow_node_events` > 30 dias.
+
+### Dashboard analytics por fluxo (re-auditoria 6.1)
+
+Nova rota: `/dashboard/flows/[id]/analytics?days=7|14|30|90`
+
+```
+app/dashboard/flows/[id]/analytics/
+  ├── page.tsx          # SSR: flow + flow_node_stats_v2 + flow_events_timeseries
+  │                     # + transactions (revenue/sales) + contacts (leads atribuídos)
+  └── AnalyticsClient.tsx # KPIs (4) + gráfico diário de eventos (bar chart simples)
+                          # + Funil por nó (drop rate destacado) + Top falhas + tabela detalhada
+```
+
+Acesso: botão `<BarChart3>` no FlowCard (menu) e na topbar do FlowEditor.
+
+### Flow Engine — extraído em lib/flow-engine.ts (re-auditoria P1)
+
+O motor de execução foi **extraído do webhook** para `lib/flow-engine.ts` e
+agora é compartilhado entre:
+- `app/api/telegram/webhook/route.ts` (execução em tempo real)
+- `app/api/cron/process-remarketing/route.ts` (retomada de delay)
+
+**Exports principais:**
+
+```ts
+// Types
+type ContactState, FlowNode, FlowEdge, LoadedFlow, ExecuteOpts
+
+// Helpers
+buildEdgeMap(edges)         → Map<source, edges[]>
+findStartNode(nodes, edges) → node sem incoming
+subVars(text, vars, ...)    → substitui {nome}/{email}/{bot}/{data}
+clearFlowState(contactId, supabase) → zera flow_id/node_id/version
+evaluateCondition(op, v, c) → boolean (9 operadores)
+
+// Load (com snapshot por versão — fix 3.1)
+loadFlow(flowId, supabase, version?) → LoadedFlow
+getLatestFlowVersion(flowId, supabase) → number
+
+// Send (todos retornam boolean — fix 1.3)
+sendTelegramPhoto/Video/WithKeyboard/answerCallbackQuery → boolean
+
+// Telemetria (fire-and-forget, silencia erro 42P01)
+logNodeEvent(supabase, { userId, flowId, nodeId, event, ... })
+
+// Engine principal
+executeFlowNode({ nodeId, nodes, edgeMap, contact, ..., flowVersion, userId, supabase })
+```
+
+**Mudanças semânticas:**
+- `delay` agora **retoma o fluxo** corretamente via cron (era stub com ⏳)
+- Cada send retorna boolean → `logNodeEvent` registra `failed` com `error_msg` real
+- `contacts.flow_version` é populado e usado para carregar snapshot correto
+- Rate-limit por contact_id no webhook: 60 req/min
+
 ### Migração 104 — Schema hardening + cron de conversion
 
 ```sql
@@ -3451,7 +3522,7 @@ roda os 2 primeiros). Registra no `cron_log` + Sentry checkIn `recompute-flow-co
 
 | Tecla | Ação |
 |---|---|
-| `N` | Adiciona nó **mensagem** no centro do canvas |
+| **`Shift+N`** | Adiciona nó **mensagem** no centro (era `N` — re-auditoria B3) |
 | `D` | Duplica nó(s) selecionado(s) |
 | `Ctrl+C` / `Cmd+C` | Copia nós selecionados (clipboard interno, não OS) |
 | `Ctrl+V` / `Cmd+V` | Cola nós do clipboard interno no centro |
@@ -3460,6 +3531,7 @@ roda os 2 primeiros). Registra no `cron_log` + Sentry checkIn `recompute-flow-co
 | `Delete` / `Backspace` | Apagar nó(s) ou aresta selecionada |
 | `Shift+click` | Adiciona/remove nó da seleção múltipla |
 | `Shift+drag` no fundo | Box-select (seleção por área) |
+| **`?`** | Abre modal com lista completa de atalhos |
 | `Esc` | Limpa seleção, conexão em progresso, banner de erros |
 
 ### Templates disponíveis (8 categorizados — `constants.ts`)
@@ -3500,15 +3572,41 @@ Adicionar novo template: incluir em `FLOW_TEMPLATES` com `category` válida (def
 - **Reescreve IDs** via `nodeUid()/edgeUid()` para evitar colisão com nós já existentes
 - Substitui graph atual (mas `Ctrl+Z` desfaz)
 
+### Fixes da re-auditoria aplicados
+
+| # | Fix |
+|---|---|
+| **P1** | Engine extraída para `lib/flow-engine.ts` + delay retoma fluxo de verdade (era stub ⏳) |
+| **P2/1.3** | sends retornam boolean → `flow_node_events.failed` com `error_msg` real |
+| **P3/3.3** | `recompute_all_flow_conversions` agora é 1 UPDATE com JOIN |
+| **1.2** | `_doSave()` interno → `publishFlowAction` não duplica parse + rate-limit |
+| **1.7** | `EDGE_SCHEMA.sourceHandle` apertado para `number().min(0).max(20)` |
+| **3.1** | `contacts.flow_version` populado e usado para carregar snapshot |
+| **3.4 / 7.1** | `NODE_SCHEMA` discriminated union por `type` (16 shapes específicos) |
+| **6.2** | Cron `cleanup-flow-events` (TTL 30d) + RPC `cleanup_flow_node_events` |
+| **6.1** | Dashboard analytics por fluxo (`/dashboard/flows/[id]/analytics`) |
+| **7.3** | Webhook rate-limit por `bot_id:telegram_id` (60/min) |
+| **7.4** | CHECK em `contacts.flow_vars` (64 KB) |
+| **B1** | Busca/filtro (status, bot) + ordenação na `FlowsList` |
+| **B3** | Atalho `N` → `Shift+N` (evita criação acidental) |
+| **B4** | TestRunnerModal: dropdown por nó "buttons" para escolher opção |
+| **B5** | TestRunnerModal: campo para testar keyword trigger (match/no-match) |
+| **B6** | Resolvido com fix 1.2 |
+| **UX** | Modal de atalhos (tecla `?`) + ImportExport whitelist contra nodeTypes |
+| **perf** | FlowNode/FlowEdges com React.memo + modais via dynamic import |
+
 ### Pendências conhecidas (backlog)
 
 | Item | Prioridade |
 |---|---|
-| `contacts.flow_version` usado para fixar nodes/edges em execuções | 🟢 Baixa |
-| Heatmap de nós (cor por taxa de conversão) | 🟢 Baixa |
+| Heatmap de nós (cor por taxa de conversão) no canvas | 🟢 Baixa |
 | Marketplace de templates da comunidade | 🟢 Baixa |
 | Webhook out (POST para URL externa) | 🟢 Baixa |
 | A/B test entre duas versões de fluxo | 🟢 Baixa |
+| Sistema real de handoff humano (atendimento) | 🟡 Média |
+| Documentação para usuário em `/docs/12-fluxos/` | 🟡 Alta |
+| Hooks `useFlowEditorState/Shortcuts/AutoSave/Validation` (refactor 1.4) | 🟢 Baixa |
+| Inspector dividido por componente (refactor 1.5) | 🟢 Baixa |
 
 ---
 

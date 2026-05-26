@@ -1,6 +1,6 @@
 'use client'
-import { useState, useEffect, useRef } from 'react'
-import { X, PlayCircle, Loader2, RefreshCw, Plus } from 'lucide-react'
+import { useState, useEffect, useRef, useMemo } from 'react'
+import { X, PlayCircle, Loader2, RefreshCw, Plus, Search, Check } from 'lucide-react'
 import { simulateFlowAction } from '@/app/actions/flows'
 import type { FlowNodeType, FlowEdgeType } from '../_shared/types'
 
@@ -16,17 +16,30 @@ interface Step {
 interface Props {
   nodes: FlowNodeType[]
   edges: FlowEdgeType[]
+  triggerType?: 'start' | 'keyword'
+  keywords?: string[]
   onClose: () => void
 }
 
-export default function TestRunnerModal({ nodes, edges, onClose }: Props) {
+export default function TestRunnerModal({ nodes, edges, triggerType, keywords, onClose }: Props) {
   const [trail, setTrail] = useState<Step[]>([])
   const [running, setRunning] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [vars, setVars] = useState<Record<string, string>>({ nome: 'João Silva', email: 'joao@exemplo.com' })
   const [varKey, setVarKey] = useState('')
   const [varVal, setVarVal] = useState('')
+  // B4: escolha de botão por nó
+  const [buttonChoices, setButtonChoices] = useState<Record<string, number>>({})
+  // B5: teste de keyword
+  const [kwInput, setKwInput] = useState('')
+  const [kwResult, setKwResult] = useState<{ matched: boolean; matchedKeyword: string | null } | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
+
+  // Lista de nós tipo "buttons" — para o usuário escolher qual opção simular
+  const buttonNodes = useMemo(
+    () => nodes.filter(n => n.type === 'buttons'),
+    [nodes],
+  )
 
   async function run() {
     setRunning(true)
@@ -37,12 +50,27 @@ export default function TestRunnerModal({ nodes, edges, onClose }: Props) {
         nodes: nodes.map(n => ({ id: n.id, type: n.type, data: n.data as Record<string, unknown> })),
         edges: edges.map(e => ({ source: e.source, target: e.target, sourceHandle: e.sourceHandle })),
         vars,
+        buttonChoices,
       })
-      setTrail(result)
+      setTrail(result.trail)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erro ao simular o fluxo.')
     } finally {
       setRunning(false)
+    }
+  }
+
+  async function testKeyword() {
+    if (!kwInput.trim()) { setKwResult(null); return }
+    try {
+      const result = await simulateFlowAction({
+        nodes: [], edges: [], vars: {},
+        keywordInput: kwInput.trim(),
+        keywords: keywords ?? [],
+      })
+      setKwResult(result.keywordMatch ?? { matched: false, matchedKeyword: null })
+    } catch {
+      setKwResult({ matched: false, matchedKeyword: null })
     }
   }
 
@@ -105,10 +133,11 @@ export default function TestRunnerModal({ nodes, edges, onClose }: Props) {
         </div>
 
         <div className="flex-1 flex min-h-0">
-          {/* Vars panel */}
-          <div className="w-[240px] shrink-0 overflow-y-auto p-4 border-r" style={{ borderColor: 'var(--border)' }}>
+          {/* Sidebar de configuração */}
+          <div className="w-[260px] shrink-0 overflow-y-auto p-4 border-r" style={{ borderColor: 'var(--border)' }}>
+            {/* Variáveis */}
             <p className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: 'var(--text-muted)' }}>
-              Variáveis de teste
+              Variáveis
             </p>
             <p className="text-[10px] mb-3" style={{ color: 'var(--text-muted)' }}>
               Simule respostas do usuário aqui.
@@ -117,7 +146,7 @@ export default function TestRunnerModal({ nodes, edges, onClose }: Props) {
             <div className="space-y-1.5 mb-3">
               {Object.entries(vars).map(([k, v]) => (
                 <div key={k} className="flex items-center gap-1.5 group">
-                  <span className="font-mono text-[10px] px-1.5 py-0.5 rounded"
+                  <span className="font-mono text-[10px] px-1.5 py-0.5 rounded shrink-0"
                     style={{ background: 'var(--surface-2)', color: 'var(--primary)' }}>
                     {`{${k}}`}
                   </span>
@@ -128,13 +157,13 @@ export default function TestRunnerModal({ nodes, edges, onClose }: Props) {
                     style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', color: 'var(--text)' }}
                   />
                   <button onClick={() => removeVar(k)}
-                    className="opacity-0 group-hover:opacity-100 text-xs"
+                    className="opacity-0 group-hover:opacity-100 text-xs px-1"
                     style={{ color: 'var(--text-muted)' }}>×</button>
                 </div>
               ))}
             </div>
 
-            <div className="flex flex-col gap-1.5">
+            <div className="flex flex-col gap-1.5 mb-5">
               <input
                 value={varKey}
                 onChange={e => setVarKey(e.target.value.replace(/[^a-zA-Z0-9_]/g, ''))}
@@ -157,6 +186,90 @@ export default function TestRunnerModal({ nodes, edges, onClose }: Props) {
                 <Plus size={12} /> Adicionar
               </button>
             </div>
+
+            {/* B4: escolha de botão por nó */}
+            {buttonNodes.length > 0 && (
+              <>
+                <p className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: 'var(--text-muted)' }}>
+                  Botões a simular
+                </p>
+                <p className="text-[10px] mb-3" style={{ color: 'var(--text-muted)' }}>
+                  Para nós &ldquo;Botões&rdquo;, escolha qual opção será &ldquo;clicada&rdquo;.
+                </p>
+                <div className="space-y-2 mb-5">
+                  {buttonNodes.map(n => {
+                    const opts = (n.data.options as string[]) ?? []
+                    const chosen = buttonChoices[n.id] ?? 0
+                    return (
+                      <div key={n.id} className="rounded-lg p-2"
+                        style={{ background: 'var(--surface-2)', border: '1px solid var(--border)' }}>
+                        <p className="text-[10px] mb-1 font-mono opacity-60" style={{ color: 'var(--text)' }}>
+                          {n.id.slice(0, 8)}…
+                        </p>
+                        <p className="text-xs mb-1.5 line-clamp-2" style={{ color: 'var(--text)' }}>
+                          {(n.data.text as string) ?? 'Sem texto'}
+                        </p>
+                        <select
+                          value={chosen}
+                          onChange={e => setButtonChoices(prev => ({ ...prev, [n.id]: Number(e.target.value) }))}
+                          className="w-full rounded px-2 py-1 text-xs"
+                          style={{ background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text)' }}>
+                          {opts.length === 0 && <option value={0}>Sem opções</option>}
+                          {opts.map((o, i) => (
+                            <option key={i} value={i}>
+                              {i + 1}. {o.slice(0, 30)}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )
+                  })}
+                </div>
+              </>
+            )}
+
+            {/* B5: testar keyword */}
+            {triggerType === 'keyword' && (keywords?.length ?? 0) > 0 && (
+              <>
+                <p className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: 'var(--text-muted)' }}>
+                  Testar palavra-chave
+                </p>
+                <div className="flex gap-1.5 mb-2">
+                  <input
+                    value={kwInput}
+                    onChange={e => setKwInput(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); testKeyword() } }}
+                    placeholder="Digite uma mensagem…"
+                    className="flex-1 rounded px-2 py-1 text-xs"
+                    style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', color: 'var(--text)' }}
+                  />
+                  <button onClick={testKeyword}
+                    className="px-2 py-1 rounded text-xs"
+                    style={{ background: 'var(--primary)', color: 'var(--accent-fg)' }}>
+                    <Search size={12} />
+                  </button>
+                </div>
+                {kwResult && (
+                  <div className="rounded-lg p-2 text-xs" style={{
+                    background: kwResult.matched
+                      ? 'color-mix(in oklab, var(--success) 10%, transparent)'
+                      : 'color-mix(in oklab, var(--danger) 10%, transparent)',
+                    border: '1px solid ' + (kwResult.matched ? 'var(--success)' : 'var(--danger)'),
+                  }}>
+                    {kwResult.matched ? (
+                      <span style={{ color: 'var(--success)' }}>
+                        <Check size={11} className="inline -mt-0.5 mr-1" />
+                        Bateu com &ldquo;{kwResult.matchedKeyword}&rdquo;
+                      </span>
+                    ) : (
+                      <span style={{ color: 'var(--danger)' }}>
+                        Nenhuma palavra-chave bateu.
+                      </span>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
           </div>
 
           {/* Trail */}
@@ -237,8 +350,8 @@ export default function TestRunnerModal({ nodes, edges, onClose }: Props) {
           borderColor: 'var(--border)',
           color: 'var(--text-muted)',
         }}>
-          Nós com pausa (pergunta, botões) são automaticamente continuados pelo primeiro caminho.
-          Nós &ldquo;delay&rdquo; são instantâneos. Variáveis vazias aparecem como em branco.
+          Nós com pausa (pergunta, botões) são continuados automaticamente pela escolha definida ao lado.
+          Nós &ldquo;delay&rdquo; são instantâneos. Variáveis vazias aparecem em branco.
         </div>
       </div>
     </div>

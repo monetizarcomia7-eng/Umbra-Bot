@@ -3,6 +3,12 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { decryptToken } from '@/lib/crypto'
 import { sendTelegramMessage } from '@/lib/telegram'
 import * as Sentry from '@sentry/nextjs'
+import {
+  type ContactState,
+  buildEdgeMap,
+  loadFlow,
+  executeFlowNode,
+} from '@/lib/flow-engine'
 
 // GET /api/cron/process-remarketing
 // Deve ser chamado a cada hora via cron-job.org (com Authorization: Bearer CRON_SECRET).
@@ -205,53 +211,67 @@ export async function GET(request: Request) {
 
         const token = decryptToken(bot.token as string)
 
-        // Sentinel __delay__:<nodeId> retoma execução do fluxo no nó alvo,
-        // em vez de enviar uma mensagem solta.
+        // FIX P1: Sentinel __delay__:<nodeId> AGORA EXECUTA o próximo nó (era stub).
+        // O engine extraído (lib/flow-engine.ts) é importado e roda inline aqui.
         if (row.message.startsWith('__delay__:') && row.flow_id) {
           const nextNodeId = row.message.slice('__delay__:'.length)
 
-          // Carrega contato e fluxo
-          const [{ data: cont }, { data: flow }] = await Promise.all([
-            supabase.from('contacts')
-              .select('id, first_name, tags, flow_id, flow_node_id, flow_vars')
-              .eq('id', row.contact_id).maybeSingle(),
-            supabase.from('flows')
-              .select('id, nodes, edges')
-              .eq('id', row.flow_id).maybeSingle(),
-          ])
+          // Carrega contato (com flow_version para usar snapshot correto)
+          const { data: cont } = await supabase
+            .from('contacts')
+            .select('id, first_name, tags, flow_id, flow_node_id, flow_vars, flow_version')
+            .eq('id', row.contact_id).maybeSingle()
 
-          if (cont && flow && Array.isArray(flow.nodes) && Array.isArray(flow.edges)) {
-            // Limpa wait state
+          const contFlowVersion =
+            cont ? ((cont as Record<string, unknown>).flow_version as number | null) : null
+
+          // Carrega o fluxo na versão em que o contato está executando (snapshot imutável)
+          const flow = cont ? await loadFlow(row.flow_id, supabase, contFlowVersion) : null
+
+          if (cont && flow) {
+            // Limpa wait state e marca delay como cumprido (idempotência)
             await supabase.from('contacts').update({ flow_node_id: null }).eq('id', cont.id)
-
-            // Marca delay como sent (cumprido)
             await supabase
               .from('flow_scheduled_sends')
               .update({ status: 'sent', sent_at: new Date().toISOString() })
               .eq('id', row.id)
 
-            // Chama o webhook próprio para executar o nó seguinte
-            // Solução simples: fazer fetch ao próprio endpoint /api/internal/flow-resume
-            // Como não temos isolado, fazemos um envio mínimo aqui (apenas se for um message-like)
-            // Para implementação completa, recomenda-se mover engine para lib/flow-engine.ts
-            // e reusá-lo. Por enquanto, envia mensagem-marcador opcional:
-            await sendTelegramMessage(
-              token,
-              row.chat_id,
-              '⏳',
-              'HTML',
-            ).catch(() => {})
+            const contactState: ContactState = {
+              id:           cont.id as string,
+              first_name:   (cont.first_name as string) ?? '',
+              tags:         (cont.tags as string[] | null) ?? null,
+              flow_id:      row.flow_id,
+              flow_node_id: null,
+              flow_vars:    (cont.flow_vars as Record<string, string>) ?? null,
+            }
 
-            // Reagenda continuação via webhook ao próximo evento do contato
-            await supabase
-              .from('contacts')
-              .update({ flow_id: row.flow_id, flow_node_id: nextNodeId })
-              .eq('id', cont.id)
+            const edgeMap = buildEdgeMap(flow.edges)
+            await executeFlowNode({
+              nodeId:      nextNodeId,
+              nodes:       flow.nodes,
+              edgeMap,
+              contact:     contactState,
+              firstName:   contactState.first_name,
+              botName:     (bot as { name: string }).name,
+              plainToken:  token,
+              chatId:      row.chat_id,
+              flowId:      flow.id,
+              flowVersion: flow.version,
+              userId:      (bot as { user_id: string }).user_id,
+              supabase,
+            })
 
             fssSent++
             continue
           }
-          // se faltar contato/fluxo, segue como mensagem normal
+
+          // Sem contato/fluxo: marca como failed e continua o loop
+          await supabase
+            .from('flow_scheduled_sends')
+            .update({ status: 'failed', error: 'contato ou fluxo não encontrado', sent_at: new Date().toISOString() })
+            .eq('id', row.id)
+          fssFailed++
+          continue
         }
 
         await sendTelegramMessage(token, row.chat_id, row.message, 'HTML')

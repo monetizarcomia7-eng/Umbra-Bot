@@ -3,52 +3,17 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { decryptToken } from '@/lib/crypto'
 import { sendTelegramMessage } from '@/lib/telegram'
 import { dispatchWebhookEvent } from '@/lib/webhooks'
-
-// ─── Telegram API helpers ──────────────────────────────────────────────────────
-
-async function tgApi(token: string, method: string, body: Record<string, unknown>) {
-  return fetch(`https://api.telegram.org/bot${token}/${method}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-}
-
-async function sendTelegramPhoto(token: string, chatId: number, photo: string, caption?: string) {
-  await tgApi(token, 'sendPhoto', {
-    chat_id: chatId,
-    photo,
-    caption: caption ?? '',
-    parse_mode: 'HTML',
-  }).catch(() => {})
-}
-
-async function sendTelegramVideo(token: string, chatId: number, video: string, caption?: string) {
-  await tgApi(token, 'sendVideo', {
-    chat_id: chatId,
-    video,
-    caption: caption ?? '',
-    parse_mode: 'HTML',
-  }).catch(() => {})
-}
-
-async function sendTelegramWithKeyboard(
-  token: string,
-  chatId: number,
-  text: string,
-  keyboard: Array<Array<{ text: string; callback_data?: string; url?: string }>>,
-) {
-  await tgApi(token, 'sendMessage', {
-    chat_id: chatId,
-    text: text || '​', // zero-width space fallback
-    parse_mode: 'HTML',
-    reply_markup: { inline_keyboard: keyboard },
-  }).catch(() => {})
-}
-
-async function answerCallbackQuery(token: string, callbackQueryId: string) {
-  await tgApi(token, 'answerCallbackQuery', { callback_query_id: callbackQueryId }).catch(() => {})
-}
+import { rateLimit } from '@/lib/rate-limit'
+import {
+  type ContactState,
+  type FlowNode,
+  buildEdgeMap,
+  findStartNode,
+  loadFlow,
+  getLatestFlowVersion,
+  executeFlowNode,
+  answerCallbackQuery,
+} from '@/lib/flow-engine'
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -74,518 +39,6 @@ interface TelegramUpdate {
     from: { id: number; first_name: string; last_name?: string; username?: string }
     message?: TelegramMessage
     data?: string
-  }
-}
-
-interface FlowNode {
-  id: string
-  type: string
-  data: Record<string, unknown>
-}
-
-interface FlowEdge {
-  id: string
-  source: string
-  target: string
-  sourceHandle?: number | string | null
-  label?: string
-}
-
-interface ContactState {
-  id: string
-  first_name: string
-  tags: string[] | null
-  flow_id: string | null
-  flow_node_id: string | null
-  flow_vars: Record<string, string> | null
-}
-
-type SupabaseAdmin = ReturnType<typeof createAdminClient>
-
-// ─── Flow helpers ──────────────────────────────────────────────────────────────
-
-function buildEdgeMap(edges: FlowEdge[]): Map<string, FlowEdge[]> {
-  const m = new Map<string, FlowEdge[]>()
-  for (const e of edges) {
-    if (!m.has(e.source)) m.set(e.source, [])
-    m.get(e.source)!.push(e)
-  }
-  return m
-}
-
-function findStartNode(nodes: FlowNode[], edges: FlowEdge[]): FlowNode | null {
-  const hasIncoming = new Set(edges.map(e => e.target))
-  return nodes.find(n => !hasIncoming.has(n.id)) ?? null
-}
-
-function subVars(
-  text: string,
-  flowVars: Record<string, string>,
-  firstName: string,
-  botName: string,
-): string {
-  return text
-    .replace(/\{nome\}/g,   flowVars['nome']  ?? firstName)
-    .replace(/\{email\}/g,  flowVars['email'] ?? '')
-    .replace(/\{bot\}/g,    botName)
-    .replace(/\{data\}/g,   new Date().toLocaleDateString('pt-BR'))
-    .replace(/\{(\w+)\}/g,  (_, k) => flowVars[k] ?? '')
-}
-
-async function clearFlowState(contactId: string, supabase: SupabaseAdmin) {
-  await supabase
-    .from('contacts')
-    .update({ flow_id: null, flow_node_id: null })
-    .eq('id', contactId)
-}
-
-// ─── Telemetria de execução ───────────────────────────────────────────────────
-// Insere evento em flow_node_events fire-and-forget.
-// Migração 103 cria a tabela; em ambientes sem ela, a falha é silenciosa.
-function logNodeEvent(
-  supabase: SupabaseAdmin,
-  args: {
-    userId: string
-    flowId: string
-    nodeId: string
-    nodeType: string
-    contactId: string | null
-    event: 'entered' | 'sent' | 'failed' | 'completed' | 'abandoned'
-    errorMsg?: string
-    latencyMs?: number
-  },
-) {
-  supabase.from('flow_node_events').insert({
-    user_id:    args.userId,
-    flow_id:    args.flowId,
-    node_id:    args.nodeId,
-    node_type:  args.nodeType,
-    contact_id: args.contactId,
-    event:      args.event,
-    error_msg:  args.errorMsg ?? null,
-    latency_ms: args.latencyMs ?? null,
-  }).then(({ error }) => {
-    // Silencioso — tabela pode não existir em ambientes sem migração 103
-    if (error && error.code !== '42P01' /* relation does not exist */) {
-      console.error('[webhook] flow_node_events insert:', error.message)
-    }
-  })
-}
-
-// ─── Avaliador de condições (B5 fix — operadores reais) ──────────────────────
-function evaluateCondition(
-  operator: string,
-  variableValue: string | undefined,
-  compareValue: string,
-): boolean {
-  const v = (variableValue ?? '').toString().trim()
-  const c = (compareValue ?? '').toString().trim()
-
-  switch (operator) {
-    case 'equals':       return v.toLowerCase() === c.toLowerCase()
-    case 'not_equals':   return v.toLowerCase() !== c.toLowerCase()
-    case 'contains':     return v.toLowerCase().includes(c.toLowerCase())
-    case 'starts_with':  return v.toLowerCase().startsWith(c.toLowerCase())
-    case 'ends_with':    return v.toLowerCase().endsWith(c.toLowerCase())
-    case 'not_empty':    return v.length > 0
-    case 'empty':        return v.length === 0
-    case 'gt': {
-      const a = Number(v); const b = Number(c)
-      return Number.isFinite(a) && Number.isFinite(b) && a > b
-    }
-    case 'lt': {
-      const a = Number(v); const b = Number(c)
-      return Number.isFinite(a) && Number.isFinite(b) && a < b
-    }
-    default:
-      return true // fallback: primeiro branch
-  }
-}
-
-const DELAY_UNIT_MS: Record<string, number> = {
-  minutos: 60_000,
-  horas:   3_600_000,
-  dias:    86_400_000,
-}
-
-// ─── Flow execution engine ─────────────────────────────────────────────────────
-
-async function executeFlowNode(
-  nodeId: string,
-  nodes: FlowNode[],
-  edgeMap: Map<string, FlowEdge[]>,
-  contact: ContactState,
-  firstName: string,
-  botName: string,
-  plainToken: string,
-  chatId: number,
-  flowId: string,
-  userId: string,
-  supabase: SupabaseAdmin,
-  depth = 0,
-): Promise<void> {
-  if (depth > 20) return // guard against infinite loops
-
-  const foundNode = nodes.find(n => n.id === nodeId)
-  if (!foundNode) {
-    await clearFlowState(contact.id, supabase)
-    return
-  }
-  // Captura final (TS narrowing dentro da closure de advance)
-  const node: FlowNode = foundNode
-
-  const t0 = Date.now()
-  // Telemetria — sempre marca entrada no nó
-  logNodeEvent(supabase, {
-    userId, flowId, nodeId: node.id, nodeType: node.type,
-    contactId: contact.id, event: 'entered',
-  })
-
-  const flowVars = contact.flow_vars ?? {}
-  const outEdges = edgeMap.get(nodeId) ?? []
-
-  async function advance(edgeIndex = 0) {
-    logNodeEvent(supabase, {
-      userId, flowId, nodeId: node.id, nodeType: node.type,
-      contactId: contact.id, event: 'sent',
-      latencyMs: Date.now() - t0,
-    })
-    // Prefer edge at given index, fallback to first
-    const next = outEdges[edgeIndex] ?? outEdges[0]
-    if (next) {
-      await executeFlowNode(
-        next.target, nodes, edgeMap, contact, firstName, botName,
-        plainToken, chatId, flowId, userId, supabase, depth + 1,
-      )
-    } else {
-      logNodeEvent(supabase, {
-        userId, flowId, nodeId: node.id, nodeType: node.type,
-        contactId: contact.id, event: 'completed',
-      })
-      await clearFlowState(contact.id, supabase)
-    }
-  }
-
-  switch (node.type) {
-    case 'message': {
-      const text = subVars((node.data.text as string) ?? '', flowVars, firstName, botName)
-      if (text.trim()) {
-        await sendTelegramMessage(plainToken, chatId, text).catch(() => {})
-      }
-      await advance()
-      break
-    }
-
-    case 'question': {
-      const text = subVars((node.data.text as string) ?? '', flowVars, firstName, botName)
-      if (text.trim()) {
-        await sendTelegramMessage(plainToken, chatId, text).catch(() => {})
-      }
-      // Pause: save current node so next message is treated as the answer
-      await supabase
-        .from('contacts')
-        .update({ flow_id: flowId, flow_node_id: nodeId })
-        .eq('id', contact.id)
-      break
-    }
-
-    case 'buttons': {
-      const text = subVars((node.data.text as string) ?? 'Escolha uma opção:', flowVars, firstName, botName)
-      const options = (node.data.options as string[]) ?? []
-      if (options.length > 0) {
-        // Each button in its own row
-        const keyboard = options.map((opt, i) => [{ text: opt, callback_data: `flow_btn_${i}` }])
-        await sendTelegramWithKeyboard(plainToken, chatId, text, keyboard)
-      }
-      // Pause: waiting for callback_query (button press)
-      await supabase
-        .from('contacts')
-        .update({ flow_id: flowId, flow_node_id: nodeId })
-        .eq('id', contact.id)
-      break
-    }
-
-    case 'tag': {
-      const tag    = (node.data.tag    as string) ?? ''
-      const action = (node.data.action as string) ?? 'add'
-      if (tag) {
-        const { data: curr } = await supabase
-          .from('contacts')
-          .select('tags')
-          .eq('id', contact.id)
-          .single()
-        const tags: string[] = curr?.tags ?? []
-        if (action === 'remove') {
-          await supabase.from('contacts').update({ tags: tags.filter((t: string) => t !== tag) }).eq('id', contact.id)
-        } else if (!tags.includes(tag)) {
-          await supabase.from('contacts').update({ tags: [...tags, tag] }).eq('id', contact.id)
-        }
-      }
-      await advance()
-      break
-    }
-
-    case 'delay': {
-      // FIX B6: agora respeita o delay real usando flow_scheduled_sends.
-      // O cron process-remarketing processa o "wake up" e continua a partir
-      // do próximo nó (target da primeira aresta de saída).
-      const amount = Number(node.data.amount ?? 0)
-      const unit   = (node.data.unit as string) ?? 'minutos'
-      const nextEdge = outEdges[0]
-
-      if (!nextEdge || amount <= 0) {
-        // Sem destino ou delay zero — segue imediatamente
-        await advance()
-        break
-      }
-
-      const ms = amount * (DELAY_UNIT_MS[unit] ?? 60_000)
-      const scheduledAt = new Date(Date.now() + ms).toISOString()
-
-      const { data: contactMeta } = await supabase
-        .from('contacts')
-        .select('user_id, bot_id')
-        .eq('id', contact.id)
-        .single()
-
-      if (contactMeta?.user_id && contactMeta?.bot_id) {
-        // Marca payload especial: message vazio + node_id alvo no error/notes
-        // Reutilizamos a tabela flow_scheduled_sends adicionando metadata via campo
-        // 'message' = JSON sentinel iniciado por __delay__:<target_node_id>
-        supabase.from('flow_scheduled_sends').insert({
-          user_id:      contactMeta.user_id,
-          bot_id:       contactMeta.bot_id,
-          contact_id:   contact.id,
-          chat_id:      chatId,
-          message:      `__delay__:${nextEdge.target}`,
-          scheduled_at: scheduledAt,
-          flow_id:      flowId,
-        }).then(({ error }) => {
-          if (error) console.error('[webhook] delay schedule insert error:', error.message)
-        })
-
-        // Persiste posição para o cron retomar com contexto correto
-        await supabase
-          .from('contacts')
-          .update({ flow_id: flowId, flow_node_id: nodeId })
-          .eq('id', contact.id)
-      } else {
-        // Sem metadata: fallback para advance imediato
-        await advance()
-      }
-      break
-    }
-
-    case 'image': {
-      const url     = (node.data.imageUrl as string) ?? ''
-      const caption = subVars((node.data.caption as string) ?? '', flowVars, firstName, botName)
-      if (url) {
-        await sendTelegramPhoto(plainToken, chatId, url, caption)
-      }
-      await advance()
-      break
-    }
-
-    case 'video': {
-      const url     = (node.data.videoUrl as string) ?? ''
-      const caption = subVars((node.data.caption as string) ?? '', flowVars, firstName, botName)
-      if (url) {
-        await sendTelegramVideo(plainToken, chatId, url, caption)
-      }
-      await advance()
-      break
-    }
-
-    case 'link': {
-      const btnText = subVars((node.data.text as string) ?? 'Clique aqui!', flowVars, firstName, botName)
-      const url     = (node.data.url as string) ?? ''
-      if (url) {
-        await sendTelegramWithKeyboard(plainToken, chatId, '🔗 ' + btnText, [[{ text: btnText, url }]])
-      }
-      await advance()
-      break
-    }
-
-    case 'offer': {
-      const product = subVars((node.data.product as string) ?? '', flowVars, firstName, botName)
-      const price   = node.data.price as number | undefined
-      const cta     = subVars((node.data.cta as string) ?? '', flowVars, firstName, botName)
-      const lines = [
-        product && `<b>${product}</b>`,
-        price != null && `💰 R$ ${Number(price).toFixed(2)}`,
-        cta,
-      ].filter(Boolean).join('\n\n')
-      if (lines) await sendTelegramMessage(plainToken, chatId, lines).catch(() => {})
-      await advance()
-      break
-    }
-
-    case 'condition': {
-      // FIX B5: avalia operador real (não pega sempre o primeiro branch).
-      // sourceHandle 0 = "Sim", sourceHandle 1 = "Não"
-      const variable = (node.data.variable as string) ?? ''
-      const operator = (node.data.operator as string) ?? 'equals'
-      const compare  = (node.data.value    as string) ?? ''
-      const value    = flowVars[variable]
-      const result   = evaluateCondition(operator, value, compare)
-      // Procura aresta cujo sourceHandle bate (preferida); senão usa índice
-      const desiredHandle = result ? 0 : 1
-      const edge =
-        outEdges.find(e => Number(e.sourceHandle) === desiredHandle) ??
-        outEdges[desiredHandle] ??
-        outEdges[0]
-      if (edge) {
-        logNodeEvent(supabase, {
-          userId, flowId, nodeId: node.id, nodeType: node.type,
-          contactId: contact.id, event: 'sent',
-          latencyMs: Date.now() - t0,
-        })
-        await executeFlowNode(
-          edge.target, nodes, edgeMap, contact, firstName, botName,
-          plainToken, chatId, flowId, userId, supabase, depth + 1,
-        )
-      } else {
-        await clearFlowState(contact.id, supabase)
-      }
-      break
-    }
-
-    case 'phone': {
-      const text = subVars((node.data.text as string) ?? 'Qual é o seu telefone?', flowVars, firstName, botName)
-      if (text.trim()) {
-        await sendTelegramMessage(plainToken, chatId, text).catch(() => {})
-      }
-      // Pause: save current node so next message is treated as the phone answer
-      await supabase
-        .from('contacts')
-        .update({ flow_id: flowId, flow_node_id: nodeId })
-        .eq('id', contact.id)
-      break
-    }
-
-    case 'checkout': {
-      const btnText = subVars((node.data.text as string) ?? 'Clique para comprar:', flowVars, firstName, botName)
-      const url = (node.data.url as string) ?? ''
-      if (url) {
-        await sendTelegramWithKeyboard(plainToken, chatId, btnText, [[{ text: '🛒 Comprar agora', url }]])
-      }
-      await advance()
-      break
-    }
-
-    case 'remarketing': {
-      const rawText     = (node.data.text        as string) ?? ''
-      const delayAmount = Number(node.data.delayAmount ?? 1)
-      const delayUnit   = (node.data.delayUnit   as string) ?? 'horas'
-      const tag         = (node.data.tag         as string) ?? ''
-
-      const unitMs: Record<string, number> = {
-        minutos: 60_000,
-        horas:   3_600_000,
-        dias:    86_400_000,
-      }
-      const ms          = delayAmount * (unitMs[delayUnit] ?? 3_600_000)
-      const scheduledAt = new Date(Date.now() + ms).toISOString()
-      const message     = subVars(rawText, flowVars, firstName, botName)
-
-      // Busca user_id e bot_id do contato (sem alterar a assinatura da função)
-      const { data: contactMeta } = await supabase
-        .from('contacts')
-        .select('user_id, bot_id')
-        .eq('id', contact.id)
-        .single()
-
-      if (contactMeta?.user_id && contactMeta?.bot_id) {
-        supabase.from('flow_scheduled_sends').insert({
-          user_id:      contactMeta.user_id,
-          bot_id:       contactMeta.bot_id,
-          contact_id:   contact.id,
-          chat_id:      chatId,
-          message,
-          scheduled_at: scheduledAt,
-          flow_id:      flowId,
-        }).then(({ error }) => {
-          if (error) console.error('[webhook] flow_scheduled_sends insert error:', error.message)
-        })
-      }
-
-      // Aplica tag opcional ao contato
-      if (tag) {
-        const { data: curr } = await supabase
-          .from('contacts')
-          .select('tags')
-          .eq('id', contact.id)
-          .single()
-        const tags: string[] = curr?.tags ?? []
-        if (!tags.includes(tag)) {
-          await supabase.from('contacts').update({ tags: [...tags, tag] }).eq('id', contact.id)
-        }
-      }
-
-      await advance()
-      break
-    }
-
-    case 'upsell':
-    case 'downsell': {
-      const product      = subVars((node.data.product      as string) ?? '', flowVars, firstName, botName)
-      const discountPrice = node.data.discountPrice as number | undefined
-      const description  = subVars((node.data.description  as string) ?? '', flowVars, firstName, botName)
-      const cta          = subVars((node.data.cta          as string) ?? '', flowVars, firstName, botName)
-      const url          = (node.data.url as string) ?? ''
-      const lines = [
-        product && `<b>${product}</b>`,
-        discountPrice != null && `💰 R$ ${Number(discountPrice).toFixed(2)}`,
-        description,
-      ].filter(Boolean).join('\n\n')
-      if (lines) await sendTelegramMessage(plainToken, chatId, lines).catch(() => {})
-      if (url && cta) {
-        await sendTelegramWithKeyboard(plainToken, chatId, cta, [[{ text: cta, url }]])
-      }
-      await advance()
-      break
-    }
-
-    case 'orderbump': {
-      const product     = subVars((node.data.product     as string) ?? '', flowVars, firstName, botName)
-      const price       = node.data.price as number | undefined
-      const description = subVars((node.data.description as string) ?? '', flowVars, firstName, botName)
-      const cta         = subVars((node.data.cta         as string) ?? '', flowVars, firstName, botName)
-      const lines = [
-        description,
-        product && `📦 <b>${product}</b>`,
-        price != null && `➕ por apenas R$ ${Number(price).toFixed(2)}`,
-      ].filter(Boolean).join('\n')
-      if (lines) await sendTelegramMessage(plainToken, chatId, lines).catch(() => {})
-      if (cta) await sendTelegramMessage(plainToken, chatId, cta).catch(() => {})
-      await advance()
-      break
-    }
-
-    case 'end':
-    case 'handoff':
-    default:
-      await clearFlowState(contact.id, supabase)
-      break
-  }
-}
-
-// ─── Load flow and build helpers ───────────────────────────────────────────────
-
-async function loadFlow(flowId: string, supabase: SupabaseAdmin) {
-  const { data } = await supabase
-    .from('flows')
-    .select('id, nodes, edges, trigger_type, keywords')
-    .eq('id', flowId)
-    .eq('status', 'published')
-    .single()
-  if (!data) return null
-  return {
-    id:          data.id as string,
-    nodes:       (data.nodes ?? []) as FlowNode[],
-    edges:       (data.edges ?? []) as FlowEdge[],
-    triggerType: ((data as Record<string, unknown>).trigger_type as string) ?? 'start',
-    keywords:    ((data as Record<string, unknown>).keywords as string[]) ?? [],
   }
 }
 
@@ -622,7 +75,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'invalid json' }, { status: 400 })
   }
 
-  // Always return 200 to Telegram (retries on non-200)
   const msg = update.message
   const cbq = update.callback_query
 
@@ -631,37 +83,43 @@ export async function POST(request: NextRequest) {
     const cbChatId = cbq.message?.chat.id
     if (!cbChatId) return new NextResponse(null, { status: 200 })
 
-    // Dismiss loading spinner on button
-    await answerCallbackQuery(decryptToken(bot.token as string), cbq.id)
+    const plainToken = decryptToken(bot.token as string)
+    await answerCallbackQuery(plainToken, cbq.id)
 
     const cbData = cbq.data ?? ''
     if (!cbData.startsWith('flow_btn_')) return new NextResponse(null, { status: 200 })
 
-    const btnIdx    = parseInt(cbData.replace('flow_btn_', ''), 10)
-    const cbTgId    = String(cbq.from.id)
-    const plainToken = decryptToken(bot.token as string)
+    const btnIdx = parseInt(cbData.replace('flow_btn_', ''), 10)
+    const cbTgId = String(cbq.from.id)
 
-    // Load contact flow state
+    // Rate limit por contato — evita loop de callback_query (7.3)
+    const rl = await rateLimit(`flow-exec:${bot.id}:${cbTgId}`, 60, 60_000)
+    if (!rl.ok) return new NextResponse(null, { status: 429 })
+
+    // Load contact flow state (inclui flow_version — fix 3.1)
     const { data: cbContact } = await supabase
       .from('contacts')
-      .select('id, first_name, tags, flow_id, flow_node_id, flow_vars')
+      .select('id, first_name, tags, flow_id, flow_node_id, flow_vars, flow_version')
       .eq('bot_id', bot.id)
       .eq('telegram_id', cbTgId)
       .maybeSingle()
 
     if (cbContact?.flow_node_id && cbContact.flow_id) {
-      const flow = await loadFlow(cbContact.flow_id, supabase)
+      // Carrega snapshot da versão em execução (não a versão atual!)
+      const flow = await loadFlow(
+        cbContact.flow_id,
+        supabase,
+        (cbContact as Record<string, unknown>).flow_version as number | null,
+      )
       if (flow) {
         const edgeMap = buildEdgeMap(flow.edges)
         const outEdges = edgeMap.get(cbContact.flow_node_id) ?? []
-        // Match by sourceHandle index, fallback to position
         const targetEdge =
           outEdges.find(e => Number(e.sourceHandle) === btnIdx) ??
           outEdges[btnIdx] ??
           outEdges[0]
 
         if (targetEdge) {
-          // Clear waiting state before advancing (next node will re-set if needed)
           await supabase.from('contacts').update({ flow_node_id: null }).eq('id', cbContact.id)
           const contactState: ContactState = {
             id:            cbContact.id,
@@ -671,11 +129,20 @@ export async function POST(request: NextRequest) {
             flow_node_id:  null,
             flow_vars:     (cbContact.flow_vars as Record<string, string>) ?? null,
           }
-          await executeFlowNode(
-            targetEdge.target, flow.nodes, edgeMap, contactState,
-            cbContact.first_name, bot.name as string,
-            plainToken, cbChatId, flow.id, bot.user_id as string, supabase,
-          )
+          await executeFlowNode({
+            nodeId:      targetEdge.target,
+            nodes:       flow.nodes,
+            edgeMap,
+            contact:     contactState,
+            firstName:   cbContact.first_name,
+            botName:     bot.name as string,
+            plainToken,
+            chatId:      cbChatId,
+            flowId:      flow.id,
+            flowVersion: flow.version,
+            userId:      bot.user_id as string,
+            supabase,
+          })
         }
       }
     }
@@ -693,12 +160,16 @@ export async function POST(request: NextRequest) {
   const chatId     = msg.chat.id
   const text       = msg.text ?? ''
 
+  // Rate limit por contato (7.3)
+  const rl = await rateLimit(`flow-exec:${bot.id}:${telegramId}`, 60, 60_000)
+  if (!rl.ok) return new NextResponse(null, { status: 429 })
+
   const plainToken = decryptToken(bot.token as string)
 
   // Fetch existing contact (with flow state)
   const { data: existingContact } = await supabase
     .from('contacts')
-    .select('id, first_name, tags, flow_id, flow_node_id, flow_vars')
+    .select('id, first_name, tags, flow_id, flow_node_id, flow_vars, flow_version')
     .eq('bot_id', bot.id)
     .eq('telegram_id', telegramId)
     .maybeSingle()
@@ -730,8 +201,9 @@ export async function POST(request: NextRequest) {
   }
 
   const contactId = existingContact?.id ?? upserted?.id ?? null
+  const existingFlowVersion =
+    existingContact ? ((existingContact as Record<string, unknown>).flow_version as number | null) : null
 
-  // Build contact state object for flow engine
   const contactState: ContactState = {
     id:           contactId ?? '',
     first_name:   firstName,
@@ -752,7 +224,6 @@ export async function POST(request: NextRequest) {
       title:       'Novo lead',
       description: `${firstName} iniciou conversa`,
     })
-    // Dispara evento de webhook para integrações externas (fire-and-forget)
     dispatchWebhookEvent(bot.user_id as string, 'lead.created', {
       contact_id:  contactId,
       first_name:  firstName,
@@ -765,7 +236,6 @@ export async function POST(request: NextRequest) {
 
   // ── /start command ────────────────────────────────────────────────────────────
   if (text.startsWith('/start') && isNewContact) {
-    // Register conversation_started in funnel (fire-and-forget)
     supabase.from('checkout_events').insert({
       user_id:      bot.user_id,
       bot_id:       bot.id,
@@ -776,22 +246,31 @@ export async function POST(request: NextRequest) {
       if (error) console.error('[webhook] conversation_started error:', error.message)
     })
 
-    // If bot has a published active flow, run it instead of welcome_message
     if (bot.active_flow_id) {
-      const flow = await loadFlow(bot.active_flow_id as string, supabase)
+      // FIX 3.1: pega a última versão publicada (snapshot imutável)
+      const ver = await getLatestFlowVersion(bot.active_flow_id as string, supabase)
+      const flow = await loadFlow(bot.active_flow_id as string, supabase, ver)
       if (flow && flow.nodes.length > 0) {
-        const edgeMap   = buildEdgeMap(flow.edges)
+        const edgeMap = buildEdgeMap(flow.edges)
         const startNode = findStartNode(flow.nodes, flow.edges)
         if (startNode) {
-          // Increment executions counter atomically (fire-and-forget)
           supabase.rpc('increment_flow_executions', { p_flow_id: flow.id }).then(({ error }) => {
             if (error) console.error('[webhook] increment_flow_executions error:', error.message)
           })
-          await executeFlowNode(
-            startNode.id, flow.nodes, edgeMap, contactState,
-            firstName, bot.name as string,
-            plainToken, chatId, flow.id, bot.user_id as string, supabase,
-          )
+          await executeFlowNode({
+            nodeId:      startNode.id,
+            nodes:       flow.nodes,
+            edgeMap,
+            contact:     contactState,
+            firstName,
+            botName:     bot.name as string,
+            plainToken,
+            chatId,
+            flowId:      flow.id,
+            flowVersion: flow.version,
+            userId:      bot.user_id as string,
+            supabase,
+          })
           return new NextResponse(null, { status: 200 })
         }
       }
@@ -842,14 +321,12 @@ export async function POST(request: NextRequest) {
           .eq('user_id', prefsRow.user_id)
 
         await sendTelegramMessage(
-          plainToken,
-          chatId,
+          plainToken, chatId,
           '✅ <b>Canal Telegram vinculado com sucesso!</b>\n\nVocê receberá notificações do Umbra Bot diretamente aqui.',
         ).catch(() => {})
       } else {
         await sendTelegramMessage(
-          plainToken,
-          chatId,
+          plainToken, chatId,
           '❌ Código expirado. Gere um novo código nas configurações de Notificações.',
         ).catch(() => {})
       }
@@ -860,27 +337,25 @@ export async function POST(request: NextRequest) {
 
   // ── Continue active flow (answer to a question node) ─────────────────────────
   if (!text.startsWith('/') && contactState.flow_node_id && contactState.flow_id) {
-    const flow = await loadFlow(contactState.flow_id, supabase)
+    // Carrega versão snapshot (não a atual!) — fix 3.1
+    const flow = await loadFlow(contactState.flow_id, supabase, existingFlowVersion)
     if (flow) {
       const edgeMap     = buildEdgeMap(flow.edges)
-      const currentNode = flow.nodes.find(n => n.id === contactState.flow_node_id)
+      const currentNode = flow.nodes.find((n: FlowNode) => n.id === contactState.flow_node_id)
 
       if (currentNode?.type === 'question' || currentNode?.type === 'phone') {
         const varName = (currentNode.data.variable as string) || (currentNode.type === 'phone' ? 'telefone' : 'resposta')
         const newVars = { ...(contactState.flow_vars ?? {}), [varName]: text }
 
-        // Persist captured variable
         await supabase
           .from('contacts')
           .update({ flow_vars: newVars, flow_node_id: null })
           .eq('id', contactState.id)
 
-        // If capturing 'nome', update the contact's first_name too
         if (varName === 'nome' && text.trim()) {
           await supabase.from('contacts').update({ first_name: text.trim() }).eq('id', contactState.id)
           contactState.first_name = text.trim()
         }
-        // If capturing phone, persist to contacts.phone field
         if (currentNode.type === 'phone' && text.trim()) {
           await supabase.from('contacts').update({ phone: text.trim() }).eq('id', contactState.id)
         }
@@ -888,25 +363,35 @@ export async function POST(request: NextRequest) {
         contactState.flow_vars    = newVars
         contactState.flow_node_id = null
 
-        // Advance to next node
         const outEdges = edgeMap.get(currentNode.id) ?? []
         const nextEdge = outEdges[0]
         if (nextEdge) {
-          await executeFlowNode(
-            nextEdge.target, flow.nodes, edgeMap, contactState,
-            contactState.first_name, bot.name as string,
-            plainToken, chatId, flow.id, bot.user_id as string, supabase,
-          )
+          await executeFlowNode({
+            nodeId:      nextEdge.target,
+            nodes:       flow.nodes,
+            edgeMap,
+            contact:     contactState,
+            firstName:   contactState.first_name,
+            botName:     bot.name as string,
+            plainToken,
+            chatId,
+            flowId:      flow.id,
+            flowVersion: flow.version,
+            userId:      bot.user_id as string,
+            supabase,
+          })
         } else {
-          await clearFlowState(contactState.id, supabase)
+          await supabase
+            .from('contacts')
+            .update({ flow_id: null, flow_node_id: null, flow_version: null })
+            .eq('id', contactState.id)
         }
       }
-      // If currentNode is 'buttons', ignore text — wait for callback_query
     }
     return new NextResponse(null, { status: 200 })
   }
 
-  // ── Keyword trigger: check published flows with trigger_type='keyword' ──────────
+  // ── Keyword trigger ──────────────────────────────────────────────────────────
   if (!text.startsWith('/')) {
     const { data: keywordFlows } = await supabase
       .from('flows')
@@ -917,51 +402,56 @@ export async function POST(request: NextRequest) {
 
     if (keywordFlows && keywordFlows.length > 0) {
       const lowerText = text.toLowerCase().trim()
-      let matchedFlow: Awaited<ReturnType<typeof loadFlow>> = null
+      let matchedFlowId: string | null = null
 
       for (const row of keywordFlows) {
         const kws = ((row as Record<string, unknown>).keywords as string[]) ?? []
         const hit = kws.some(k => lowerText === k.toLowerCase().trim() || lowerText.includes(k.toLowerCase().trim()))
         if (hit) {
-          matchedFlow = {
-            id:          row.id as string,
-            nodes:       (row.nodes ?? []) as FlowNode[],
-            edges:       (row.edges ?? []) as FlowEdge[],
-            triggerType: 'keyword',
-            keywords:    kws,
-          }
+          matchedFlowId = row.id as string
           break
         }
       }
 
-      if (matchedFlow && matchedFlow.nodes.length > 0) {
-        const edgeMap   = buildEdgeMap(matchedFlow.edges)
-        const startNode = findStartNode(matchedFlow.nodes, matchedFlow.edges)
-        if (startNode) {
-          supabase.rpc('increment_flow_executions', { p_flow_id: matchedFlow.id }).then(({ error }) => {
-            if (error) console.error('[webhook] increment_flow_executions (keyword) error:', error.message)
-          })
-          await executeFlowNode(
-            startNode.id, matchedFlow.nodes, edgeMap, contactState,
-            firstName, bot.name as string,
-            plainToken, chatId, matchedFlow.id, bot.user_id as string, supabase,
-          )
-          return new NextResponse(null, { status: 200 })
+      if (matchedFlowId) {
+        // Snapshot da versão atual (fix 3.1)
+        const ver = await getLatestFlowVersion(matchedFlowId, supabase)
+        const flow = await loadFlow(matchedFlowId, supabase, ver)
+        if (flow && flow.nodes.length > 0) {
+          const edgeMap   = buildEdgeMap(flow.edges)
+          const startNode = findStartNode(flow.nodes, flow.edges)
+          if (startNode) {
+            supabase.rpc('increment_flow_executions', { p_flow_id: flow.id }).then(({ error }) => {
+              if (error) console.error('[webhook] increment_flow_executions (keyword) error:', error.message)
+            })
+            await executeFlowNode({
+              nodeId:      startNode.id,
+              nodes:       flow.nodes,
+              edgeMap,
+              contact:     contactState,
+              firstName,
+              botName:     bot.name as string,
+              plainToken,
+              chatId,
+              flowId:      flow.id,
+              flowVersion: flow.version,
+              userId:      bot.user_id as string,
+              supabase,
+            })
+            return new NextResponse(null, { status: 200 })
+          }
         }
       }
     }
   }
 
-  // ── Fallback message (no active flow, not /start) ─────────────────────────────
+  // ── Fallback message ─────────────────────────────────────────────────────────
   if (!text.startsWith('/')) {
     const fallback = (bot.fallback_message as string | null) ?? ''
     if (fallback.trim()) {
       await sendTelegramMessage(
-        plainToken,
-        chatId,
-        fallback
-          .replace(/\{nome\}/g, firstName)
-          .replace(/\{bot\}/g,  bot.name as string),
+        plainToken, chatId,
+        fallback.replace(/\{nome\}/g, firstName).replace(/\{bot\}/g, bot.name as string),
       ).catch(() => {})
     }
   }

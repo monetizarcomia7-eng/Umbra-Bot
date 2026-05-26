@@ -1,6 +1,7 @@
 'use client'
-import { MoreHorizontal, Copy, Trash2, Globe, FileText } from 'lucide-react'
+import { MoreHorizontal, Copy, Trash2, Globe, FileText, BarChart3 } from 'lucide-react'
 import { useState } from 'react'
+import Link from 'next/link'
 import { fmtBRLdec, fmtNum, fmtDate, flowStatusMap } from '../_shared/mappers'
 import type { FlowMeta } from '../_shared/types'
 
@@ -56,6 +57,14 @@ export default function FlowCard({ flow, onOpen, onDuplicate, onDelete }: Props)
               <div className="fixed inset-0 z-10" onClick={() => { setMenuOpen(false); setConfirmDel(false) }} />
               <div className="absolute right-0 top-8 z-20 rounded-xl shadow-xl py-1 w-44"
                 style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
+                <Link
+                  href={`/dashboard/flows/${flow.id}/analytics`}
+                  onClick={() => setMenuOpen(false)}
+                  className="flex items-center gap-2 w-full px-3 py-2 text-sm hover:bg-surface-2"
+                  style={{ color: 'var(--text)' }}
+                >
+                  <BarChart3 size={14} /> Análises
+                </Link>
                 <button
                   onClick={() => { setMenuOpen(false); onDuplicate() }}
                   className="flex items-center gap-2 w-full px-3 py-2 text-sm hover:bg-surface-2"

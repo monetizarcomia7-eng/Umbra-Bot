@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { X, Download, Upload, Copy, Check, AlertTriangle } from 'lucide-react'
 import type { FlowNodeType, FlowEdgeType } from '../_shared/types'
 import { nodeUid, edgeUid } from '../_shared/constants'
+import { nodeTypes } from '../_shared/nodeTypes'
 
 interface FlowSnapshot {
   format: 'umbra-flow'
@@ -110,21 +111,40 @@ export default function ImportExportModal({
         throw new Error('Máximo de 1000 arestas permitido.')
       }
 
+      // Whitelist: bloqueia tipos não conhecidos (re-auditoria 7.1)
+      const allowedTypes = new Set(Object.keys(nodeTypes))
+      const skippedTypes = new Set<string>()
+
       // Reescreve IDs para evitar colisão com nós já existentes no fluxo atual
       const idMap = new Map<string, string>()
-      const newNodes: FlowNodeType[] = parsed.nodes.map((n: FlowNodeType) => {
-        const newId = nodeUid()
-        idMap.set(n.id, newId)
-        return {
-          id: newId,
-          type: String(n.type),
-          position: {
-            x: Number(n.position?.x ?? 0),
-            y: Number(n.position?.y ?? 0),
-          },
-          data: { ...(n.data ?? {}) },
-        }
-      })
+      const newNodes: FlowNodeType[] = parsed.nodes
+        .filter((n: FlowNodeType) => {
+          if (!allowedTypes.has(String(n.type))) {
+            skippedTypes.add(String(n.type))
+            return false
+          }
+          return true
+        })
+        .map((n: FlowNodeType) => {
+          const newId = nodeUid()
+          idMap.set(n.id, newId)
+          return {
+            id: newId,
+            type: String(n.type),
+            position: {
+              x: Number(n.position?.x ?? 0),
+              y: Number(n.position?.y ?? 0),
+            },
+            data: { ...(n.data ?? {}) },
+          }
+        })
+
+      if (skippedTypes.size > 0) {
+        showToast(
+          `Ignorados tipos desconhecidos: ${[...skippedTypes].join(', ')}`,
+          'error',
+        )
+      }
 
       const newEdges: FlowEdgeType[] = parsed.edges
         .map((e: FlowEdgeType) => {

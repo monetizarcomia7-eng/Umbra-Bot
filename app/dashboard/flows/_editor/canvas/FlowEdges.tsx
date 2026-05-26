@@ -1,4 +1,5 @@
 'use client'
+import { memo } from 'react'
 import { bezierPath, getHandlePos } from '../../_shared/constants'
 import type { FlowNodeType, FlowEdgeType } from '../../_shared/types'
 
@@ -13,7 +14,7 @@ interface Props {
   mousePos: { x: number; y: number } | null
 }
 
-export default function FlowEdges({
+function FlowEdgesRaw({
   nodes, edges, selectedEdgeId, hoveredEdgeId,
   onSelectEdge, onHoverEdge, connecting, mousePos,
 }: Props) {
@@ -88,3 +89,12 @@ export default function FlowEdges({
     </g>
   )
 }
+
+export default memo(FlowEdgesRaw, (prev, next) =>
+  prev.nodes === next.nodes &&
+  prev.edges === next.edges &&
+  prev.selectedEdgeId === next.selectedEdgeId &&
+  prev.hoveredEdgeId === next.hoveredEdgeId &&
+  prev.connecting === next.connecting &&
+  prev.mousePos === next.mousePos
+)

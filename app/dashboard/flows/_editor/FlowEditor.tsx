@@ -1,8 +1,10 @@
 'use client'
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import dynamic from 'next/dynamic'
+import Link from 'next/link'
 import {
   ArrowLeft, LayoutGrid, Settings, Save, Globe,
-  Undo2, Redo2, Trash2, History, PlayCircle, BarChart3, FileJson,
+  Undo2, Redo2, Trash2, History, PlayCircle, BarChart3, FileJson, Keyboard,
 } from 'lucide-react'
 import type { FlowEditorData, FlowNodeType, FlowEdgeType, RawBotOption, FlowNodeStatsRow } from '../_shared/types'
 import { autoLayout, MAX_HISTORY, AUTO_SAVE_MS, nodeUid, validateFlow } from '../_shared/constants'
@@ -16,9 +18,12 @@ import ZoomControls from './ZoomControls'
 import PreviewChat from './preview/PreviewChat'
 import BotSelector from './BotSelector'
 import Palette from './Palette'
-import TestRunnerModal from './TestRunnerModal'
-import FlowVersionsPanel from './FlowVersionsPanel'
-import ImportExportModal from './ImportExportModal'
+
+// Dynamic imports — modals só montam sob demanda (reduz bundle inicial)
+const TestRunnerModal   = dynamic(() => import('./TestRunnerModal'),   { ssr: false })
+const FlowVersionsPanel = dynamic(() => import('./FlowVersionsPanel'), { ssr: false })
+const ImportExportModal = dynamic(() => import('./ImportExportModal'), { ssr: false })
+const ShortcutsModal    = dynamic(() => import('./ShortcutsModal'),    { ssr: false })
 
 type Hist = { nodes: FlowNodeType[]; edges: FlowEdgeType[] }
 
@@ -110,6 +115,7 @@ export default function FlowEditor({ flow, bots, onBack, onSave, onPublish, show
   const [testOpen, setTestOpen] = useState(false)
   const [versionsOpen, setVersionsOpen] = useState(false)
   const [importExportOpen, setImportExportOpen] = useState(false)
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [validationErrors, setValidationErrors] = useState<Array<{ nodeId: string | null; message: string }>>([])
   const [showErrors, setShowErrors] = useState(false)
   const [nodeStats, setNodeStats] = useState<Map<string, FlowNodeStatsRow>>(new Map())
@@ -397,8 +403,11 @@ export default function FlowEditor({ flow, bots, onBack, onSave, onPublish, show
         e.preventDefault(); pasteFromClipboard()
       } else if (!meta && (e.key === 'd' || e.key === 'D')) {
         e.preventDefault(); duplicateSelected()
-      } else if (!meta && (e.key === 'n' || e.key === 'N')) {
+      } else if (e.shiftKey && (e.key === 'N' || e.key === 'n')) {
+        // FIX B3: Shift+N (era apenas N — disparava com qualquer toque)
         e.preventDefault(); addMessageNodeAtCenter()
+      } else if (!meta && e.key === '?') {
+        e.preventDefault(); setShortcutsOpen(true)
       } else if (e.key === 'Escape') {
         setSelectedNodeIds(new Set())
         setSelectedEdgeId(null)
@@ -608,6 +617,16 @@ export default function FlowEditor({ flow, bots, onBack, onSave, onPublish, show
           <span className="hidden md:inline">Testar</span>
         </button>
 
+        {/* Análises */}
+        <Link
+          href={`/dashboard/flows/${flow.id}/analytics`}
+          title="Análises do fluxo"
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg hover:bg-surface-2 transition-colors text-sm shrink-0"
+          style={{ color: 'var(--text-muted)', border: '1px solid var(--border)' }}
+        >
+          <BarChart3 size={14} />
+        </Link>
+
         {/* Versões */}
         <button
           onClick={() => setVersionsOpen(true)}
@@ -626,6 +645,16 @@ export default function FlowEditor({ flow, bots, onBack, onSave, onPublish, show
           style={{ color: 'var(--text-muted)', border: '1px solid var(--border)' }}
         >
           <FileJson size={14} />
+        </button>
+
+        {/* Atalhos */}
+        <button
+          onClick={() => setShortcutsOpen(true)}
+          title="Atalhos do editor (?)"
+          className="flex items-center justify-center w-7 h-7 rounded-lg hover:bg-surface-2 transition-colors shrink-0"
+          style={{ color: 'var(--text-muted)' }}
+        >
+          <Keyboard size={14} />
         </button>
 
         {/* Auto-layout */}
@@ -757,11 +786,14 @@ export default function FlowEditor({ flow, bots, onBack, onSave, onPublish, show
             onFitView={fitView}
           />
           {/* Hint de atalhos */}
-          <div className="absolute bottom-3 left-3 text-[10px] px-2 py-1 rounded-md opacity-70 hidden lg:block"
-            style={{ background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text-muted)' }}>
-            <kbd>N</kbd> nova mensagem · <kbd>D</kbd> duplicar · <kbd>Ctrl+C/V</kbd> copiar/colar ·
-            {' '}<kbd>Del</kbd> apagar · <kbd>Shift+drag</kbd> seleção
-          </div>
+          <button
+            onClick={() => setShortcutsOpen(true)}
+            className="absolute bottom-3 left-3 text-[10px] px-2 py-1 rounded-md opacity-70 hover:opacity-100 hidden lg:block"
+            style={{ background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text-muted)' }}
+          >
+            <kbd>Shift+N</kbd> nova msg · <kbd>D</kbd> duplicar · <kbd>Ctrl+C/V</kbd> copiar/colar ·
+            {' '}<kbd>?</kbd> ver atalhos
+          </button>
         </div>
 
         <div className="w-[300px] shrink-0 overflow-y-auto"
@@ -906,6 +938,8 @@ export default function FlowEditor({ flow, bots, onBack, onSave, onPublish, show
         <TestRunnerModal
           nodes={nodes}
           edges={edges}
+          triggerType={triggerType}
+          keywords={keywords}
           onClose={() => setTestOpen(false)}
         />
       )}
@@ -938,6 +972,9 @@ export default function FlowEditor({ flow, bots, onBack, onSave, onPublish, show
           showToast={showToast}
         />
       )}
+
+      {/* Shortcuts */}
+      {shortcutsOpen && <ShortcutsModal onClose={() => setShortcutsOpen(false)} />}
     </div>
   )
 }
