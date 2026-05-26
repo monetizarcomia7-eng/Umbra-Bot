@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
-import FlowsClient, { type RawFlowRow, type RawBotOption, type FlowStatsMap } from './FlowsClient'
+import FlowsClient from './FlowsClient'
+import type { RawFlowRow, RawBotOption } from './_shared/types'
 
 export default async function FlowsPage() {
   const supabase = await createClient()
@@ -48,26 +49,19 @@ export default async function FlowsPage() {
     leadsMap[fid] = (leadsMap[fid] ?? 0) + 1
   }
 
-  // Merge into a single FlowStatsMap keyed by flow id
-  const statsMap: FlowStatsMap = {}
-  const allFlowIds = new Set([
-    ...Object.keys(revenueMap),
-    ...Object.keys(leadsMap),
-  ])
-  for (const fid of allFlowIds) {
-    statsMap[fid] = {
-      revenue: revenueMap[fid] ?? 0,
-      sales:   salesMap[fid]   ?? 0,
-      leads:   leadsMap[fid]   ?? 0,
-    }
-  }
+  // Merge stats into flow rows before passing to the client
+  const flowsWithStats: RawFlowRow[] = (flowsRes.data ?? []).map(f => ({
+    ...(f as unknown as RawFlowRow),
+    revenue: revenueMap[f.id] ?? 0,
+    sales:   salesMap[f.id]   ?? 0,
+    leads:   leadsMap[f.id]   ?? 0,
+  }))
 
   return (
     <FlowsClient
-      initialFlows={(flowsRes.data ?? []) as unknown as RawFlowRow[]}
+      initialFlows={flowsWithStats}
       bots={(botsRes.data ?? []) as unknown as RawBotOption[]}
       userId={user.id}
-      statsMap={statsMap}
     />
   )
 }
