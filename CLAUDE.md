@@ -3686,6 +3686,12 @@ app/api/cron/
 app/api/instagram/upload/route.ts # POST multipart: bucket instagram-medias (Supabase Storage)
                                   # Pasta {user_id}/{uuid}.{ext}, max 8MB img / 500MB vídeo,
                                   # rate-limit 30/min, RLS por pasta user_id
+
+app/api/webhooks/instagram/route.ts # GET handshake (hub.mode + hub.verify_token + hub.challenge)
+                                    # POST recebe eventos: valida X-Hub-Signature-256 (HMAC sha256)
+                                    # com META_APP_SECRET, persiste em instagram_webhook_events
+                                    # (mig 107) com field/entry_id/payload. Retorna sempre 200
+                                    # mesmo em erro de insert (Meta faz retry agressivo se não 2xx)
 ```
 
 ### Banco — migração 106
