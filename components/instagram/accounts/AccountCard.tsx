@@ -1,8 +1,10 @@
 'use client'
+
 import { useState } from 'react'
 import { Trash2, AlertCircle, CheckCircle2, Clock } from 'lucide-react'
 import { disconnectAccountAction } from '@/app/actions/instagram'
-import type { RawIgAccount } from '../page'
+import Badge from '../shared/Badge'
+import type { RawIgAccount } from '@/app/dashboard/instagram/page'
 
 interface Props {
   account: RawIgAccount
@@ -20,15 +22,10 @@ export default function AccountCard({ account, onToast }: Props) {
 
   let expiryBadge: React.ReactNode = null
   if (daysLeft != null) {
-    if (daysLeft <= 0) {
-      expiryBadge = <Badge tone="danger"><AlertCircle size={10} />Expirado</Badge>
-    } else if (daysLeft <= 7) {
-      expiryBadge = <Badge tone="danger"><Clock size={10} />Expira em {daysLeft}d</Badge>
-    } else if (daysLeft <= 30) {
-      expiryBadge = <Badge tone="warning"><Clock size={10} />Expira em {daysLeft}d</Badge>
-    } else {
-      expiryBadge = <Badge tone="muted"><Clock size={10} />{daysLeft}d</Badge>
-    }
+    if (daysLeft <= 0)        expiryBadge = <Badge tone="danger"><AlertCircle size={10} />Token expirado</Badge>
+    else if (daysLeft <= 7)   expiryBadge = <Badge tone="danger"><Clock size={10} />Expira em {daysLeft}d</Badge>
+    else if (daysLeft <= 30)  expiryBadge = <Badge tone="warning"><Clock size={10} />Expira em {daysLeft}d</Badge>
+    else                       expiryBadge = <Badge tone="muted"><Clock size={10} />{daysLeft}d</Badge>
   }
 
   async function handleDisconnect() {
@@ -68,7 +65,7 @@ export default function AccountCard({ account, onToast }: Props) {
             <p className="font-semibold text-sm truncate" style={{ color: 'var(--text)' }}>
               @{account.username ?? '—'}
             </p>
-            <div className="flex items-center gap-1.5 mt-0.5">
+            <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
               {account.is_active ? (
                 <Badge tone="success"><CheckCircle2 size={10} />Conectada</Badge>
               ) : (
@@ -86,7 +83,7 @@ export default function AccountCard({ account, onToast }: Props) {
             background: 'color-mix(in oklab, var(--danger) 8%, transparent)',
             color:      'var(--danger)',
           }}>
-          Reconecte esta conta no botão &ldquo;Conectar Instagram&rdquo;.
+          Reconecte esta conta na aba &ldquo;Conectar Instagram&rdquo;.
         </div>
       )}
 
@@ -120,21 +117,5 @@ export default function AccountCard({ account, onToast }: Props) {
         </button>
       )}
     </div>
-  )
-}
-
-function Badge({ children, tone }: { children: React.ReactNode; tone: 'success' | 'danger' | 'warning' | 'muted' }) {
-  const colors: Record<typeof tone, { bg: string; fg: string }> = {
-    success: { bg: 'color-mix(in oklab, var(--success) 12%, transparent)', fg: 'var(--success)' },
-    danger:  { bg: 'color-mix(in oklab, var(--danger) 12%, transparent)',  fg: 'var(--danger)' },
-    warning: { bg: 'color-mix(in oklab, var(--warning) 12%, transparent)', fg: 'var(--warning)' },
-    muted:   { bg: 'var(--surface-2)',                                       fg: 'var(--text-muted)' },
-  }
-  const c = colors[tone]
-  return (
-    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium"
-      style={{ background: c.bg, color: c.fg }}>
-      {children}
-    </span>
   )
 }

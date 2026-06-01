@@ -1,7 +1,7 @@
 import { Users, Calendar, CheckCircle2, AlertCircle } from 'lucide-react'
-import type { IgStats } from '../page'
+import type { IgStats } from '@/app/dashboard/instagram/page'
 
-export default function KpiRow({ stats }: { stats: IgStats }) {
+export default function AccountStats({ stats }: { stats: IgStats }) {
   return (
     <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
       <Card label="Contas ativas"        value={stats.accounts_count}  Icon={Users}        color="var(--primary)" />

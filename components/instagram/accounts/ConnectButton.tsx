@@ -1,4 +1,5 @@
 'use client'
+
 import { useState } from 'react'
 import { Camera, Loader2 } from 'lucide-react'
 
@@ -15,7 +16,7 @@ export default function ConnectButton({ disabled }: { disabled?: boolean }) {
     <button
       onClick={handleConnect}
       disabled={disabled || loading}
-      className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-opacity disabled:opacity-50"
+      className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-opacity disabled:opacity-50"
       style={{
         background: 'linear-gradient(135deg, #833AB4 0%, #FD1D1D 50%, #FCAF45 100%)',
         color:      '#fff',
