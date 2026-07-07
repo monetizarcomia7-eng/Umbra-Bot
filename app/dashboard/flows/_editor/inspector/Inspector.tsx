@@ -565,7 +565,7 @@ export default function Inspector({ node, stats, botId, onChange, onDelete, onDu
                 onChange={e => set({ text: e.target.value })}
               />
             </Field>
-            <Field label="Atraso" hint="Processado pelo cron a cada hora.">
+            <Field label="Atraso" hint="O envio ocorre na próxima execução do cron. Para envio rápido, configure o cron-job.org para rodar a cada 1 min.">
               <div className="flex gap-2">
                 <input type="number" min={1} className={inputCls} style={inputStyle}
                   value={node.data.delayAmount ?? 1}
