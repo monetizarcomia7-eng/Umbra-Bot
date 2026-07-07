@@ -1182,8 +1182,8 @@ function BioLinkEditor({ userId, appUrl, initialPage, onBack, onSaved }: BioLink
   }
 
   async function handleAvatarUpload(file: File) {
-    if (file.size > 2 * 1024 * 1024) {
-      showToast('Imagem deve ter no máximo 2 MB.', 'error')
+    if (file.size > 5 * 1024 * 1024) {
+      showToast('Imagem deve ter no máximo 5 MB.', 'error')
       return
     }
     setAvatarUploading(true)
@@ -1209,8 +1209,8 @@ function BioLinkEditor({ userId, appUrl, initialPage, onBack, onSaved }: BioLink
   }
 
   async function handleBgUpload(file: File) {
-    if (file.size > 3 * 1024 * 1024) {
-      showToast('Imagem de fundo deve ter no máximo 3 MB.', 'error')
+    if (file.size > 5 * 1024 * 1024) {
+      showToast('Imagem de fundo deve ter no máximo 5 MB.', 'error')
       return
     }
     if (!page.id) {
@@ -1486,7 +1486,7 @@ function BioLinkEditor({ userId, appUrl, initialPage, onBack, onSaved }: BioLink
                 </div>
               </FieldB>
 
-              <FieldB label="Imagem de fundo (opcional)" hint="JPG/PNG até 3 MB. Um overlay é aplicado para manter a legibilidade.">
+              <FieldB label="Imagem de fundo (opcional)" hint="JPG/PNG até 5 MB. Um overlay é aplicado para manter a legibilidade.">
                 <div className="flex items-center gap-3">
                   <div className="w-16 h-16 rounded-lg border border-[var(--border)] overflow-hidden shrink-0 flex items-center justify-center bg-[var(--surface-2)]">
                     {page.bgImage
