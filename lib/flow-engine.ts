@@ -675,6 +675,7 @@ export async function executeFlowNode(opts: ExecuteOpts): Promise<void> {
         id?: number | string
         point_of_interaction?: { transaction_data?: { qr_code?: string; qr_code_base64?: string } }
       } | null = null
+      let mpErrMsg = ''
       try {
         const mpRes = await fetch('https://api.mercadopago.com/v1/payments', {
           method: 'POST',
@@ -701,6 +702,10 @@ export async function executeFlowNode(opts: ExecuteOpts): Promise<void> {
         } else {
           const errBody = await mpRes.text().catch(() => '')
           console.error(`[flow-engine] pix MP ${mpRes.status}:`, errBody.slice(0, 600))
+          try {
+            const j = JSON.parse(errBody)
+            mpErrMsg = j.message || j.cause?.[0]?.description || j.error || ''
+          } catch { mpErrMsg = errBody.slice(0, 160) }
         }
       } catch (e) {
         console.error('[flow-engine] pix MP fetch error:', e instanceof Error ? e.message : String(e))
@@ -708,13 +713,23 @@ export async function executeFlowNode(opts: ExecuteOpts): Promise<void> {
 
       const pixInfo = mpData?.point_of_interaction?.transaction_data
       if (!mpData?.id || !pixInfo?.qr_code) {
-        // usingOwnerGateway=false → provavelmente o gateway do dono não está conectado
         const usingOwnerGateway = typeof rawTok === 'string'
-        const hint = !usingOwnerGateway
-          ? '⚠️ Pagamento indisponível: conecte o Mercado Pago em Gateways.'
-          : '⚠️ Não consegui gerar o PIX. Verifique se o CPF do nó é válido e se sua conta Mercado Pago está apta a receber PIX.'
+        let hint: string
+        if (!usingOwnerGateway) {
+          hint = '⚠️ Pagamento indisponível: conecte o Mercado Pago em Gateways.'
+        } else if (/key enabled|without key|qr render|chave/i.test(mpErrMsg)) {
+          hint = '⚠️ Sua conta Mercado Pago não tem uma CHAVE PIX habilitada para cobrar via API. Cadastre uma chave Pix no app do Mercado Pago e tente de novo.'
+        } else if (/identification|document|cpf/i.test(mpErrMsg)) {
+          hint = '⚠️ CPF inválido para o Mercado Pago. Verifique o CPF do nó.'
+        } else if (/token|unauthorized|forbidden/i.test(mpErrMsg)) {
+          hint = '⚠️ Token do Mercado Pago inválido ou sem permissão. Reconecte o gateway (Renovar token).'
+        } else if (mpErrMsg) {
+          hint = `⚠️ Não consegui gerar o PIX. Motivo do Mercado Pago: ${mpErrMsg.slice(0, 140)}`
+        } else {
+          hint = '⚠️ Não consegui gerar o PIX. Verifique o gateway e o CPF.'
+        }
         await sendMessageOk(plainToken, chatId, hint, protect)
-        await advance({ ok: false, errorMsg: 'pix: MP falhou' })
+        await advance({ ok: false, errorMsg: `pix: MP falhou ${mpErrMsg.slice(0, 80)}` })
         break
       }
 
