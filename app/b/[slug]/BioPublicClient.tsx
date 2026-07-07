@@ -145,8 +145,8 @@ export function BioPublicClient({ biolink, slug }: Props) {
       {/* Imagem de fundo (opcional) + overlay para legibilidade */}
       {bgImage && (
         <>
-          <div className="fixed inset-0 pointer-events-none bg-center bg-cover"
-            style={{ backgroundImage: `url(${bgImage})` }} />
+          <div className="fixed inset-0 pointer-events-none bg-cover"
+            style={{ backgroundImage: `url(${bgImage})`, backgroundPosition: biolink.bg_position || 'center' }} />
           <div className="fixed inset-0 pointer-events-none"
             style={{ background: theme.bg, opacity: 0.62 }} />
         </>

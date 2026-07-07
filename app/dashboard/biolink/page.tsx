@@ -22,6 +22,7 @@ export interface RawBiolink {
   created_at: string
   updated_at: string
   bg_image: string | null
+  bg_position: string | null
   font_family: string | null
   social_icons: unknown
   verified: boolean | null

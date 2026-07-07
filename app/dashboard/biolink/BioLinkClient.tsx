@@ -45,6 +45,7 @@ interface BioPage {
   clicks: number
   status: 'published' | 'draft'
   bgImage: string
+  bgPosition: string
   fontFamily: string
   socialIcons: SocialIcon[]
   verified: boolean
@@ -147,6 +148,7 @@ function mapRaw(row: RawBiolink): BioPage {
     clicks:      row.clicks ?? 0,
     status:      row.status,
     bgImage:     row.bg_image ?? '',
+    bgPosition:  row.bg_position ?? 'center',
     fontFamily:  row.font_family ?? 'sans',
     socialIcons: (row.social_icons as SocialIcon[]) ?? [],
     verified:    row.verified ?? false,
@@ -159,8 +161,14 @@ function buildDefault(): BioPage {
     avatar: '', avatarColor: '#7c3aed',
     themeId: 'violet', background: 'solid', buttonStyle: 'rounded',
     links: [], views: 0, clicks: 0, status: 'draft',
-    bgImage: '', fontFamily: 'sans', socialIcons: [], verified: false,
+    bgImage: '', bgPosition: 'center', fontFamily: 'sans', socialIcons: [], verified: false,
   }
+}
+
+function parseBgPos(p: string): { x: number; y: number } {
+  if (!p || p === 'center') return { x: 50, y: 50 }
+  const m = p.match(/(\d+)%\s+(\d+)%/)
+  return m ? { x: Number(m[1]), y: Number(m[2]) } : { x: 50, y: 50 }
 }
 
 const ICON_MAP: Record<string, React.ElementType> = {
@@ -334,7 +342,7 @@ function PhonePreview({ page, theme, publicUrl }: { page: BioPage; theme: ThemeP
       {page.bgImage && (
         <>
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={page.bgImage} alt="" className="absolute inset-0 w-full h-full object-cover pointer-events-none" />
+          <img src={page.bgImage} alt="" className="absolute inset-0 w-full h-full object-cover pointer-events-none" style={{ objectPosition: page.bgPosition || 'center' }} />
           <div className="absolute inset-0 pointer-events-none" style={{ background: t.bg, opacity: 0.62 }} />
         </>
       )}
@@ -1043,6 +1051,7 @@ function BioLinkEditor({ userId, appUrl, initialPage, onBack, onSaved }: BioLink
           links: toSave.links,
           status: toSave.status,
           bg_image: toSave.bgImage || null,
+          bg_position: toSave.bgPosition,
           font_family: toSave.fontFamily,
           social_icons: toSave.socialIcons,
           verified: toSave.verified,
@@ -1065,6 +1074,7 @@ function BioLinkEditor({ userId, appUrl, initialPage, onBack, onSaved }: BioLink
           links: toSave.links,
           status: toSave.status,
           bg_image: toSave.bgImage || null,
+          bg_position: toSave.bgPosition,
           font_family: toSave.fontFamily,
           social_icons: toSave.socialIcons,
           verified: toSave.verified,
@@ -1512,6 +1522,33 @@ function BioLinkEditor({ userId, appUrl, initialPage, onBack, onSaved }: BioLink
                     </div>
                   </div>
                 </div>
+
+                {page.bgImage && (() => {
+                  const pos = parseBgPos(page.bgPosition)
+                  const setPos = (x: number, y: number) => set({ bgPosition: `${x}% ${y}%` })
+                  return (
+                    <div className="mt-3 space-y-2 border-t border-[var(--border)] pt-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-medium text-[var(--text-muted)]">Enquadramento — qual parte da imagem aparece</span>
+                        <button onClick={() => set({ bgPosition: 'center' })} className="text-[11px] text-[var(--primary)] hover:underline">Centralizar</button>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] w-16 text-[var(--text-muted)] shrink-0">Horizontal</span>
+                        <input type="range" min={0} max={100} value={pos.x}
+                          onChange={(e) => setPos(Number(e.target.value), pos.y)}
+                          className="flex-1 accent-[var(--primary)]" />
+                        <span className="text-[10.5px] tnum w-9 text-right text-[var(--text-muted)]">{pos.x}%</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] w-16 text-[var(--text-muted)] shrink-0">Vertical</span>
+                        <input type="range" min={0} max={100} value={pos.y}
+                          onChange={(e) => setPos(pos.x, Number(e.target.value))}
+                          className="flex-1 accent-[var(--primary)]" />
+                        <span className="text-[10.5px] tnum w-9 text-right text-[var(--text-muted)]">{pos.y}%</span>
+                      </div>
+                    </div>
+                  )
+                })()}
               </FieldB>
 
               <FieldB label="Ícones sociais (topo da página)">
@@ -1736,6 +1773,7 @@ export function BioLinkClient({ userId, initialBiolinks, appUrl }: BioLinkClient
         links: biolink.links,
         status: 'draft',
         bg_image: biolink.bgImage || null,
+        bg_position: biolink.bgPosition,
         font_family: biolink.fontFamily,
         social_icons: biolink.socialIcons,
         verified: biolink.verified,
