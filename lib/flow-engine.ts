@@ -592,17 +592,22 @@ export async function executeFlowNode(opts: ExecuteOpts): Promise<void> {
         .from('contacts').select('user_id, bot_id').eq('id', contact.id).single()
 
       if (contactMeta?.user_id && contactMeta?.bot_id) {
-        supabase.from('flow_scheduled_sends').insert({
+        // Colunas de mídia só entram quando há mídia — assim o remarketing de
+        // texto continua funcionando mesmo se a migração 109 não estiver aplicada.
+        const payload: Record<string, unknown> = {
           user_id:      contactMeta.user_id,
           bot_id:       contactMeta.bot_id,
           contact_id:   contact.id,
           chat_id:      chatId,
           message,
-          media_type:   hasMedia ? mediaKind : null,
-          media_ref:    hasMedia ? mediaRef  : null,
           scheduled_at: scheduledAt,
           flow_id:      flowId,
-        }).then(({ error }) => {
+        }
+        if (hasMedia) {
+          payload.media_type = mediaKind
+          payload.media_ref  = mediaRef
+        }
+        supabase.from('flow_scheduled_sends').insert(payload).then(({ error }) => {
           if (error) console.error('[flow-engine] remarketing schedule:', error.message)
         })
       }
