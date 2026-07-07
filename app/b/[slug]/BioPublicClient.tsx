@@ -5,7 +5,8 @@ import { createClient } from '@/lib/supabase/client'
 import {
   Bot, ShoppingBag, Link2, AtSign, Play, Music,
   MessageCircle, Briefcase, Globe, Camera, Calendar,
-  ArrowUpRight, Signal, Wifi, BatteryFull,
+  ArrowUpRight, Signal, Wifi, BatteryFull, BadgeCheck,
+  Instagram, Youtube, Twitter, Linkedin, Facebook, Send, Mail,
 } from 'lucide-react'
 import type { PublicBiolink } from './page'
 
@@ -58,6 +59,22 @@ function DynIcon({ name, size = 14 }: { name: string; size?: number }) {
   return <Ic size={size} />
 }
 
+const FONT_STACKS: Record<string, string> = {
+  sans:    'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
+  serif:   'ui-serif, Georgia, "Times New Roman", serif',
+  rounded: '"SF Pro Rounded", ui-rounded, "Segoe UI", system-ui, sans-serif',
+  mono:    'ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace',
+  display: '"Trebuchet MS", "Gill Sans", "Segoe UI", system-ui, sans-serif',
+}
+
+const SOCIAL_ICON_MAP: Record<string, React.ElementType> = {
+  instagram: Instagram, tiktok: Music, youtube: Youtube, whatsapp: MessageCircle,
+  telegram: Send, twitter: Twitter, linkedin: Linkedin, facebook: Facebook,
+  email: Mail, website: Globe,
+}
+
+interface SocialIcon { platform: string; url: string }
+
 /* ============================================================
    Helpers
    ============================================================ */
@@ -84,6 +101,9 @@ export function BioPublicClient({ biolink, slug }: Props) {
   const links = (biolink.links as LinkItem[]) ?? []
   const theme = themePresets.find((t) => t.id === biolink.theme_id) ?? themePresets[0]
   const buttonRadius = biolink.button_style === 'rounded' ? '12px' : biolink.button_style === 'pill' ? '999px' : '4px'
+  const font = FONT_STACKS[biolink.font_family] ?? FONT_STACKS.sans
+  const socials = (biolink.social_icons as SocialIcon[] | null)?.filter((s) => s?.url) ?? []
+  const bgImage = biolink.bg_image?.startsWith('http') ? biolink.bg_image : null
 
   // Track visit on mount (fire-and-forget)
   useEffect(() => {
@@ -120,8 +140,18 @@ export function BioPublicClient({ biolink, slug }: Props) {
   return (
     <div
       className="min-h-screen w-full relative"
-      style={{ background: theme.bg, color: theme.text }}
+      style={{ background: theme.bg, color: theme.text, fontFamily: font }}
     >
+      {/* Imagem de fundo (opcional) + overlay para legibilidade */}
+      {bgImage && (
+        <>
+          <div className="fixed inset-0 pointer-events-none bg-center bg-cover"
+            style={{ backgroundImage: `url(${bgImage})` }} />
+          <div className="fixed inset-0 pointer-events-none"
+            style={{ background: theme.bg, opacity: 0.62 }} />
+        </>
+      )}
+
       {/* Background effects */}
       {biolink.background === 'gradient' && (
         <div
@@ -172,10 +202,13 @@ export function BioPublicClient({ biolink, slug }: Props) {
           </div>
 
           <h1
-            className="text-[20px] font-bold tracking-tight mt-4 text-center"
+            className="text-[20px] font-bold tracking-tight mt-4 text-center inline-flex items-center gap-1.5"
             style={{ color: theme.text }}
           >
             {biolink.name || 'Sem nome'}
+            {biolink.verified && (
+              <BadgeCheck size={18} style={{ color: theme.primary }} aria-label="Verificado" />
+            )}
           </h1>
 
           {biolink.bio && (
@@ -185,6 +218,27 @@ export function BioPublicClient({ biolink, slug }: Props) {
             >
               {biolink.bio}
             </p>
+          )}
+
+          {socials.length > 0 && (
+            <div className="flex items-center justify-center flex-wrap gap-2 mt-4">
+              {socials.map((s, i) => {
+                const Ic = SOCIAL_ICON_MAP[s.platform] ?? Globe
+                return (
+                  <a
+                    key={`${s.platform}-${i}`}
+                    href={s.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label={s.platform}
+                    className="w-9 h-9 rounded-full flex items-center justify-center transition-transform hover:scale-110"
+                    style={{ background: `${theme.primary}18`, color: theme.text, border: `1px solid ${theme.primary}33` }}
+                  >
+                    <Ic size={16} />
+                  </a>
+                )
+              })}
+            </div>
           )}
         </div>
 

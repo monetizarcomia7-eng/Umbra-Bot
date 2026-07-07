@@ -15,7 +15,8 @@ import {
   MousePointerClick, Target, Square, Paintbrush, Grip, Plus,
   Loader2, Upload, X, AlertCircle, CheckCircle2,
   QrCode, GripVertical, Download, ArrowLeft, MoreHorizontal,
-  BarChart2,
+  BarChart2, BadgeCheck, Type, Image as ImageIcon,
+  Instagram, Youtube, Twitter, Linkedin, Facebook, Send, Mail,
 } from 'lucide-react'
 
 /* ============================================================
@@ -26,6 +27,8 @@ interface LinkItem {
   id: string; type: string; label: string; url: string
   icon: string; highlight: boolean
 }
+
+interface SocialIcon { platform: string; url: string }
 
 interface BioPage {
   id: string
@@ -41,6 +44,10 @@ interface BioPage {
   views: number
   clicks: number
   status: 'published' | 'draft'
+  bgImage: string
+  fontFamily: string
+  socialIcons: SocialIcon[]
+  verified: boolean
 }
 
 interface BioAnalytics {
@@ -92,6 +99,28 @@ const themePresets: ThemePreset[] = [
   { id: 'forest', label: 'Floresta',   primary: '#16a34a', bg: '#040e08', surface: '#081a0e', text: '#f0fdf4', muted: '#4ade80' },
 ]
 
+const FONT_OPTIONS: Array<{ id: string; label: string; stack: string }> = [
+  { id: 'sans',    label: 'Padrão',      stack: 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif' },
+  { id: 'serif',   label: 'Serifada',    stack: 'ui-serif, Georgia, "Times New Roman", serif' },
+  { id: 'rounded', label: 'Arredondada', stack: '"SF Pro Rounded", ui-rounded, "Segoe UI", system-ui, sans-serif' },
+  { id: 'mono',    label: 'Mono',        stack: 'ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace' },
+  { id: 'display', label: 'Display',     stack: '"Trebuchet MS", "Gill Sans", "Segoe UI", system-ui, sans-serif' },
+]
+const fontStack = (id: string) => FONT_OPTIONS.find((f) => f.id === id)?.stack ?? FONT_OPTIONS[0].stack
+
+const SOCIAL_ICON_OPTIONS: Record<string, { label: string; icon: string; color: string; placeholder: string }> = {
+  instagram: { label: 'Instagram', icon: 'instagram', color: '#E1306C', placeholder: 'https://instagram.com/…' },
+  tiktok:    { label: 'TikTok',    icon: 'tiktok',    color: '#000000', placeholder: 'https://tiktok.com/@…' },
+  youtube:   { label: 'YouTube',   icon: 'youtube',   color: '#FF0000', placeholder: 'https://youtube.com/@…' },
+  whatsapp:  { label: 'WhatsApp',  icon: 'whatsapp',  color: '#25D366', placeholder: 'https://wa.me/55…' },
+  telegram:  { label: 'Telegram',  icon: 'telegram',  color: '#229ED9', placeholder: 'https://t.me/…' },
+  twitter:   { label: 'X (Twitter)', icon: 'twitter', color: '#000000', placeholder: 'https://x.com/…' },
+  linkedin:  { label: 'LinkedIn',  icon: 'linkedin',  color: '#0A66C2', placeholder: 'https://linkedin.com/in/…' },
+  facebook:  { label: 'Facebook',  icon: 'facebook',  color: '#1877F2', placeholder: 'https://facebook.com/…' },
+  email:     { label: 'E-mail',    icon: 'email',     color: '#6b7280', placeholder: 'mailto:voce@email.com' },
+  website:   { label: 'Site',      icon: 'website',   color: '#6b7280', placeholder: 'https://seusite.com' },
+}
+
 const FALLBACK_ANALYTICS: BioAnalytics = { views_period: 0, clicks_period: 0, clicks_by_link: {} }
 
 /* ============================================================
@@ -117,6 +146,10 @@ function mapRaw(row: RawBiolink): BioPage {
     views:       row.views ?? 0,
     clicks:      row.clicks ?? 0,
     status:      row.status,
+    bgImage:     row.bg_image ?? '',
+    fontFamily:  row.font_family ?? 'sans',
+    socialIcons: (row.social_icons as SocialIcon[]) ?? [],
+    verified:    row.verified ?? false,
   }
 }
 
@@ -126,6 +159,7 @@ function buildDefault(): BioPage {
     avatar: '', avatarColor: '#7c3aed',
     themeId: 'violet', background: 'solid', buttonStyle: 'rounded',
     links: [], views: 0, clicks: 0, status: 'draft',
+    bgImage: '', fontFamily: 'sans', socialIcons: [], verified: false,
   }
 }
 
@@ -139,6 +173,12 @@ const ICON_MAP: Record<string, React.ElementType> = {
 function DynIcon({ name, size = 14, className }: { name: string; size?: number; className?: string }) {
   const Ic = ICON_MAP[name] ?? Link2
   return <Ic size={size} className={className} />
+}
+
+const SOCIAL_ICON_MAP: Record<string, React.ElementType> = {
+  instagram: Instagram, tiktok: Music, youtube: Youtube, whatsapp: MessageCircle,
+  telegram: Send, twitter: Twitter, linkedin: Linkedin, facebook: Facebook,
+  email: Mail, website: Globe,
 }
 
 /* ============================================================
@@ -291,6 +331,13 @@ function PhonePreview({ page, theme, publicUrl }: { page: BioPage; theme: ThemeP
           <Signal size={9} /><Wifi size={9} /><BatteryFull size={11} />
         </span>
       </div>
+      {page.bgImage && (
+        <>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={page.bgImage} alt="" className="absolute inset-0 w-full h-full object-cover pointer-events-none" />
+          <div className="absolute inset-0 pointer-events-none" style={{ background: t.bg, opacity: 0.62 }} />
+        </>
+      )}
       {page.background === 'gradient' && (
         <div className="absolute inset-0 pointer-events-none opacity-60"
           style={{ background: `radial-gradient(circle at 20% 0%, ${t.primary}44, transparent 50%), radial-gradient(circle at 80% 100%, ${t.primary}33, transparent 40%)` }} />
@@ -299,7 +346,7 @@ function PhonePreview({ page, theme, publicUrl }: { page: BioPage; theme: ThemeP
         <div className="absolute inset-0 pointer-events-none opacity-40"
           style={{ backgroundImage: `radial-gradient(circle, ${t.muted}40 1px, transparent 1.5px)`, backgroundSize: '20px 20px' }} />
       )}
-      <div className="relative z-10 px-5 pt-8 pb-6 h-full overflow-y-auto" style={{ color: t.text }}>
+      <div className="relative z-10 px-5 pt-8 pb-6 h-full overflow-y-auto" style={{ color: t.text, fontFamily: fontStack(page.fontFamily) }}>
         <div className="flex flex-col items-center">
           <div className="w-20 h-20 rounded-full flex items-center justify-center font-bold text-[28px]"
             style={{ background: page.avatarColor, color: '#fff', border: `3px solid ${t.surface}` }}>
@@ -308,8 +355,9 @@ function PhonePreview({ page, theme, publicUrl }: { page: BioPage; theme: ThemeP
               : (page.avatar || '?')
             }
           </div>
-          <div className="text-[15px] font-bold tracking-tight mt-3" style={{ color: t.text }}>
+          <div className="text-[15px] font-bold tracking-tight mt-3 inline-flex items-center gap-1" style={{ color: t.text }}>
             {page.name || 'Seu nome'}
+            {page.verified && <BadgeCheck size={14} style={{ color: t.primary }} />}
           </div>
           <code className="text-[10px] font-mono mt-0.5" style={{ color: t.muted }}>
             umbrabot.com.br/{page.slug || 'seu-slug'}
@@ -317,6 +365,19 @@ function PhonePreview({ page, theme, publicUrl }: { page: BioPage; theme: ThemeP
           <p className="text-[11.5px] mt-2.5 text-center leading-snug px-2" style={{ color: t.muted }}>
             {page.bio || 'Sua descrição aparece aqui…'}
           </p>
+          {page.socialIcons.filter((s) => s.url).length > 0 && (
+            <div className="flex items-center justify-center flex-wrap gap-1.5 mt-2.5">
+              {page.socialIcons.filter((s) => s.url).map((s, i) => {
+                const Ic = SOCIAL_ICON_MAP[s.platform] ?? Globe
+                return (
+                  <span key={i} className="w-7 h-7 rounded-full flex items-center justify-center"
+                    style={{ background: `${t.primary}18`, color: t.text, border: `1px solid ${t.primary}33` }}>
+                    <Ic size={13} />
+                  </span>
+                )
+              })}
+            </div>
+          )}
         </div>
         <div className="mt-5 space-y-2.5">
           {page.links.length === 0 && (
@@ -906,6 +967,8 @@ function BioLinkEditor({ userId, appUrl, initialPage, onBack, onSaved }: BioLink
   const [analytics, setAnalytics] = useState<BioAnalytics>(FALLBACK_ANALYTICS)
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null)
   const [avatarUploading, setAvatarUploading] = useState(false)
+  const [bgUploading, setBgUploading] = useState(false)
+  const [newSocial, setNewSocial] = useState('instagram')
   const [saving, setSaving]     = useState(false)
   const [publishing, setPublishing] = useState(false)
   const [saved, setSaved]       = useState(false)
@@ -979,6 +1042,10 @@ function BioLinkEditor({ userId, appUrl, initialPage, onBack, onSaved }: BioLink
           button_style: toSave.buttonStyle,
           links: toSave.links,
           status: toSave.status,
+          bg_image: toSave.bgImage || null,
+          font_family: toSave.fontFamily,
+          social_icons: toSave.socialIcons,
+          verified: toSave.verified,
         })
         if (error) throw error
         saved = { ...toSave, id: newId }
@@ -997,6 +1064,10 @@ function BioLinkEditor({ userId, appUrl, initialPage, onBack, onSaved }: BioLink
           button_style: toSave.buttonStyle,
           links: toSave.links,
           status: toSave.status,
+          bg_image: toSave.bgImage || null,
+          font_family: toSave.fontFamily,
+          social_icons: toSave.socialIcons,
+          verified: toSave.verified,
           updated_at: new Date().toISOString(),
         }).eq('id', toSave.id).eq('user_id', userId)
         if (error) throw error
@@ -1134,6 +1205,31 @@ function BioLinkEditor({ userId, appUrl, initialPage, onBack, onSaved }: BioLink
       showToast('Erro ao enviar imagem.', 'error')
     } finally {
       setAvatarUploading(false)
+    }
+  }
+
+  async function handleBgUpload(file: File) {
+    if (file.size > 3 * 1024 * 1024) {
+      showToast('Imagem de fundo deve ter no máximo 3 MB.', 'error')
+      return
+    }
+    if (!page.id) {
+      showToast('Salve a página antes de enviar a imagem de fundo.', 'error')
+      return
+    }
+    setBgUploading(true)
+    try {
+      const sb = createClient()
+      const ext = file.name.split('.').pop()?.toLowerCase() ?? 'jpg'
+      const path = `${userId}/${page.id}-bg.${ext}`
+      const { error: upErr } = await sb.storage.from('bio-avatars').upload(path, file, { upsert: true })
+      if (upErr) throw upErr
+      const { data: { publicUrl } } = sb.storage.from('bio-avatars').getPublicUrl(path)
+      set({ bgImage: `${publicUrl}?v=${Date.now()}` })   // cache-bust ao re-enviar
+    } catch {
+      showToast('Erro ao enviar imagem de fundo.', 'error')
+    } finally {
+      setBgUploading(false)
     }
   }
 
@@ -1372,6 +1468,93 @@ function BioLinkEditor({ userId, appUrl, initialPage, onBack, onSaved }: BioLink
             </div>
           </SectionCard>
 
+          {/* Aparência premium */}
+          <SectionCard title="Aparência premium" subtitle="Fonte, imagem de fundo, ícones sociais e selo verificado">
+            <div className="space-y-4">
+              <FieldB label="Fonte">
+                <div className="grid grid-cols-3 gap-2 max-w-[420px]">
+                  {FONT_OPTIONS.map((f) => {
+                    const active = page.fontFamily === f.id
+                    return (
+                      <button key={f.id} onClick={() => set({ fontFamily: f.id })}
+                        style={{ fontFamily: f.stack }}
+                        className={`h-10 rounded-md text-[13px] border-2 transition-colors focus:outline-none ${active ? 'border-[var(--primary)] bg-[var(--primary)]/10 text-[var(--primary)]' : 'border-[var(--border)] bg-[var(--surface)] text-[var(--text)] hover:bg-[var(--surface-2)]'}`}>
+                        {f.label}
+                      </button>
+                    )
+                  })}
+                </div>
+              </FieldB>
+
+              <FieldB label="Imagem de fundo (opcional)" hint="JPG/PNG até 3 MB. Um overlay é aplicado para manter a legibilidade.">
+                <div className="flex items-center gap-3">
+                  <div className="w-16 h-16 rounded-lg border border-[var(--border)] overflow-hidden shrink-0 flex items-center justify-center bg-[var(--surface-2)]">
+                    {page.bgImage
+                      ? <img src={page.bgImage} alt="" className="w-full h-full object-cover" />
+                      : <ImageIcon size={18} className="text-[var(--text-muted)]" />}
+                  </div>
+                  <div className="flex-1 min-w-0 space-y-1.5">
+                    <input type="text" value={page.bgImage} onChange={(e) => set({ bgImage: e.target.value })}
+                      placeholder="https://… ou envie um arquivo" className={inputB} />
+                    <div className="flex items-center gap-2">
+                      <label className="inline-flex items-center gap-1.5 text-[12px] px-2.5 h-8 rounded-lg border border-[var(--border)] cursor-pointer hover:bg-[var(--surface-2)] text-[var(--text-muted)]">
+                        {bgUploading ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />}
+                        Enviar
+                        <input type="file" accept="image/*" className="hidden"
+                          onChange={(e) => { const f = e.target.files?.[0]; if (f) handleBgUpload(f); e.target.value = '' }} />
+                      </label>
+                      {page.bgImage && (
+                        <button onClick={() => set({ bgImage: '' })}
+                          className="inline-flex items-center gap-1 text-[12px] px-2.5 h-8 rounded-lg text-[var(--danger)] hover:bg-[var(--danger)]/10">
+                          <X size={12} /> Remover
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </FieldB>
+
+              <FieldB label="Ícones sociais (topo da página)">
+                <div className="space-y-2">
+                  {page.socialIcons.map((s, i) => {
+                    const opt = SOCIAL_ICON_OPTIONS[s.platform] ?? SOCIAL_ICON_OPTIONS.website
+                    const Ic  = SOCIAL_ICON_MAP[s.platform] ?? Globe
+                    return (
+                      <div key={i} className="flex items-center gap-2">
+                        <span className="w-8 h-8 rounded-md flex items-center justify-center text-white shrink-0" style={{ background: opt.color }}>
+                          <Ic size={14} />
+                        </span>
+                        <input type="text" value={s.url} placeholder={opt.placeholder}
+                          onChange={(e) => set({ socialIcons: page.socialIcons.map((x, idx) => idx === i ? { ...x, url: e.target.value } : x) })}
+                          className={`${inputB} flex-1 min-w-0`} />
+                        <button onClick={() => set({ socialIcons: page.socialIcons.filter((_, idx) => idx !== i) })}
+                          className="w-8 h-8 rounded-md flex items-center justify-center text-[var(--text-muted)] hover:bg-[var(--danger)]/10 hover:text-[var(--danger)] shrink-0">
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    )
+                  })}
+                  <div className="flex items-center gap-2 pt-1">
+                    <select value={newSocial} onChange={(e) => setNewSocial(e.target.value)} className={`${inputB} flex-1`}>
+                      {Object.entries(SOCIAL_ICON_OPTIONS).map(([id, o]) => <option key={id} value={id}>{o.label}</option>)}
+                    </select>
+                    <button onClick={() => set({ socialIcons: [...page.socialIcons, { platform: newSocial, url: '' }] })}
+                      className="inline-flex items-center gap-1 text-[12px] px-3 h-9 rounded-lg border border-[var(--border)] hover:bg-[var(--surface-2)] text-[var(--text)] shrink-0">
+                      <Plus size={13} /> Adicionar
+                    </button>
+                  </div>
+                </div>
+              </FieldB>
+
+              <FieldB label="Selo verificado">
+                <button onClick={() => set({ verified: !page.verified })}
+                  className={`inline-flex items-center gap-2 h-9 px-3 rounded-lg border-2 text-[12.5px] font-medium transition-colors ${page.verified ? 'border-[var(--primary)] bg-[var(--primary)]/10 text-[var(--primary)]' : 'border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--surface-2)]'}`}>
+                  <BadgeCheck size={15} /> {page.verified ? 'Selo ativado ✓' : 'Ativar selo ✓ ao lado do nome'}
+                </button>
+              </FieldB>
+            </div>
+          </SectionCard>
+
           {/* Cliques por link */}
           {page.links.length > 0 && (
             <SectionCard title="Cliques por link" subtitle="Performance dos últimos 30 dias">
@@ -1552,6 +1735,10 @@ export function BioLinkClient({ userId, initialBiolinks, appUrl }: BioLinkClient
         button_style: biolink.buttonStyle,
         links: biolink.links,
         status: 'draft',
+        bg_image: biolink.bgImage || null,
+        font_family: biolink.fontFamily,
+        social_icons: biolink.socialIcons,
+        verified: biolink.verified,
       })
       if (error) throw error
       const copy: BioPage = {

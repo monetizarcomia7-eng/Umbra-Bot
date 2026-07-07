@@ -21,6 +21,10 @@ export interface RawBiolink {
   user_id: string
   created_at: string
   updated_at: string
+  bg_image: string | null
+  font_family: string | null
+  social_icons: unknown
+  verified: boolean | null
 }
 
 export default async function BioLinkPage() {

@@ -21,6 +21,10 @@ export interface PublicBiolink {
   views:        number
   clicks:       number
   status:       'published' | 'draft'
+  bg_image:     string | null
+  font_family:  string
+  social_icons: unknown
+  verified:     boolean
 }
 
 export async function generateMetadata({ params }: { params: Params }): Promise<Metadata> {
@@ -59,7 +63,7 @@ export default async function BioPublicPage({ params }: { params: Params }) {
   const admin = createAdminClient()
   const { data } = await admin
     .from('biolinks')
-    .select('id, slug, name, bio, avatar, avatar_color, theme_id, background, button_style, links, views, clicks, status')
+    .select('id, slug, name, bio, avatar, avatar_color, theme_id, background, button_style, links, views, clicks, status, bg_image, font_family, social_icons, verified')
     .eq('slug', slug)
     .eq('status', 'published')
     .maybeSingle()
