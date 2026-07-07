@@ -696,12 +696,24 @@ export async function executeFlowNode(opts: ExecuteOpts): Promise<void> {
             },
           }),
         })
-        if (mpRes.ok) mpData = await mpRes.json()
-      } catch { /* trata abaixo */ }
+        if (mpRes.ok) {
+          mpData = await mpRes.json()
+        } else {
+          const errBody = await mpRes.text().catch(() => '')
+          console.error(`[flow-engine] pix MP ${mpRes.status}:`, errBody.slice(0, 600))
+        }
+      } catch (e) {
+        console.error('[flow-engine] pix MP fetch error:', e instanceof Error ? e.message : String(e))
+      }
 
       const pixInfo = mpData?.point_of_interaction?.transaction_data
       if (!mpData?.id || !pixInfo?.qr_code) {
-        await sendMessageOk(plainToken, chatId, '⚠️ Não consegui gerar o PIX agora. Tente novamente em instantes.', protect)
+        // usingOwnerGateway=false → provavelmente o gateway do dono não está conectado
+        const usingOwnerGateway = typeof rawTok === 'string'
+        const hint = !usingOwnerGateway
+          ? '⚠️ Pagamento indisponível: conecte o Mercado Pago em Gateways.'
+          : '⚠️ Não consegui gerar o PIX. Verifique se o CPF do nó é válido e se sua conta Mercado Pago está apta a receber PIX.'
+        await sendMessageOk(plainToken, chatId, hint, protect)
         await advance({ ok: false, errorMsg: 'pix: MP falhou' })
         break
       }
