@@ -58,6 +58,7 @@ export interface NodeData {
   product?: string
   price?: number
   cta?: string
+  cpf?: string          // Pix no Chat — CPF fixo do pagador
   // CRM
   action?: string
   tag?: string

@@ -12,7 +12,7 @@ interface Props {
 const CATEGORIES: Array<{ label: string; types: string[] }> = [
   { label: 'Conversa', types: ['message', 'question', 'buttons'] },
   { label: 'Lógica', types: ['condition', 'delay'] },
-  { label: 'Comercial', types: ['offer', 'checkout', 'upsell', 'downsell', 'orderbump'] },
+  { label: 'Comercial', types: ['offer', 'pix', 'checkout', 'upsell', 'downsell', 'orderbump'] },
   { label: 'Mídia', types: ['image', 'video', 'gallery', 'link'] },
   { label: 'CRM', types: ['tag', 'phone', 'handoff', 'remarketing'] },
 ]

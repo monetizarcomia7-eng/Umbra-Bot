@@ -190,6 +190,22 @@ export async function POST(request: NextRequest) {
     await answerCallbackQuery(plainToken, cbq.id)
 
     const cbData = cbq.data ?? ''
+
+    // ── Verificar Status do Pagamento (PIX no chat) ────────────────────────────
+    if (cbData.startsWith('pix_check_')) {
+      const txId = cbData.slice('pix_check_'.length)
+      const { data: tx } = await supabase
+        .from('transactions')
+        .select('status')
+        .eq('id', txId)
+        .maybeSingle()
+      let msg = '⏳ Ainda não identifiquei seu pagamento. Assim que ele cair, você recebe a confirmação aqui! 😊'
+      if (tx?.status === 'approved')       msg = '✅ <b>Pagamento confirmado!</b> Obrigado pela sua compra. 🎉'
+      else if (tx?.status === 'cancelled') msg = '❌ Este PIX expirou. Gere um novo para concluir o pagamento.'
+      await sendTelegramMessage(plainToken, cbChatId, msg).catch(() => {})
+      return new NextResponse(null, { status: 200 })
+    }
+
     if (!cbData.startsWith('flow_btn_')) return new NextResponse(null, { status: 200 })
 
     const btnIdx = parseInt(cbData.replace('flow_btn_', ''), 10)

@@ -70,6 +70,11 @@ const GALLERY_DATA      = z.object({
   galleryItems: z.array(GALLERY_ITEM).max(10).default([]),
   caption:      z.string().max(1024).default(''),
 })
+const PIX_DATA          = z.object({
+  product: z.string().max(200).default(''),
+  price:   z.number().min(0).default(0),
+  cpf:     z.string().max(20).default(''),
+})
 const LINK_DATA         = z.object({
   text: z.string().max(64).default('Clique aqui'),
   url:  URL_SAFE.default(''),
@@ -117,6 +122,7 @@ const NODE_SCHEMA = z.discriminatedUnion('type', [
   z.object({ ...NODE_BASE, type: z.literal('image'),       data: IMAGE_DATA }),
   z.object({ ...NODE_BASE, type: z.literal('video'),       data: VIDEO_DATA }),
   z.object({ ...NODE_BASE, type: z.literal('gallery'),     data: GALLERY_DATA }),
+  z.object({ ...NODE_BASE, type: z.literal('pix'),         data: PIX_DATA }),
   z.object({ ...NODE_BASE, type: z.literal('link'),        data: LINK_DATA }),
   z.object({ ...NODE_BASE, type: z.literal('checkout'),    data: CHECKOUT_DATA }),
   z.object({ ...NODE_BASE, type: z.literal('phone'),       data: PHONE_DATA }),
@@ -637,6 +643,13 @@ export async function simulateFlowAction(payload: {
         trail.push({
           nodeId, nodeType: node.type, side: 'bot',
           text: `🎯 ${data.product} — R$ ${Number(data.price ?? 0).toFixed(2)} · ${data.cta ?? ''}`,
+        })
+        if (out[0]) walk(out[0].target, depth + 1, visited)
+        break
+      case 'pix':
+        trail.push({
+          nodeId, nodeType: node.type, side: 'bot',
+          text: `💠 PIX no chat: ${data.product} — R$ ${Number(data.price ?? 0).toFixed(2)} (QR + Copiar + Verificar Status)`,
         })
         if (out[0]) walk(out[0].target, depth + 1, visited)
         break

@@ -542,6 +542,37 @@ export default function Inspector({ node, stats, botId, onChange, onDelete, onDu
           </>
         )}
 
+        {/* Pix no Chat */}
+        {node.type === 'pix' && (
+          <>
+            <Field label="Nome do plano/produto">
+              <input className={inputCls} style={inputStyle}
+                value={node.data.product ?? ''}
+                onChange={e => set({ product: e.target.value })}
+                placeholder="Aproveite O Desconto Agora ✅"
+              />
+            </Field>
+            <Field label="Valor (R$)">
+              <input type="number" min={0} step={0.01} className={inputCls} style={inputStyle}
+                value={node.data.price ?? 0}
+                onChange={e => set({ price: Number(e.target.value) })}
+              />
+            </Field>
+            <Field label="CPF do pagador (fixo)" hint="Usado em todos os PIX deste nó. Só números. Precisa ser um CPF válido do Mercado Pago.">
+              <input className={inputCls} style={inputStyle}
+                value={node.data.cpf ?? ''}
+                onChange={e => set({ cpf: e.target.value.replace(/\D/g, '').slice(0, 14) })}
+                placeholder="00000000000"
+                inputMode="numeric"
+              />
+            </Field>
+            <p className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>
+              Gera o PIX no chat (QR + copia-e-cola + botões). Requer o gateway Mercado Pago conectado no bot.
+              A confirmação do pagamento é enviada automaticamente ao cliente.
+            </p>
+          </>
+        )}
+
         {/* Phone */}
         {node.type === 'phone' && (
           <>

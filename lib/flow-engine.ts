@@ -16,6 +16,7 @@
 
 import { createAdminClient } from './supabase/admin'
 import { sendTelegramMessage } from './telegram'
+import { decryptToken } from './crypto'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -106,11 +107,33 @@ export async function sendTelegramMediaGroup(
   return tgApi(token, 'sendMediaGroup', { chat_id: chatId, media, protect_content: protect })
 }
 
+// Envia uma imagem (base64 PNG) via multipart — usado pelo QR do PIX no chat.
+export async function sendTelegramPhotoUpload(
+  token: string,
+  chatId: number,
+  base64Png: string,
+  caption?: string,
+  protect = false,
+): Promise<boolean> {
+  try {
+    const buf = Buffer.from(base64Png, 'base64')
+    const form = new FormData()
+    form.append('chat_id', String(chatId))
+    form.append('photo', new Blob([buf], { type: 'image/png' }), 'pix.png')
+    if (caption) { form.append('caption', caption); form.append('parse_mode', 'HTML') }
+    if (protect) form.append('protect_content', 'true')
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, { method: 'POST', body: form })
+    return res.ok
+  } catch {
+    return false
+  }
+}
+
 export async function sendTelegramWithKeyboard(
   token: string,
   chatId: number,
   text: string,
-  keyboard: Array<Array<{ text: string; callback_data?: string; url?: string }>>,
+  keyboard: Array<Array<{ text: string; callback_data?: string; url?: string; copy_text?: { text: string } }>>,
   protect = false,
 ): Promise<boolean> {
   return tgApi(token, 'sendMessage', {
@@ -616,6 +639,124 @@ export async function executeFlowNode(opts: ExecuteOpts): Promise<void> {
         ok = await sendTelegramWithKeyboard(plainToken, chatId, btnText, [[{ text: '🛒 Comprar agora', url }]])
       }
       await advance({ ok, errorMsg: ok ? undefined : 'sendCheckout failed' })
+      break
+    }
+
+    case 'pix': {
+      // Gera o PIX direto no chat (QR + copia-e-cola + botões) usando o gateway do dono.
+      const product = subVars((node.data.product as string) ?? 'Produto', flowVars, firstName, botName)
+      const price   = Number(node.data.price ?? 0)
+      const cpf     = String(node.data.cpf ?? '').replace(/\D/g, '')
+
+      // Token do Mercado Pago do dono (OAuth) — fallback para env em dev
+      const { data: gw } = await supabase
+        .from('gateways')
+        .select('credentials')
+        .eq('user_id', userId)
+        .eq('provider', 'mercadopago')
+        .eq('connected', true)
+        .maybeSingle()
+      let accessToken: string | null = null
+      const rawTok = (gw?.credentials as Record<string, unknown> | null)?.token
+      if (typeof rawTok === 'string') { try { accessToken = decryptToken(rawTok) } catch { /* ignora */ } }
+      if (!accessToken) accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN ?? null
+
+      if (!accessToken || price <= 0) {
+        await sendMessageOk(plainToken, chatId, '⚠️ Pagamento indisponível no momento. Fale com o suporte.', protect)
+        await advance({ ok: false, errorMsg: 'pix: sem gateway ou preço inválido' })
+        break
+      }
+
+      const { data: cMeta } = await supabase.from('contacts').select('bot_id').eq('id', contact.id).single()
+      const botId = (cMeta?.bot_id as string | null) ?? null
+
+      // Cria o pagamento PIX no Mercado Pago
+      let mpData: {
+        id?: number | string
+        point_of_interaction?: { transaction_data?: { qr_code?: string; qr_code_base64?: string } }
+      } | null = null
+      try {
+        const mpRes = await fetch('https://api.mercadopago.com/v1/payments', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+            'X-Idempotency-Key': crypto.randomUUID(),
+          },
+          body: JSON.stringify({
+            transaction_amount: price,
+            description: product,
+            payment_method_id: 'pix',
+            payer: {
+              email: `pix${chatId}@umbrabot.com.br`,
+              first_name: firstName || 'Cliente',
+              ...((cpf.length === 11 || cpf.length === 14)
+                ? { identification: { type: cpf.length === 14 ? 'CNPJ' : 'CPF', number: cpf } }
+                : {}),
+            },
+          }),
+        })
+        if (mpRes.ok) mpData = await mpRes.json()
+      } catch { /* trata abaixo */ }
+
+      const pixInfo = mpData?.point_of_interaction?.transaction_data
+      if (!mpData?.id || !pixInfo?.qr_code) {
+        await sendMessageOk(plainToken, chatId, '⚠️ Não consegui gerar o PIX agora. Tente novamente em instantes.', protect)
+        await advance({ ok: false, errorMsg: 'pix: MP falhou' })
+        break
+      }
+
+      const fee = Math.round(price * 0.0099 * 100) / 100
+      const net = price - fee
+      const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString()
+
+      const { data: txRow } = await supabase.from('transactions').insert({
+        user_id:              userId,
+        bot_id:               botId,
+        flow_id:              flowId,
+        gateway:              'mercadopago',
+        gateway_payment_id:   String(mpData.id),
+        amount:               price,
+        fee,
+        net,
+        type:                 'sale',
+        payment_method:       'pix',
+        status:               'pending',
+        pix_qr_code:          pixInfo.qr_code_base64 ?? null,
+        pix_copy_paste:       pixInfo.qr_code,
+        pix_expires_at:       expiresAt,
+        product_name:         product,
+        customer_name:        firstName || null,
+        customer_telegram_id: String(chatId),
+      }).select('id').single()
+
+      const txId = txRow?.id ?? ''
+
+      // Evento cart_added no funil (fire-and-forget)
+      supabase.from('checkout_events').insert({
+        user_id: userId, bot_id: botId, flow_id: flowId,
+        transaction_id: txId || null, event_type: 'cart_added', product_name: product,
+      }).then(({ error }) => { if (error) { /* silencia */ } })
+
+      const valorFmt = `R$ ${price.toFixed(2).replace('.', ',')}`
+
+      // 1) QR Code (imagem)
+      if (pixInfo.qr_code_base64) {
+        await sendTelegramPhotoUpload(plainToken, chatId, pixInfo.qr_code_base64, undefined, protect)
+      }
+
+      // 2) Detalhes + botões (Verificar Status + Copiar Chave Pix)
+      const text =
+        `🎁 Você selecionou: <b>${product}</b>\n💰 Valor: <b>${valorFmt}</b>\n\n` +
+        `💠 Pague via <b>Pix Copia e Cola</b> (ou QR Code):\n<code>${pixInfo.qr_code}</code>\n\n` +
+        `👆 Toque no código acima para copiá-lo\n\n` +
+        `‼️ Após o pagamento, toque em <b>Verificar Status do Pagamento</b>.`
+      const kb = [
+        [{ text: '✅ Verificar Status do Pagamento', callback_data: `pix_check_${txId}` }],
+        [{ text: '📋 Copiar Chave Pix', copy_text: { text: pixInfo.qr_code } }],
+      ]
+      const ok = await sendTelegramWithKeyboard(plainToken, chatId, text, kb, protect)
+      await advance({ ok, errorMsg: ok ? undefined : 'pix: envio falhou' })
       break
     }
 
