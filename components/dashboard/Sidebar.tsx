@@ -9,7 +9,7 @@ import {
   AlertTriangle, Bot, GitBranch, Shuffle, Megaphone, Send, Wrench,
   CreditCard, LineChart, ShoppingCart, Link2, Webhook, User, Bell,
   BookOpen, GraduationCap, LogOut, ChevronLeft, ChevronRight, ChevronDown, X,
-  Camera,
+  Camera, PenTool, ExternalLink,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -263,7 +263,31 @@ export function Sidebar({ mobileOpen, setMobileOpen }: SidebarProps) {
           ))}
         </nav>
 
-        <div className="p-2 border-t border-border shrink-0">
+        <div className="p-2 border-t border-border shrink-0 space-y-1">
+          <a
+            href="https://umbracopywriter.com/"
+            target="_blank"
+            rel="noopener noreferrer"
+            title={collapsed ? 'Umbra Copywriter — TikTok Shop' : undefined}
+            className={cn(
+              'w-full flex items-center rounded-lg text-[13.5px] transition-colors',
+              'bg-primary-soft/50 text-primary font-medium hover:bg-primary-soft',
+              'focus:outline-none focus:ring-2 focus:ring-primary/40',
+              collapsed ? 'h-9 justify-center' : 'py-1.5 gap-3 px-2.5',
+            )}
+          >
+            <PenTool size={17} className="shrink-0" />
+            {!collapsed && (
+              <>
+                <span className="flex-1 text-left truncate leading-tight">
+                  Umbra Copywriter
+                  <span className="block text-[10px] font-normal text-text-muted leading-none mt-0.5">TikTok Shop</span>
+                </span>
+                <ExternalLink size={13} className="shrink-0 opacity-70" />
+              </>
+            )}
+          </a>
+
           <Link
             href="/dashboard/profile"
             title={collapsed ? 'Sair da Conta' : undefined}
