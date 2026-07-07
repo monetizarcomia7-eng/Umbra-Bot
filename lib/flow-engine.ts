@@ -662,7 +662,7 @@ export async function executeFlowNode(opts: ExecuteOpts): Promise<void> {
       if (!accessToken) accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN ?? null
 
       if (!accessToken || price <= 0) {
-        await sendMessageOk(plainToken, chatId, '⚠️ Pagamento indisponível no momento. Fale com o suporte.', protect)
+        await sendMessageOk(plainToken, chatId, '😕 Ops! O pagamento está indisponível no momento. Tente novamente mais tarde. 🙏', protect)
         await advance({ ok: false, errorMsg: 'pix: sem gateway ou preço inválido' })
         break
       }
@@ -713,22 +713,8 @@ export async function executeFlowNode(opts: ExecuteOpts): Promise<void> {
 
       const pixInfo = mpData?.point_of_interaction?.transaction_data
       if (!mpData?.id || !pixInfo?.qr_code) {
-        const usingOwnerGateway = typeof rawTok === 'string'
-        let hint: string
-        if (!usingOwnerGateway) {
-          hint = '⚠️ Pagamento indisponível: conecte o Mercado Pago em Gateways.'
-        } else if (/key enabled|without key|qr render|chave/i.test(mpErrMsg)) {
-          hint = '⚠️ Sua conta Mercado Pago não tem uma CHAVE PIX habilitada para cobrar via API. Cadastre uma chave Pix no app do Mercado Pago e tente de novo.'
-        } else if (/identification|document|cpf/i.test(mpErrMsg)) {
-          hint = '⚠️ CPF inválido para o Mercado Pago. Verifique o CPF do nó.'
-        } else if (/token|unauthorized|forbidden/i.test(mpErrMsg)) {
-          hint = '⚠️ Token do Mercado Pago inválido ou sem permissão. Reconecte o gateway (Renovar token).'
-        } else if (mpErrMsg) {
-          hint = `⚠️ Não consegui gerar o PIX. Motivo do Mercado Pago: ${mpErrMsg.slice(0, 140)}`
-        } else {
-          hint = '⚠️ Não consegui gerar o PIX. Verifique o gateway e o CPF.'
-        }
-        await sendMessageOk(plainToken, chatId, hint, protect)
+        // Mensagem genérica para o cliente. O motivo real fica no log/telemetria.
+        await sendMessageOk(plainToken, chatId, '😕 Ops! Não consegui gerar seu PIX agora. Tente novamente em alguns instantes. 🙏', protect)
         await advance({ ok: false, errorMsg: `pix: MP falhou ${mpErrMsg.slice(0, 80)}` })
         break
       }
