@@ -5,6 +5,9 @@ import { rateLimit } from '@/lib/rate-limit'
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { SupabaseClient } from '@supabase/supabase-js'
+import { decryptToken } from '@/lib/crypto'
+import { sendTelegramMessage } from '@/lib/telegram'
+import { sendTelegramPhoto, sendTelegramVideo } from '@/lib/flow-engine'
 
 // ─── Schemas Zod ────────────────────────────────────────────────────────────
 
@@ -664,4 +667,70 @@ export async function simulateFlowAction(payload: {
 
   walk(startNode.id, 0, new Set())
   return { trail, keywordMatch }
+}
+
+// ─── testRemarketingSendAction ──────────────────────────────────────────────────
+// Envia a mensagem de remarketing configurada AGORA para o Telegram do dono
+// (vinculado em Notificações a ESTE bot), sem esperar o cron. Valida texto+mídia.
+export async function testRemarketingSendAction(
+  botId: string | null,
+  data: { text?: string; mediaKind?: string; mediaUrl?: string; mediaFileId?: string },
+): Promise<{ ok: boolean; error?: string }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { ok: false, error: 'Não autorizado.' }
+  if (!botId) return { ok: false, error: 'Vincule um bot ao fluxo antes de testar.' }
+
+  const rl = await rateLimit(`test-remarketing:${user.id}`, 10, 60_000)
+  if (!rl.ok) return { ok: false, error: 'Muitos testes seguidos. Aguarde um momento.' }
+
+  const { data: bot } = await supabase
+    .from('bots')
+    .select('token, name')
+    .eq('id', botId)
+    .eq('user_id', user.id)
+    .single()
+  if (!bot?.token) return { ok: false, error: 'Bot não encontrado.' }
+
+  // Destino = chat do dono vinculado a ESTE bot (Notificações)
+  const { data: prefs } = await supabase
+    .from('notification_prefs')
+    .select('channel_state')
+    .eq('user_id', user.id)
+    .maybeSingle()
+  const tg = (prefs?.channel_state as {
+    telegram?: { linked?: boolean; owner_chat_id?: string; bot_id?: string }
+  } | null)?.telegram
+
+  if (!tg?.linked || !tg.owner_chat_id) {
+    return { ok: false, error: 'Vincule seu Telegram em Notificações para receber o teste.' }
+  }
+  if (tg.bot_id !== botId) {
+    return { ok: false, error: 'Seu Telegram está vinculado a outro bot. Vincule a este bot em Notificações (ou envie o código de verificação a ele).' }
+  }
+
+  const token   = decryptToken(bot.token as string)
+  const chatId  = Number(tg.owner_chat_id)
+  const message =
+    ((data.text ?? '').replace(/\{nome\}/g, 'você').replace(/\{bot\}/g, (bot.name as string) ?? '')).trim()
+    || '🧪 Teste de remarketing (mensagem vazia).'
+
+  const mediaKind = data.mediaKind ?? 'none'
+  const mediaRef  = (data.mediaFileId || data.mediaUrl || '').trim()
+  const hasMedia  = (mediaKind === 'image' || mediaKind === 'video') && mediaRef !== ''
+
+  try {
+    if (hasMedia && mediaKind === 'video') {
+      const ok = await sendTelegramVideo(token, chatId, mediaRef, message)
+      if (!ok) return { ok: false, error: 'Telegram recusou o vídeo. Verifique a mídia/URL.' }
+    } else if (hasMedia) {
+      const ok = await sendTelegramPhoto(token, chatId, mediaRef, message)
+      if (!ok) return { ok: false, error: 'Telegram recusou a imagem. Verifique a mídia/URL.' }
+    } else {
+      await sendTelegramMessage(token, chatId, message, 'HTML')
+    }
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message.slice(0, 140) : 'Erro ao enviar teste.' }
+  }
 }

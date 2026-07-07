@@ -1,8 +1,9 @@
 'use client'
 import { useState } from 'react'
-import { Copy, Trash2, AlertCircle, CheckCircle2, FolderOpen, X } from 'lucide-react'
+import { Copy, Trash2, AlertCircle, CheckCircle2, FolderOpen, X, Send, Loader2 } from 'lucide-react'
 import { nodeTypes } from '../../_shared/nodeTypes'
 import { isSafeUrl } from '../../_shared/constants'
+import { testRemarketingSendAction } from '@/app/actions/flows'
 import type { FlowNodeType, FlowNodeStatsRow } from '../../_shared/types'
 import MediaLibraryModal from '../MediaLibraryModal'
 
@@ -128,8 +129,29 @@ function MediaField({
 export default function Inspector({ node, stats, botId, onChange, onDelete, onDuplicate }: Props) {
   const t = nodeTypes[node.type]
   const [libOpen, setLibOpen] = useState(false)
+  const [testing, setTesting] = useState(false)
+  const [testMsg, setTestMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const set = (patch: Partial<typeof node.data>) =>
     onChange({ ...node, data: { ...node.data, ...patch } })
+
+  async function runRemarketingTest() {
+    setTesting(true); setTestMsg(null)
+    try {
+      const r = await testRemarketingSendAction(botId, {
+        text:        node.data.text,
+        mediaKind:   node.data.mediaKind,
+        mediaUrl:    node.data.mediaUrl,
+        mediaFileId: node.data.mediaFileId,
+      })
+      setTestMsg(r.ok
+        ? { ok: true,  text: '✅ Enviado! Confira no seu Telegram.' }
+        : { ok: false, text: r.error ?? 'Falhou ao enviar.' })
+    } catch {
+      setTestMsg({ ok: false, text: 'Erro inesperado ao testar.' })
+    } finally {
+      setTesting(false)
+    }
+  }
 
   return (
     <div className="flex flex-col h-full">
@@ -588,6 +610,29 @@ export default function Inspector({ node, stats, botId, onChange, onDelete, onDu
                 onOpenLibrary={() => setLibOpen(true)}
               />
             )}
+
+            <div className="mt-3 pt-3 border-t" style={{ borderColor: 'var(--border)' }}>
+              <button
+                type="button"
+                onClick={runRemarketingTest}
+                disabled={testing}
+                className="w-full inline-flex items-center justify-center gap-1.5 text-xs font-medium px-3 py-2 rounded-lg transition-colors disabled:opacity-50"
+                style={{ background: 'var(--primary)', color: 'var(--primary-fg)' }}
+              >
+                {testing
+                  ? <><Loader2 size={13} className="animate-spin" /> Enviando…</>
+                  : <><Send size={13} /> Testar remarketing agora</>}
+              </button>
+              <p className="text-[10px] mt-1.5" style={{ color: 'var(--text-muted)' }}>
+                Envia esta mensagem agora para o seu Telegram vinculado (Notificações), sem esperar o cron.
+              </p>
+              {testMsg && (
+                <p className="text-[10.5px] mt-1 font-medium"
+                  style={{ color: testMsg.ok ? 'var(--success)' : 'var(--danger)' }}>
+                  {testMsg.text}
+                </p>
+              )}
+            </div>
           </>
         )}
 
