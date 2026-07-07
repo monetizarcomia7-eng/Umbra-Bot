@@ -813,6 +813,7 @@ export default function FlowEditor({ flow, bots, onBack, onSave, onPublish, show
             <Inspector
               node={selectedNode}
               stats={nodeStats.get(selectedNode.id) ?? null}
+              botId={botId}
               onChange={handleInspectorChange}
               onDelete={() => {
                 const newNodes = nodesRef.current.filter(n => n.id !== selectedNode.id)

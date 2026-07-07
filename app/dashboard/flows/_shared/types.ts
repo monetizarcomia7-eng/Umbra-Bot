@@ -61,6 +61,7 @@ export interface NodeData {
   // Mídia
   imageUrl?: string
   videoUrl?: string
+  fileId?: string        // file_id da Biblioteca de Mídia (Telegram) — alternativa à URL
   caption?: string
   url?: string
   description?: string

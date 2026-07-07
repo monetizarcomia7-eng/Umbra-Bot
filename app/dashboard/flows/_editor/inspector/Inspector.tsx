@@ -1,12 +1,15 @@
 'use client'
-import { Copy, Trash2, AlertCircle, CheckCircle2 } from 'lucide-react'
+import { useState } from 'react'
+import { Copy, Trash2, AlertCircle, CheckCircle2, FolderOpen, X } from 'lucide-react'
 import { nodeTypes } from '../../_shared/nodeTypes'
 import { isSafeUrl } from '../../_shared/constants'
 import type { FlowNodeType, FlowNodeStatsRow } from '../../_shared/types'
+import MediaLibraryModal from '../MediaLibraryModal'
 
 interface Props {
   node: FlowNodeType
   stats: FlowNodeStatsRow | null
+  botId: string | null
   onChange: (updated: FlowNodeType) => void
   onDelete: () => void
   onDuplicate: () => void
@@ -84,8 +87,47 @@ function UrlInput({
   )
 }
 
-export default function Inspector({ node, stats, onChange, onDelete, onDuplicate }: Props) {
+function MediaField({
+  urlLabel, urlHint, placeholder, fileId, url, onUrl, onClearFile, onOpenLibrary,
+}: {
+  urlLabel: string
+  urlHint: string
+  placeholder: string
+  fileId: string
+  url: string
+  onUrl: (v: string) => void
+  onClearFile: () => void
+  onOpenLibrary: () => void
+}) {
+  return (
+    <Field label={urlLabel} hint={fileId ? undefined : urlHint}>
+      {fileId ? (
+        <div className="flex items-center gap-2 rounded-lg px-3 py-2"
+          style={{ background: 'var(--success-soft)', border: '1px solid color-mix(in oklab, var(--success) 40%, var(--border))' }}>
+          <FolderOpen size={14} style={{ color: 'var(--success)' }} />
+          <div className="min-w-0 flex-1">
+            <div className="text-xs font-medium" style={{ color: 'var(--text)' }}>Mídia da biblioteca</div>
+            <div className="text-[10px] font-mono truncate" style={{ color: 'var(--text-muted)' }}>{fileId.slice(0, 24)}…</div>
+          </div>
+          <button onClick={onClearFile} title="Remover" style={{ color: 'var(--text-muted)' }}>
+            <X size={13} />
+          </button>
+        </div>
+      ) : (
+        <UrlInput value={url} onChange={onUrl} placeholder={placeholder} />
+      )}
+      <button type="button" onClick={onOpenLibrary}
+        className="mt-1.5 inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg transition-colors hover:bg-surface-2"
+        style={{ color: 'var(--primary)', border: '1px solid var(--border)' }}>
+        <FolderOpen size={12} /> {fileId ? 'Trocar pela biblioteca' : 'Escolher da biblioteca'}
+      </button>
+    </Field>
+  )
+}
+
+export default function Inspector({ node, stats, botId, onChange, onDelete, onDuplicate }: Props) {
   const t = nodeTypes[node.type]
+  const [libOpen, setLibOpen] = useState(false)
   const set = (patch: Partial<typeof node.data>) =>
     onChange({ ...node, data: { ...node.data, ...patch } })
 
@@ -328,13 +370,16 @@ export default function Inspector({ node, stats, onChange, onDelete, onDuplicate
         {/* Image */}
         {node.type === 'image' && (
           <>
-            <Field label="URL da imagem" hint="Use HTTPS. Domínios privados são bloqueados.">
-              <UrlInput
-                value={node.data.imageUrl ?? ''}
-                onChange={v => set({ imageUrl: v })}
-                placeholder="https://..."
-              />
-            </Field>
+            <MediaField
+              urlLabel="URL da imagem"
+              urlHint="Use HTTPS. Domínios privados são bloqueados."
+              placeholder="https://..."
+              fileId={(node.data.fileId as string) ?? ''}
+              url={(node.data.imageUrl as string) ?? ''}
+              onUrl={v => set({ imageUrl: v })}
+              onClearFile={() => set({ fileId: '' })}
+              onOpenLibrary={() => setLibOpen(true)}
+            />
             <Field label="Legenda (opcional)">
               <input className={inputCls} style={inputStyle}
                 value={node.data.caption ?? ''}
@@ -347,13 +392,16 @@ export default function Inspector({ node, stats, onChange, onDelete, onDuplicate
         {/* Video */}
         {node.type === 'video' && (
           <>
-            <Field label="URL do vídeo" hint="MP4 público. Use HTTPS.">
-              <UrlInput
-                value={node.data.videoUrl ?? ''}
-                onChange={v => set({ videoUrl: v })}
-                placeholder="https://..."
-              />
-            </Field>
+            <MediaField
+              urlLabel="URL do vídeo"
+              urlHint="MP4 público. Use HTTPS."
+              placeholder="https://..."
+              fileId={(node.data.fileId as string) ?? ''}
+              url={(node.data.videoUrl as string) ?? ''}
+              onUrl={v => set({ videoUrl: v })}
+              onClearFile={() => set({ fileId: '' })}
+              onOpenLibrary={() => setLibOpen(true)}
+            />
             <Field label="Legenda (opcional)">
               <input className={inputCls} style={inputStyle}
                 value={node.data.caption ?? ''}
@@ -527,6 +575,22 @@ export default function Inspector({ node, stats, onChange, onDelete, onDuplicate
           </p>
         )}
       </div>
+
+      {(node.type === 'image' || node.type === 'video') && (
+        <MediaLibraryModal
+          open={libOpen}
+          onClose={() => setLibOpen(false)}
+          botId={botId}
+          mediaType={node.type}
+          onSelect={(item) => {
+            const patch: Record<string, string> = { fileId: item.file_id }
+            if (node.type === 'image') patch.imageUrl = ''
+            else patch.videoUrl = ''
+            if (!(node.data.caption ?? '') && item.caption) patch.caption = item.caption
+            set(patch)
+          }}
+        />
+      )}
     </div>
   )
 }

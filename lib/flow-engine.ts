@@ -472,22 +472,24 @@ export async function executeFlowNode(opts: ExecuteOpts): Promise<void> {
     }
 
     case 'image': {
-      const url     = (node.data.imageUrl as string) ?? ''
+      // fileId (Biblioteca de Mídia) tem prioridade sobre URL — sendPhoto aceita ambos
+      const media   = (node.data.fileId as string) || ((node.data.imageUrl as string) ?? '')
       const caption = subVars((node.data.caption as string) ?? '', flowVars, firstName, botName)
       let ok = true
-      if (url) {
-        ok = await sendTelegramPhoto(plainToken, chatId, url, caption)
+      if (media) {
+        ok = await sendTelegramPhoto(plainToken, chatId, media, caption)
       }
       await advance({ ok, errorMsg: ok ? undefined : 'sendPhoto failed' })
       break
     }
 
     case 'video': {
-      const url     = (node.data.videoUrl as string) ?? ''
+      // fileId (Biblioteca de Mídia) tem prioridade sobre URL — sendVideo aceita ambos
+      const media   = (node.data.fileId as string) || ((node.data.videoUrl as string) ?? '')
       const caption = subVars((node.data.caption as string) ?? '', flowVars, firstName, botName)
       let ok = true
-      if (url) {
-        ok = await sendTelegramVideo(plainToken, chatId, url, caption)
+      if (media) {
+        ok = await sendTelegramVideo(plainToken, chatId, media, caption)
       }
       await advance({ ok, errorMsg: ok ? undefined : 'sendVideo failed' })
       break

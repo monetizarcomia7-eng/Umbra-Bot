@@ -53,7 +53,7 @@ export async function POST(request: NextRequest) {
       body: JSON.stringify({
         url:          webhookUrl,
         secret_token: bot.webhook_secret,
-        allowed_updates: ['message', 'callback_query', 'pre_checkout_query', 'successful_payment'],
+        allowed_updates: ['message', 'callback_query', 'pre_checkout_query', 'successful_payment', 'channel_post', 'edited_channel_post'],
       }),
     },
   )

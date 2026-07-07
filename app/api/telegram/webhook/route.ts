@@ -17,6 +17,25 @@ import {
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
+interface TelegramPhotoSize {
+  file_id: string
+  file_unique_id: string
+  width: number
+  height: number
+  file_size?: number
+}
+
+interface TelegramVideo {
+  file_id: string
+  file_unique_id: string
+  width: number
+  height: number
+  duration: number
+  thumbnail?: TelegramPhotoSize
+  thumb?: TelegramPhotoSize
+  file_size?: number
+}
+
 interface TelegramMessage {
   message_id: number
   from?: {
@@ -28,18 +47,91 @@ interface TelegramMessage {
   }
   chat: { id: number; type: string }
   text?: string
+  caption?: string
+  photo?: TelegramPhotoSize[]
+  video?: TelegramVideo
   date: number
 }
 
 interface TelegramUpdate {
   update_id: number
   message?: TelegramMessage
+  channel_post?: TelegramMessage
+  edited_channel_post?: TelegramMessage
   callback_query?: {
     id: string
     from: { id: number; first_name: string; last_name?: string; username?: string }
     message?: TelegramMessage
     data?: string
   }
+}
+
+// ─── Biblioteca de mídia ────────────────────────────────────────────────────────
+// Captura imagens/vídeos postados em um canal onde o bot é admin.
+// O file_id resultante é específico deste bot e pode ser reenviado nos fluxos.
+async function captureChannelMedia(
+  supabase: ReturnType<typeof createAdminClient>,
+  bot: { id: string; user_id: string },
+  post: TelegramMessage,
+): Promise<void> {
+  const caption = post.caption ?? null
+  const sourceChat = String(post.chat.id)
+
+  let row:
+    | {
+        media_type: 'image' | 'video'
+        file_id: string
+        thumb_file_id: string | null
+        file_unique_id: string
+        width: number | null
+        height: number | null
+        duration: number | null
+      }
+    | null = null
+
+  if (Array.isArray(post.photo) && post.photo.length > 0) {
+    const largest  = post.photo[post.photo.length - 1]
+    const smallest = post.photo[0]
+    row = {
+      media_type:     'image',
+      file_id:        largest.file_id,
+      thumb_file_id:  smallest.file_id,
+      file_unique_id: largest.file_unique_id,
+      width:          largest.width,
+      height:         largest.height,
+      duration:       null,
+    }
+  } else if (post.video) {
+    const v = post.video
+    row = {
+      media_type:     'video',
+      file_id:        v.file_id,
+      thumb_file_id:  (v.thumbnail ?? v.thumb)?.file_id ?? null,
+      file_unique_id: v.file_unique_id,
+      width:          v.width,
+      height:         v.height,
+      duration:       v.duration,
+    }
+  }
+
+  if (!row) return
+
+  // Dedup por (bot_id, file_unique_id)
+  const { data: existing } = await supabase
+    .from('media_library')
+    .select('id')
+    .eq('bot_id', bot.id)
+    .eq('file_unique_id', row.file_unique_id)
+    .maybeSingle()
+  if (existing) return
+
+  await supabase.from('media_library').insert({
+    user_id:        bot.user_id,
+    bot_id:         bot.id,
+    source_chat_id: sourceChat,
+    caption,
+    ...row,
+  })
 }
 
 // ─── Route handler ─────────────────────────────────────────────────────────────
@@ -73,6 +165,17 @@ export async function POST(request: NextRequest) {
     update = await request.json()
   } catch {
     return NextResponse.json({ error: 'invalid json' }, { status: 400 })
+  }
+
+  // ── Captura de mídia de canal (Biblioteca de Mídia) ──────────────────────────
+  const channelPost = update.channel_post ?? update.edited_channel_post
+  if (channelPost) {
+    try {
+      await captureChannelMedia(supabase, bot, channelPost)
+    } catch {
+      // fire-and-forget — nunca bloqueia o 200 para o Telegram
+    }
+    return new NextResponse(null, { status: 200 })
   }
 
   const msg = update.message

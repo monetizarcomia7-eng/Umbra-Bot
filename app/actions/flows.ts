@@ -50,10 +50,12 @@ const URL_SAFE          = z.string().max(2048).refine(v => v === '' || isSafeUrl
 })
 const IMAGE_DATA        = z.object({
   imageUrl: URL_SAFE.default(''),
+  fileId:   z.string().max(256).default(''),   // file_id da Biblioteca de Mídia (Telegram)
   caption:  z.string().max(1024).default(''),
 })
 const VIDEO_DATA        = z.object({
   videoUrl: URL_SAFE.default(''),
+  fileId:   z.string().max(256).default(''),   // file_id da Biblioteca de Mídia (Telegram)
   caption:  z.string().max(1024).default(''),
 })
 const LINK_DATA         = z.object({
