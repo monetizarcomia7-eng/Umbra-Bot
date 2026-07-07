@@ -61,6 +61,15 @@ const VIDEO_DATA        = z.object({
   fileId:   z.string().max(256).default(''),   // file_id da Biblioteca de Mídia (Telegram)
   caption:  z.string().max(1024).default(''),
 })
+const GALLERY_ITEM      = z.object({
+  kind:   z.enum(['image', 'video']),
+  url:    URL_SAFE.default(''),
+  fileId: z.string().max(256).default(''),
+})
+const GALLERY_DATA      = z.object({
+  galleryItems: z.array(GALLERY_ITEM).max(10).default([]),
+  caption:      z.string().max(1024).default(''),
+})
 const LINK_DATA         = z.object({
   text: z.string().max(64).default('Clique aqui'),
   url:  URL_SAFE.default(''),
@@ -107,6 +116,7 @@ const NODE_SCHEMA = z.discriminatedUnion('type', [
   z.object({ ...NODE_BASE, type: z.literal('handoff'),     data: HANDOFF_DATA }),
   z.object({ ...NODE_BASE, type: z.literal('image'),       data: IMAGE_DATA }),
   z.object({ ...NODE_BASE, type: z.literal('video'),       data: VIDEO_DATA }),
+  z.object({ ...NODE_BASE, type: z.literal('gallery'),     data: GALLERY_DATA }),
   z.object({ ...NODE_BASE, type: z.literal('link'),        data: LINK_DATA }),
   z.object({ ...NODE_BASE, type: z.literal('checkout'),    data: CHECKOUT_DATA }),
   z.object({ ...NODE_BASE, type: z.literal('phone'),       data: PHONE_DATA }),
@@ -609,6 +619,12 @@ export async function simulateFlowAction(payload: {
         trail.push({ nodeId, nodeType: node.type, side: 'bot', text: `🎬 ${sub((data.caption as string) ?? '[vídeo]')}` })
         if (out[0]) walk(out[0].target, depth + 1, visited)
         break
+      case 'gallery': {
+        const n = Array.isArray(data.galleryItems) ? (data.galleryItems as unknown[]).length : 0
+        trail.push({ nodeId, nodeType: node.type, side: 'bot', text: `🖼🎬 Álbum com ${n} mídia${n !== 1 ? 's' : ''} ${sub((data.caption as string) ?? '')}`.trim() })
+        if (out[0]) walk(out[0].target, depth + 1, visited)
+        break
+      }
       case 'link':
       case 'checkout':
         trail.push({

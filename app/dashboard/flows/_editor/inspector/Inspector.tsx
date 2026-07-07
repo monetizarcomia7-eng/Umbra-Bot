@@ -4,7 +4,7 @@ import { Copy, Trash2, AlertCircle, CheckCircle2, FolderOpen, X, Send, Loader2 }
 import { nodeTypes } from '../../_shared/nodeTypes'
 import { isSafeUrl } from '../../_shared/constants'
 import { testRemarketingSendAction } from '@/app/actions/flows'
-import type { FlowNodeType, FlowNodeStatsRow } from '../../_shared/types'
+import type { FlowNodeType, FlowNodeStatsRow, GalleryItem } from '../../_shared/types'
 import MediaLibraryModal from '../MediaLibraryModal'
 
 interface Props {
@@ -129,10 +129,18 @@ function MediaField({
 export default function Inspector({ node, stats, botId, onChange, onDelete, onDuplicate }: Props) {
   const t = nodeTypes[node.type]
   const [libOpen, setLibOpen] = useState(false)
+  const [libGalleryIndex, setLibGalleryIndex] = useState<number | null>(null)
   const [testing, setTesting] = useState(false)
   const [testMsg, setTestMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const set = (patch: Partial<typeof node.data>) =>
     onChange({ ...node, data: { ...node.data, ...patch } })
+
+  // ── Galeria (álbum de mídias) ──
+  const gItems: GalleryItem[] = node.data.galleryItems ?? []
+  const setGItems = (items: GalleryItem[]) => set({ galleryItems: items })
+  const addGItem = () => { if (gItems.length < 10) setGItems([...gItems, { kind: 'image', url: '', fileId: '' }]) }
+  const updateGItem = (i: number, patch: Partial<GalleryItem>) => setGItems(gItems.map((g, idx) => idx === i ? { ...g, ...patch } : g))
+  const removeGItem = (i: number) => setGItems(gItems.filter((_, idx) => idx !== i))
 
   async function runRemarketingTest() {
     setTesting(true); setTestMsg(null)
@@ -433,6 +441,67 @@ export default function Inspector({ node, stats, botId, onChange, onDelete, onDu
           </>
         )}
 
+        {/* Galeria (álbum) */}
+        {node.type === 'gallery' && (
+          <>
+            <Field label={`Mídias do álbum (${gItems.length}/10)`} hint="Envia todas de uma vez. 2 a 10 imagens/vídeos.">
+              <div className="space-y-2">
+                {gItems.map((it, i) => (
+                  <div key={i} className="flex items-center gap-1.5">
+                    <select value={it.kind}
+                      onChange={e => updateGItem(i, { kind: e.target.value as GalleryItem['kind'] })}
+                      className="rounded-lg px-2 py-1.5 text-xs outline-none shrink-0"
+                      style={{ ...inputStyle, width: 84 }}>
+                      <option value="image">Imagem</option>
+                      <option value="video">Vídeo</option>
+                    </select>
+                    {it.fileId ? (
+                      <div className="flex-1 min-w-0 flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-[11px]"
+                        style={{ background: 'var(--success-soft)', border: '1px solid color-mix(in oklab, var(--success) 40%, var(--border))' }}>
+                        <FolderOpen size={12} style={{ color: 'var(--success)' }} />
+                        <span className="truncate font-mono" style={{ color: 'var(--text-muted)' }}>{it.fileId.slice(0, 12)}…</span>
+                        <button onClick={() => updateGItem(i, { fileId: '' })} className="ml-auto" style={{ color: 'var(--text-muted)' }}><X size={12} /></button>
+                      </div>
+                    ) : (
+                      <input className={`${inputCls} flex-1 min-w-0`} style={inputStyle}
+                        value={it.url ?? ''} onChange={e => updateGItem(i, { url: e.target.value })}
+                        placeholder="https://…" inputMode="url" />
+                    )}
+                    <button onClick={() => { setLibGalleryIndex(i); setLibOpen(true) }} title="Escolher da biblioteca"
+                      className="w-8 h-8 flex items-center justify-center rounded-lg shrink-0 hover:bg-surface-2"
+                      style={{ color: 'var(--primary)', border: '1px solid var(--border)' }}>
+                      <FolderOpen size={13} />
+                    </button>
+                    <button onClick={() => removeGItem(i)} title="Remover"
+                      className="w-8 h-8 flex items-center justify-center rounded-lg shrink-0 hover:bg-surface-2"
+                      style={{ color: 'var(--text-muted)' }}>
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                ))}
+                {gItems.length < 10 && (
+                  <button onClick={addGItem}
+                    className="w-full h-9 inline-flex items-center justify-center gap-1.5 text-xs font-medium rounded-lg border border-dashed transition-colors hover:bg-surface-2"
+                    style={{ borderColor: 'var(--border)', color: 'var(--text-muted)' }}>
+                    + Adicionar mídia
+                  </button>
+                )}
+                {gItems.length < 2 && (
+                  <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                    Dica: com 2+ mídias vira um álbum. Com 1 só, envia normal.
+                  </p>
+                )}
+              </div>
+            </Field>
+            <Field label="Legenda (opcional)" hint="Aparece na primeira mídia do álbum.">
+              <input className={inputCls} style={inputStyle}
+                value={node.data.caption ?? ''}
+                onChange={e => set({ caption: e.target.value })}
+              />
+            </Field>
+          </>
+        )}
+
         {/* Link */}
         {node.type === 'link' && (
           <>
@@ -643,26 +712,32 @@ export default function Inspector({ node, stats, botId, onChange, onDelete, onDu
         )}
       </div>
 
-      {(node.type === 'image' || node.type === 'video' || node.type === 'remarketing') && (
+      {(node.type === 'image' || node.type === 'video' || node.type === 'remarketing' || node.type === 'gallery') && (
         <MediaLibraryModal
           open={libOpen}
-          onClose={() => setLibOpen(false)}
+          onClose={() => { setLibOpen(false); setLibGalleryIndex(null) }}
           botId={botId}
           mediaType={
-            node.type === 'video' ? 'video'
+            node.type === 'gallery'
+              ? (gItems[libGalleryIndex ?? 0]?.kind === 'video' ? 'video' : 'image')
+              : node.type === 'video' ? 'video'
               : node.type === 'image' ? 'image'
               : (node.data.mediaKind === 'video' ? 'video' : 'image')
           }
           onSelect={(item) => {
+            if (node.type === 'gallery' && libGalleryIndex !== null) {
+              updateGItem(libGalleryIndex, { fileId: item.file_id, url: '' })
+              return
+            }
             if (node.type === 'remarketing') {
               set({ mediaFileId: item.file_id, mediaUrl: '' })
-            } else {
-              const patch: Record<string, string> = { fileId: item.file_id }
-              if (node.type === 'image') patch.imageUrl = ''
-              else patch.videoUrl = ''
-              if (!(node.data.caption ?? '') && item.caption) patch.caption = item.caption
-              set(patch)
+              return
             }
+            const patch: Record<string, string> = { fileId: item.file_id }
+            if (node.type === 'image') patch.imageUrl = ''
+            else if (node.type === 'video') patch.videoUrl = ''
+            if (!(node.data.caption ?? '') && item.caption) patch.caption = item.caption
+            set(patch)
           }}
         />
       )}

@@ -37,6 +37,12 @@ export interface FlowStatsMap {
 // Keep this union-friendly so we can refactor per-type later, but maintain the
 // full bag of optional fields to not break existing JSONB rows in the DB.
 
+export interface GalleryItem {
+  kind: 'image' | 'video'
+  url?: string
+  fileId?: string
+}
+
 export interface NodeData {
   // Conversa
   text?: string
@@ -62,6 +68,7 @@ export interface NodeData {
   imageUrl?: string
   videoUrl?: string
   fileId?: string        // file_id da Biblioteca de Mídia (Telegram) — alternativa à URL
+  galleryItems?: GalleryItem[]   // Galeria/álbum — várias mídias de uma vez
   caption?: string
   url?: string
   description?: string

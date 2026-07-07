@@ -81,6 +81,28 @@ export async function sendTelegramVideo(
   })
 }
 
+// Envia várias mídias como álbum (2-10). 1 item → cai em sendPhoto/Video.
+export async function sendTelegramMediaGroup(
+  token: string,
+  chatId: number,
+  items: Array<{ kind: string; ref: string }>,
+  caption?: string,
+): Promise<boolean> {
+  const valid = items.filter(i => i.ref).slice(0, 10)
+  if (valid.length === 0) return true
+  if (valid.length === 1) {
+    return valid[0].kind === 'video'
+      ? sendTelegramVideo(token, chatId, valid[0].ref, caption)
+      : sendTelegramPhoto(token, chatId, valid[0].ref, caption)
+  }
+  const media = valid.map((i, idx) => ({
+    type:  i.kind === 'video' ? 'video' : 'photo',
+    media: i.ref,
+    ...(idx === 0 && caption ? { caption, parse_mode: 'HTML' } : {}),
+  }))
+  return tgApi(token, 'sendMediaGroup', { chat_id: chatId, media })
+}
+
 export async function sendTelegramWithKeyboard(
   token: string,
   chatId: number,
@@ -492,6 +514,22 @@ export async function executeFlowNode(opts: ExecuteOpts): Promise<void> {
         ok = await sendTelegramVideo(plainToken, chatId, media, caption)
       }
       await advance({ ok, errorMsg: ok ? undefined : 'sendVideo failed' })
+      break
+    }
+
+    case 'gallery': {
+      // Álbum: várias imagens/vídeos de uma vez (até 10)
+      const items = (node.data.galleryItems as Array<{ kind?: string; url?: string; fileId?: string }> | undefined) ?? []
+      const caption = subVars((node.data.caption as string) ?? '', flowVars, firstName, botName)
+      const refs = items.map(i => ({
+        kind: i.kind === 'video' ? 'video' : 'image',
+        ref:  (i.fileId || i.url || ''),
+      })).filter(i => i.ref)
+      let ok = true
+      if (refs.length > 0) {
+        ok = await sendTelegramMediaGroup(plainToken, chatId, refs, caption)
+      }
+      await advance({ ok, errorMsg: ok ? undefined : 'sendMediaGroup failed' })
       break
     }
 
