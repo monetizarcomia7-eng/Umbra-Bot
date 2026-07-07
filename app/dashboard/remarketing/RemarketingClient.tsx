@@ -72,6 +72,11 @@ interface StepOffer {
   cta: string
 }
 
+interface StepButton {
+  label: string
+  url: string
+}
+
 interface StepDelay {
   amount: number
   unit: string
@@ -82,6 +87,7 @@ export interface CampaignStep {
   delay: StepDelay
   message: string
   offer: StepOffer | null
+  buttons?: StepButton[]
 }
 
 type CampaignStatus = 'active' | 'paused' | 'draft' | 'finished'
@@ -614,6 +620,18 @@ function StepCard({ step, index, total, onUpdate, onDelete, onMoveUp, onMoveDown
   function removeOffer() { onUpdate({ ...step, offer: null }) }
   function addOffer() { onUpdate({ ...step, offer: { product: 'Novo produto', price: 100, cta: 'Comprar agora' } }) }
 
+  const buttons = step.buttons ?? []
+  function addButton() {
+    if (buttons.length >= 3) return
+    onUpdate({ ...step, buttons: [...buttons, { label: 'Clique aqui', url: '' }] })
+  }
+  function updateButton(i: number, patch: Partial<StepButton>) {
+    onUpdate({ ...step, buttons: buttons.map((b, idx) => idx === i ? { ...b, ...patch } : b) })
+  }
+  function removeButton(i: number) {
+    onUpdate({ ...step, buttons: buttons.filter((_, idx) => idx !== i) })
+  }
+
   function insertVar(v: string) {
     const ta = messageRef.current
     if (!ta) return
@@ -746,6 +764,38 @@ function StepCard({ step, index, total, onUpdate, onDelete, onMoveUp, onMoveDown
             <Icon name="plus" size={11} /> Adicionar oferta nesta etapa
           </button>
         )}
+
+        {/* Botões personalizados (inline com link) */}
+        <div className="border border-border rounded-lg p-3">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-1.5 text-[10.5px] uppercase tracking-wider font-semibold text-text-subtle">
+              <Icon name="arrow-up-right" size={11} /> Botões (opcional)
+            </div>
+            {buttons.length < 3 && (
+              <button onClick={addButton} className="text-[10.5px] text-primary hover:underline inline-flex items-center gap-1 focus:outline-none rounded px-1">
+                <Icon name="plus" size={10} /> Adicionar botão
+              </button>
+            )}
+          </div>
+          {buttons.length === 0 ? (
+            <p className="text-[11px] text-text-muted">Adicione até 3 botões clicáveis com link (ex: “Comprar agora”, “Falar no WhatsApp”).</p>
+          ) : (
+            <div className="space-y-2">
+              {buttons.map((b, i) => (
+                <div key={i} className="flex items-center gap-1.5">
+                  <input value={b.label} onChange={(e) => updateButton(i, { label: e.target.value })}
+                    placeholder="Texto do botão" className={`${INPUT_CLS} flex-1 min-w-0`} />
+                  <input value={b.url} onChange={(e) => updateButton(i, { url: e.target.value })}
+                    placeholder="https://…" inputMode="url" className={`${INPUT_CLS} flex-1 min-w-0`} />
+                  <button onClick={() => removeButton(i)}
+                    className="w-7 h-7 inline-flex items-center justify-center rounded-md text-text-muted hover:bg-danger-soft hover:text-danger shrink-0 focus:outline-none">
+                    <Icon name="trash-2" size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )
@@ -875,6 +925,17 @@ function PreviewSequence({ campaign }: { campaign: Campaign }) {
                   <div className="text-[12.5px] font-semibold text-text mt-1">{step.offer.product}</div>
                   <div className="text-[16px] font-semibold text-success mt-0.5">{fmtBRL(step.offer.price)}</div>
                   <button className="w-full mt-2 h-7 bg-primary text-primary-fg text-[11.5px] font-medium rounded-md">{step.offer.cta}</button>
+                </div>
+              </div>
+            )}
+            {(step.buttons ?? []).filter((b) => b.label.trim()).length > 0 && (
+              <div className="flex justify-start">
+                <div className="ml-2 w-[260px] space-y-1.5">
+                  {(step.buttons ?? []).filter((b) => b.label.trim()).map((b, i) => (
+                    <div key={i} className="w-full h-7 flex items-center justify-center gap-1 bg-surface border border-primary/30 text-primary text-[11.5px] font-medium rounded-md">
+                      {b.label}<Icon name="arrow-up-right" size={11} />
+                    </div>
+                  ))}
                 </div>
               </div>
             )}

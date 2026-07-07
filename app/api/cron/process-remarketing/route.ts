@@ -10,7 +10,17 @@ import {
   executeFlowNode,
   sendTelegramPhoto,
   sendTelegramVideo,
+  sendTelegramWithKeyboard,
 } from '@/lib/flow-engine'
+
+// Constrói o inline_keyboard (1 botão por linha) a partir dos botões da etapa.
+// Só inclui botões com texto e URL http(s) válida — evita rejeição do Telegram.
+function buildStepKeyboard(step: CampaignStep): Array<Array<{ text: string; url: string }>> {
+  return (step.buttons ?? [])
+    .filter((b) => b.label.trim() && /^https?:\/\//i.test(b.url.trim()))
+    .slice(0, 3)
+    .map((b) => [{ text: b.label.trim(), url: b.url.trim() }])
+}
 
 // GET /api/cron/process-remarketing
 // Deve ser chamado a cada hora via cron-job.org (com Authorization: Bearer CRON_SECRET).
@@ -28,6 +38,7 @@ interface CampaignStep {
   delay:   { amount: number; unit: string }
   message: string
   offer:   { product: string; price: number; cta: string } | null
+  buttons?: { label: string; url: string }[]
 }
 
 interface RawCampaign {
@@ -417,8 +428,13 @@ export async function GET(request: Request) {
       const token     = decryptToken(bot.token as string)
       const firstName = ((contact.first_name || contact.name) as string) || ''
       const text      = buildMessage(step, firstName, bot.name as string)
+      const keyboard  = buildStepKeyboard(step)
 
-      await sendTelegramMessage(token, contact.telegram_id as string, text, 'HTML')
+      if (keyboard.length > 0) {
+        await sendTelegramWithKeyboard(token, Number(contact.telegram_id), text, keyboard)
+      } else {
+        await sendTelegramMessage(token, contact.telegram_id as string, text, 'HTML')
+      }
 
       await supabase
         .from('remarketing_executions')
