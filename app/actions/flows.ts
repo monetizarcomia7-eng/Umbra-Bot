@@ -88,6 +88,9 @@ const REMARKETING_DATA  = z.object({
   delayAmount: z.number().int().min(1).max(720),
   delayUnit:   z.enum(['minutos','horas','dias']),
   tag:         z.string().max(64).default(''),
+  mediaKind:   z.enum(['none','image','video']).default('none'),
+  mediaUrl:    URL_SAFE.default(''),               // URL pública (alternativa à biblioteca)
+  mediaFileId: z.string().max(256).default(''),    // file_id da Biblioteca de Mídia
 })
 
 const NODE_SCHEMA = z.discriminatedUnion('type', [

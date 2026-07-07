@@ -72,6 +72,10 @@ export interface NodeData {
   campaignName?: string
   delayAmount?: number
   delayUnit?: string
+  // Remarketing — mídia anexada (imagem/vídeo, via URL ou Biblioteca de Mídia)
+  mediaKind?: 'none' | 'image' | 'video'
+  mediaUrl?: string
+  mediaFileId?: string
 }
 
 export interface FlowNodeType {

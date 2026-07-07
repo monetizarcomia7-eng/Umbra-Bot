@@ -8,6 +8,8 @@ import {
   buildEdgeMap,
   loadFlow,
   executeFlowNode,
+  sendTelegramPhoto,
+  sendTelegramVideo,
 } from '@/lib/flow-engine'
 
 // GET /api/cron/process-remarketing
@@ -177,7 +179,7 @@ export async function GET(request: Request) {
 
   const { data: fssRows } = await supabase
     .from('flow_scheduled_sends')
-    .select('id, bot_id, contact_id, chat_id, message, flow_id')
+    .select('id, bot_id, contact_id, chat_id, message, media_type, media_ref, flow_id')
     .eq('status', 'pending')
     .lte('scheduled_at', new Date().toISOString())
     .order('scheduled_at', { ascending: true })
@@ -274,7 +276,18 @@ export async function GET(request: Request) {
           continue
         }
 
-        await sendTelegramMessage(token, row.chat_id, row.message, 'HTML')
+        // Com mídia anexada (imagem/vídeo) → envia como foto/vídeo com legenda;
+        // sem mídia → mensagem de texto simples.
+        const rowMedia = row as { media_type?: string | null; media_ref?: string | null }
+        if (rowMedia.media_type && rowMedia.media_ref) {
+          if (rowMedia.media_type === 'video') {
+            await sendTelegramVideo(token, row.chat_id, rowMedia.media_ref, row.message)
+          } else {
+            await sendTelegramPhoto(token, row.chat_id, rowMedia.media_ref, row.message)
+          }
+        } else {
+          await sendTelegramMessage(token, row.chat_id, row.message, 'HTML')
+        }
 
         await supabase
           .from('flow_scheduled_sends')

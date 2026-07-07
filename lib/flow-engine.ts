@@ -583,6 +583,11 @@ export async function executeFlowNode(opts: ExecuteOpts): Promise<void> {
       const scheduledAt = new Date(Date.now() + ms).toISOString()
       const message     = subVars(rawText, flowVars, firstName, botName)
 
+      // Mídia anexada (imagem/vídeo) — via Biblioteca de Mídia (file_id) ou URL
+      const mediaKind = (node.data.mediaKind as string) ?? 'none'
+      const mediaRef  = ((node.data.mediaFileId as string) || (node.data.mediaUrl as string) || '')
+      const hasMedia  = (mediaKind === 'image' || mediaKind === 'video') && mediaRef !== ''
+
       const { data: contactMeta } = await supabase
         .from('contacts').select('user_id, bot_id').eq('id', contact.id).single()
 
@@ -593,6 +598,8 @@ export async function executeFlowNode(opts: ExecuteOpts): Promise<void> {
           contact_id:   contact.id,
           chat_id:      chatId,
           message,
+          media_type:   hasMedia ? mediaKind : null,
+          media_ref:    hasMedia ? mediaRef  : null,
           scheduled_at: scheduledAt,
           flow_id:      flowId,
         }).then(({ error }) => {

@@ -566,6 +566,28 @@ export default function Inspector({ node, stats, botId, onChange, onDelete, onDu
                 placeholder="seguindo"
               />
             </Field>
+            <Field label="Mídia (opcional)" hint="A mensagem acima vira a legenda da mídia.">
+              <select className={inputCls} style={inputStyle}
+                value={node.data.mediaKind ?? 'none'}
+                onChange={e => set({ mediaKind: e.target.value as 'none' | 'image' | 'video' })}
+              >
+                <option value="none">Nenhuma</option>
+                <option value="image">Imagem</option>
+                <option value="video">Vídeo</option>
+              </select>
+            </Field>
+            {(node.data.mediaKind === 'image' || node.data.mediaKind === 'video') && (
+              <MediaField
+                urlLabel={node.data.mediaKind === 'image' ? 'URL da imagem' : 'URL do vídeo'}
+                urlHint="Use HTTPS ou escolha da biblioteca."
+                placeholder="https://..."
+                fileId={(node.data.mediaFileId as string) ?? ''}
+                url={(node.data.mediaUrl as string) ?? ''}
+                onUrl={v => set({ mediaUrl: v })}
+                onClearFile={() => set({ mediaFileId: '' })}
+                onOpenLibrary={() => setLibOpen(true)}
+              />
+            )}
           </>
         )}
 
@@ -576,18 +598,26 @@ export default function Inspector({ node, stats, botId, onChange, onDelete, onDu
         )}
       </div>
 
-      {(node.type === 'image' || node.type === 'video') && (
+      {(node.type === 'image' || node.type === 'video' || node.type === 'remarketing') && (
         <MediaLibraryModal
           open={libOpen}
           onClose={() => setLibOpen(false)}
           botId={botId}
-          mediaType={node.type}
+          mediaType={
+            node.type === 'video' ? 'video'
+              : node.type === 'image' ? 'image'
+              : (node.data.mediaKind === 'video' ? 'video' : 'image')
+          }
           onSelect={(item) => {
-            const patch: Record<string, string> = { fileId: item.file_id }
-            if (node.type === 'image') patch.imageUrl = ''
-            else patch.videoUrl = ''
-            if (!(node.data.caption ?? '') && item.caption) patch.caption = item.caption
-            set(patch)
+            if (node.type === 'remarketing') {
+              set({ mediaFileId: item.file_id, mediaUrl: '' })
+            } else {
+              const patch: Record<string, string> = { fileId: item.file_id }
+              if (node.type === 'image') patch.imageUrl = ''
+              else patch.videoUrl = ''
+              if (!(node.data.caption ?? '') && item.caption) patch.caption = item.caption
+              set(patch)
+            }
           }}
         />
       )}
