@@ -1086,6 +1086,7 @@ export default function ActivityClient({
       let query = supabase
         .from('activity_events')
         .select('id, type, title, description, bot, bot_id, amount, created_at')
+        .eq('user_id', userId)
         .order('created_at', { ascending: false })
         .range(dbOffset, dbOffset + PAGE_SIZE - 1)
       if (cutoff !== null) query = query.gte('created_at', new Date(cutoff).toISOString())
@@ -1101,7 +1102,7 @@ export default function ActivityClient({
     } finally {
       setIsLoadingMore(false)
     }
-  }, [isLoadingMore, hasMore, dbOffset])
+  }, [isLoadingMore, hasMore, dbOffset, userId])
 
   // Mapa id → nome de exibição do bot
   const botMap = useMemo(() => {

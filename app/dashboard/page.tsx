@@ -1,10 +1,13 @@
+import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { DashboardClient, ActivityEvent, BotSummary } from './_components/DashboardClient'
 
 export default async function DashboardPage() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
+  if (!user) redirect('/login')
 
+  const uid        = user.id
   const now        = Date.now()
   const since30d   = new Date(now - 30 * 86_400_000).toISOString()
   const prevSince  = new Date(now - 60 * 86_400_000).toISOString()
@@ -23,41 +26,47 @@ export default async function DashboardPage() {
     supabase
       .from('transactions')
       .select('amount, net, created_at, product_name')
+      .eq('user_id', uid)
       .eq('status', 'approved')
       .gte('created_at', since30d),
     supabase
       .from('bots')
       .select('id', { count: 'exact', head: true })
+      .eq('user_id', uid)
       .eq('status', 'online'),
     supabase
       .from('bots')
-      .select('id', { count: 'exact', head: true }),
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', uid),
     supabase
       .from('transactions')
       .select('net, amount')
+      .eq('user_id', uid)
       .eq('status', 'approved')
       .gte('created_at', prevSince)
       .lt('created_at', since30d),
-    user
-      ? supabase.from('profiles').select('balance').eq('id', user.id).single()
-      : Promise.resolve({ data: null, error: null }),
+    supabase.from('profiles').select('balance').eq('id', uid).single(),
     supabase
       .from('contacts')
       .select('id', { count: 'exact', head: true })
+      .eq('user_id', uid)
       .gte('created_at', since30d),
     supabase
       .from('contacts')
       .select('id', { count: 'exact', head: true })
+      .eq('user_id', uid)
       .gte('created_at', prevSince)
       .lt('created_at', since30d),
     supabase
       .from('activity_events')
       .select('id, type, title, description, bot, amount, created_at')
+      .eq('user_id', uid)
       .order('created_at', { ascending: false })
       .limit(6),
     supabase
       .from('bots')
       .select('id, name, username, status, color')
+      .eq('user_id', uid)
       .order('added_at', { ascending: false })
       .limit(6),
   ])
