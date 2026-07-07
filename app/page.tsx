@@ -1161,19 +1161,16 @@ function FinalCTA() {
       <div className="corona" style={{ width: 1000, height: 1000, top: -200, left: '50%', transform: 'translateX(-50%)', opacity: 0.7 }} />
       <div className="relative max-w-3xl mx-auto px-5 md:px-8 text-center">
         <Reveal>
-        <div className="mb-6 flex justify-center">
-          <div className="inline-flex items-center gap-2.5 rounded-2xl px-5 py-2.5"
-            style={{
-              background: '#0E0F13',
-              border: '1px solid rgba(124,92,255,0.30)',
-              boxShadow: '0 0 32px -8px rgba(124,92,255,0.35)',
-            }}>
-            <svg viewBox="0 0 100 100" width="26" height="26" aria-hidden="true">
-              <path d="M 18 18 V 60 A 32 32 0 0 0 82 60 V 18 H 64 V 60 A 14 14 0 0 1 36 60 V 18 Z" fill="#f4f4f8" />
-              <rect x="14" y="42" width="72" height="3.5" rx="2" fill="#7C5CFF" />
-            </svg>
-            <span style={{ fontWeight: 700, fontSize: '19px', letterSpacing: '-0.5px', color: '#f4f4f8', lineHeight: 1 }}>
-              umbra<span style={{ color: '#7C5CFF' }}>.</span>bot
+        <div className="mb-7 flex justify-center">
+          <div className="seal" aria-label="umbra.bot">
+            <span className="seal-mark">
+              <svg viewBox="0 0 100 100" width="22" height="22" aria-hidden="true">
+                <path d="M 18 18 V 60 A 32 32 0 0 0 82 60 V 18 H 64 V 60 A 14 14 0 0 1 36 60 V 18 Z" fill="#ffffff" />
+                <rect x="14" y="42" width="72" height="3.5" rx="2" fill="rgba(0,0,0,0.45)" />
+              </svg>
+            </span>
+            <span style={{ fontWeight: 700, fontSize: '20px', letterSpacing: '-0.6px', color: '#f4f4f8', lineHeight: 1 }}>
+              umbra<span style={{ color: '#a78bfa' }}>.</span>bot
             </span>
           </div>
         </div>

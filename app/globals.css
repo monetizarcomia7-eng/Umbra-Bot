@@ -329,6 +329,86 @@
   to   { opacity: 1; transform: translateY(0)   scale(1);    }
 }
 
+/* ── Selo do CTA final ────────────────────────────────── */
+@keyframes sealRingSpin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes sealGlow {
+  0%, 100% { opacity: 0.45; transform: scale(1);    }
+  50%      { opacity: 0.9;  transform: scale(1.06); }
+}
+
+@keyframes sealShine {
+  0%       { transform: translateX(-140%) skewX(-18deg); }
+  55%,100% { transform: translateX(240%)  skewX(-18deg); }
+}
+
+.seal {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 11px;
+  padding: 13px 22px 13px 16px;
+  border-radius: 18px;
+  background: linear-gradient(180deg, #14151b, #0d0e12);
+  isolation: isolate;
+  overflow: hidden;
+}
+/* halo pulsante atrás do selo */
+.seal::before {
+  content: '';
+  position: absolute;
+  inset: -40%;
+  z-index: -2;
+  background: radial-gradient(closest-side, rgba(124,92,255,0.55), transparent 70%);
+  animation: sealGlow 3.4s ease-in-out infinite;
+  pointer-events: none;
+}
+/* borda cônica girando */
+.seal::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  padding: 1.5px;
+  background: conic-gradient(from 0deg, transparent 0deg, #7C5CFF 90deg, #a78bfa 150deg, transparent 240deg, transparent 360deg);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  animation: sealRingSpin 6s linear infinite;
+  pointer-events: none;
+}
+.seal-mark {
+  position: relative;
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(150deg, #7C5CFF, #6344e6);
+  box-shadow: 0 6px 18px -6px rgba(124,92,255,0.7), inset 0 1px 0 rgba(255,255,255,0.25);
+  overflow: hidden;
+}
+/* brilho que varre a marca */
+.seal-mark::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 45%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.55), transparent);
+  animation: sealShine 3.8s ease-in-out infinite;
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .seal::before, .seal::after, .seal-mark::after { animation: none; }
+}
+
 @layer base {
   * {
     @apply border-border;
