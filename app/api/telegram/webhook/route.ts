@@ -235,16 +235,20 @@ export async function POST(request: NextRequest) {
   }
 
   // ── /start command ────────────────────────────────────────────────────────────
-  if (text.startsWith('/start') && isNewContact) {
-    supabase.from('checkout_events').insert({
-      user_id:      bot.user_id,
-      bot_id:       bot.id,
-      contact_id:   contactId,
-      event_type:   'conversation_started',
-      product_name: '',
-    }).then(({ error }) => {
-      if (error) console.error('[webhook] conversation_started error:', error.message)
-    })
+  // Reenvia boas-vindas/fluxo em TODO /start (não só no primeiro contato).
+  if (text.startsWith('/start')) {
+    // Evento de funil só na primeira conversa — evita inflar em /start repetidos.
+    if (isNewContact) {
+      supabase.from('checkout_events').insert({
+        user_id:      bot.user_id,
+        bot_id:       bot.id,
+        contact_id:   contactId,
+        event_type:   'conversation_started',
+        product_name: '',
+      }).then(({ error }) => {
+        if (error) console.error('[webhook] conversation_started error:', error.message)
+      })
+    }
 
     if (bot.active_flow_id) {
       // FIX 3.1: pega a última versão publicada (snapshot imutável)
