@@ -4,6 +4,8 @@ import ActivityClient, { type RawActivityEvent, type BotOption } from './Activit
 export default async function ActivityPage() {
   const supabase = await createClient()
 
+  const { data: { user } } = await supabase.auth.getUser()
+
   const [eventsRes, botsRes] = await Promise.all([
     supabase
       .from('activity_events')
@@ -20,6 +22,7 @@ export default async function ActivityPage() {
     <ActivityClient
       initialEvents={(eventsRes.data ?? []) as unknown as RawActivityEvent[]}
       bots={(botsRes.data ?? []) as unknown as BotOption[]}
+      userId={user?.id ?? ''}
     />
   )
 }

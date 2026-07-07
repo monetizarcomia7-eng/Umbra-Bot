@@ -12,7 +12,7 @@ import {
   ShoppingBag, UserPlus, CheckCircle2, Wifi, XCircle, Undo2, WifiOff,
   Gauge, Bot, Webhook, GitBranch, UserX, Filter, Bell, Download,
   X, ArrowUpRight, SearchX, Check, ChevronDown, Search, Calendar,
-  ChevronRight, Layers, Square, SquareCheck,
+  ChevronRight, Layers, Square, SquareCheck, Trash2, AlertTriangle,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
@@ -79,6 +79,8 @@ const iconMap: Record<string, LucideIcon> = {
   'layers':         Layers,
   'square':         Square,
   'square-check':   SquareCheck,
+  'trash-2':        Trash2,
+  'alert-triangle': AlertTriangle,
 }
 
 function Icon({ name, size = 16, className }: { name: string; size?: number; className?: string }) {
@@ -266,7 +268,7 @@ function Card({ title, subtitle, action, children }: {
 }
 
 function Btn({ variant = 'secondary', iconName, children, onClick, className, disabled }: {
-  variant?: 'primary' | 'secondary'
+  variant?: 'primary' | 'secondary' | 'danger'
   iconName?: string; children?: React.ReactNode; onClick?: () => void
   className?: string; disabled?: boolean
 }) {
@@ -279,6 +281,8 @@ function Btn({ variant = 'secondary', iconName, children, onClick, className, di
         'inline-flex items-center gap-1.5 h-8 px-3 text-[13px] font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed',
         variant === 'primary'
           ? 'bg-primary text-primary-fg hover:opacity-90'
+          : variant === 'danger'
+          ? 'bg-danger text-white hover:opacity-90'
           : 'border border-border bg-surface text-text hover:bg-surface-2',
         className,
       )}
@@ -988,9 +992,11 @@ const PAGE_SIZE = 25
 export default function ActivityClient({
   initialEvents,
   bots,
+  userId,
 }: {
   initialEvents: RawActivityEvent[]
   bots: BotOption[]
+  userId: string
 }) {
   const { track } = useAnalytics()
 
@@ -1014,6 +1020,12 @@ export default function ActivityClient({
   // Melhoria #10: seleção bulk
   const [selectionMode, setSelectionMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+
+  // Apagar em massa
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [purgeAll, setPurgeAll] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
 
   const sentinelRef    = useRef<HTMLDivElement>(null)
   const topSentinelRef = useRef<HTMLDivElement>(null)
@@ -1215,6 +1227,64 @@ export default function ActivityClient({
     setSelectedEvent(null)
   }
 
+  // Selecionar / desmarcar todos os eventos filtrados carregados
+  const allFilteredSelected = filtered.length > 0 && filtered.every((e) => selectedIds.has(e.id))
+  const handleSelectAllFiltered = () => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (filtered.length > 0 && filtered.every((e) => next.has(e.id))) {
+        filtered.forEach((e) => next.delete(e.id))
+      } else {
+        filtered.forEach((e) => next.add(e.id))
+      }
+      return next
+    })
+  }
+
+  // Apagar eventos (selecionados ou todo o histórico)
+  const handleDelete = async () => {
+    if (deleting) return
+    if (!purgeAll && selectedIds.size === 0) return
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      const supabase = createClient()
+      if (purgeAll) {
+        const { error } = await supabase
+          .from('activity_events')
+          .delete()
+          .eq('user_id', userId)
+        if (error) throw error
+        setRows([])
+        setExtras([])
+        setSelectedIds(new Set())
+        setDbOffset(0)
+        setHasMore(false)
+      } else {
+        const ids = Array.from(selectedIds)
+        const { error } = await supabase
+          .from('activity_events')
+          .delete()
+          .in('id', ids)
+          .eq('user_id', userId)
+        if (error) throw error
+        const idSet = new Set(ids)
+        setRows((prev) => prev.filter((e) => !idSet.has(e.id)))
+        setExtras((prev) => prev.filter((e) => !idSet.has(e.id)))
+        setSelectedIds(new Set())
+        setDbOffset((prev) => Math.max(0, prev - ids.length))
+      }
+      setSelectedEvent(null)
+      setSelectionMode(false)
+      setPurgeAll(false)
+      setDeleteOpen(false)
+    } catch {
+      setDeleteError('Não foi possível apagar os eventos. Tente novamente.')
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   // Export CSV com filtros ativos (ou selecionados)
   const handleExport = () => {
     const source = selectedIds.size > 0
@@ -1253,21 +1323,50 @@ export default function ActivityClient({
       />
 
       {/* Barra de ação bulk — melhoria #10 */}
-      {selectionMode && selectedIds.size > 0 && (
-        <div className="mb-4 flex items-center gap-3 px-4 py-2.5 bg-primary/10 border border-primary/20 rounded-xl">
+      {selectionMode && (
+        <div className="mb-4 flex flex-wrap items-center gap-2.5 px-4 py-2.5 bg-primary/10 border border-primary/20 rounded-xl">
           <span className="text-[13px] font-medium text-primary">
-            {selectedIds.size} evento{selectedIds.size !== 1 ? 's' : ''} selecionado{selectedIds.size !== 1 ? 's' : ''}
+            {selectedIds.size > 0
+              ? `${selectedIds.size} evento${selectedIds.size !== 1 ? 's' : ''} selecionado${selectedIds.size !== 1 ? 's' : ''}`
+              : 'Nenhum evento selecionado'}
           </span>
+
+          <button
+            onClick={handleSelectAllFiltered}
+            disabled={filtered.length === 0}
+            className="inline-flex items-center gap-1.5 h-8 px-3 text-[12.5px] font-medium rounded-lg border border-primary/30 bg-surface text-primary hover:bg-primary/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {allFilteredSelected
+              ? <><Square size={14} /> Desmarcar todos</>
+              : <><SquareCheck size={14} /> Selecionar todos ({filtered.length})</>}
+          </button>
+
           <div className="flex-1" />
-          <Btn iconName="download" onClick={handleExport}>
-            Exportar selecionados
+
+          <Btn iconName="download" onClick={handleExport} disabled={selectedIds.size === 0}>
+            Exportar
           </Btn>
           <Btn
-            onClick={() => setSelectedIds(new Set())}
-            className="text-text-muted"
+            variant="danger"
+            iconName="trash-2"
+            onClick={() => { setPurgeAll(false); setDeleteError(null); setDeleteOpen(true) }}
+            disabled={selectedIds.size === 0}
           >
-            Limpar seleção
+            Apagar
           </Btn>
+          <button
+            onClick={() => { setPurgeAll(true); setDeleteError(null); setDeleteOpen(true) }}
+            className="inline-flex items-center gap-1.5 h-8 px-3 text-[12.5px] font-medium rounded-lg text-danger hover:bg-danger-soft transition-colors"
+            title="Apagar todo o histórico de atividades"
+          >
+            <Trash2 size={13} />
+            Apagar tudo
+          </button>
+          {selectedIds.size > 0 && (
+            <Btn onClick={() => setSelectedIds(new Set())} className="text-text-muted">
+              Limpar seleção
+            </Btn>
+          )}
         </div>
       )}
 
@@ -1358,6 +1457,80 @@ export default function ActivityClient({
           )}
         </aside>
       </div>
+
+      {/* Modal de confirmação — apagar eventos */}
+      {deleteOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+          onClick={() => { if (!deleting) { setDeleteOpen(false); setPurgeAll(false) } }}
+        >
+          <div
+            className="w-full max-w-md bg-surface border border-border rounded-2xl p-5 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-xl bg-danger-soft text-danger flex items-center justify-center shrink-0">
+                <AlertTriangle size={18} />
+              </div>
+              <div className="min-w-0">
+                <div className="text-[15px] font-semibold text-text">
+                  {purgeAll ? 'Apagar todo o histórico' : 'Apagar eventos selecionados'}
+                </div>
+                <p className="text-[13px] text-text-muted mt-1 leading-relaxed">
+                  {purgeAll
+                    ? 'Isso vai apagar todos os eventos de atividade da sua conta, sem exceção. Esta ação não pode ser desfeita.'
+                    : `Você vai apagar ${selectedIds.size} evento${selectedIds.size !== 1 ? 's' : ''} selecionado${selectedIds.size !== 1 ? 's' : ''}. Esta ação não pode ser desfeita.`}
+                </p>
+              </div>
+            </div>
+
+            <label className="flex items-start gap-2.5 mt-4 p-3 rounded-lg bg-surface-2 border border-border cursor-pointer">
+              <input
+                type="checkbox"
+                checked={purgeAll}
+                onChange={(e) => setPurgeAll(e.target.checked)}
+                className="mt-0.5 accent-[var(--danger)]"
+              />
+              <span className="text-[12.5px] text-text leading-snug">
+                Apagar <b>todo o histórico</b> de atividades (limpa tudo, não apenas o que está selecionado)
+              </span>
+            </label>
+
+            {deleteError && (
+              <div className="mt-3 text-[12.5px] text-danger">{deleteError}</div>
+            )}
+
+            <div className="flex items-center justify-end gap-2 mt-5">
+              <button
+                onClick={() => { if (!deleting) { setDeleteOpen(false); setPurgeAll(false) } }}
+                disabled={deleting}
+                className="h-9 px-4 rounded-lg border border-border bg-surface text-[13px] font-medium text-text hover:bg-surface-2 disabled:opacity-50 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleDelete}
+                disabled={deleting || (!purgeAll && selectedIds.size === 0)}
+                className="h-9 px-4 inline-flex items-center gap-1.5 rounded-lg bg-danger text-white text-[13px] font-semibold hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {deleting ? (
+                  <>
+                    <svg viewBox="0 0 24 24" width="14" height="14" className="spin" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                      <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                    </svg>
+                    Apagando…
+                  </>
+                ) : (
+                  <>
+                    <Trash2 size={14} />
+                    {purgeAll ? 'Apagar tudo' : 'Apagar selecionados'}
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   )
 }
