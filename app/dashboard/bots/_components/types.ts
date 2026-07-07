@@ -20,6 +20,7 @@ export interface RawBotRow {
   description: string | null
   welcome_message?: string | null
   fallback_message?: string | null
+  anti_clone?: boolean | null
 }
 
 export interface BotData {
@@ -38,6 +39,7 @@ export interface BotData {
   welcomeMessage: string
   fallbackMessage: string
   description: string
+  antiClone: boolean
   lastSync: number | null
   addedAt: number
 }
@@ -68,6 +70,7 @@ export function mapRaw(r: RawBotRow): BotData {
     welcomeMessage: r.welcome_message ?? '',
     fallbackMessage:r.fallback_message ?? '',
     description:    r.description ?? '',
+    antiClone:      r.anti_clone ?? false,
     lastSync:       r.last_sync ? new Date(r.last_sync).getTime() : null,
     addedAt:        r.added_at ? new Date(r.added_at).getTime() : Date.now(),
   }

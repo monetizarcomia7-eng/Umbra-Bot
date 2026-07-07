@@ -200,7 +200,7 @@ export async function GET(request: Request) {
     const fssBotIds = [...new Set(fssRows.map((r: { bot_id: string }) => r.bot_id))]
     const { data: fssBots } = await supabase
       .from('bots')
-      .select('id, token, status, name, user_id')
+      .select('id, token, status, name, user_id, anti_clone')
       .in('id', fssBotIds)
 
     const fssBotMap = new Map(
@@ -212,6 +212,7 @@ export async function GET(request: Request) {
       message: string; flow_id: string | null
     }[]) {
       const bot = fssBotMap.get(row.bot_id)
+      const protect = Boolean((bot as { anti_clone?: boolean } | undefined)?.anti_clone)
       try {
         if (!bot?.token || bot.status === 'paused') {
           await supabase
@@ -272,6 +273,7 @@ export async function GET(request: Request) {
               flowVersion: flow.version,
               userId:      (bot as { user_id: string }).user_id,
               supabase,
+              protectContent: protect,
             })
 
             fssSent++
@@ -292,12 +294,12 @@ export async function GET(request: Request) {
         const rowMedia = row as { media_type?: string | null; media_ref?: string | null }
         if (rowMedia.media_type && rowMedia.media_ref) {
           if (rowMedia.media_type === 'video') {
-            await sendTelegramVideo(token, row.chat_id, rowMedia.media_ref, row.message)
+            await sendTelegramVideo(token, row.chat_id, rowMedia.media_ref, row.message, protect)
           } else {
-            await sendTelegramPhoto(token, row.chat_id, rowMedia.media_ref, row.message)
+            await sendTelegramPhoto(token, row.chat_id, rowMedia.media_ref, row.message, protect)
           }
         } else {
-          await sendTelegramMessage(token, row.chat_id, row.message, 'HTML')
+          await sendTelegramMessage(token, row.chat_id, row.message, 'HTML', protect)
         }
 
         await supabase
@@ -389,7 +391,7 @@ export async function GET(request: Request) {
   const [campRes, contRes, botRes] = await Promise.all([
     supabase.from('remarketing_campaigns').select('id, steps, status').in('id', campaignIds),
     supabase.from('contacts').select('id, first_name, name, telegram_id').in('id', contactIds),
-    supabase.from('bots').select('id, token, name').in('id', botIds),
+    supabase.from('bots').select('id, token, name, anti_clone').in('id', botIds),
   ])
 
   const campMap = new Map((campRes.data ?? []).map(c => [c.id, c]))
@@ -430,10 +432,11 @@ export async function GET(request: Request) {
       const text      = buildMessage(step, firstName, bot.name as string)
       const keyboard  = buildStepKeyboard(step)
 
+      const protect = Boolean((bot as { anti_clone?: boolean }).anti_clone)
       if (keyboard.length > 0) {
-        await sendTelegramWithKeyboard(token, Number(contact.telegram_id), text, keyboard)
+        await sendTelegramWithKeyboard(token, Number(contact.telegram_id), text, keyboard, protect)
       } else {
-        await sendTelegramMessage(token, contact.telegram_id as string, text, 'HTML')
+        await sendTelegramMessage(token, contact.telegram_id as string, text, 'HTML', protect)
       }
 
       await supabase

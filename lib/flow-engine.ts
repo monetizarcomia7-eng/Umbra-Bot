@@ -64,9 +64,10 @@ export async function sendTelegramPhoto(
   chatId: number,
   photo: string,
   caption?: string,
+  protect = false,
 ): Promise<boolean> {
   return tgApi(token, 'sendPhoto', {
-    chat_id: chatId, photo, caption: caption ?? '', parse_mode: 'HTML',
+    chat_id: chatId, photo, caption: caption ?? '', parse_mode: 'HTML', protect_content: protect,
   })
 }
 
@@ -75,9 +76,10 @@ export async function sendTelegramVideo(
   chatId: number,
   video: string,
   caption?: string,
+  protect = false,
 ): Promise<boolean> {
   return tgApi(token, 'sendVideo', {
-    chat_id: chatId, video, caption: caption ?? '', parse_mode: 'HTML',
+    chat_id: chatId, video, caption: caption ?? '', parse_mode: 'HTML', protect_content: protect,
   })
 }
 
@@ -87,20 +89,21 @@ export async function sendTelegramMediaGroup(
   chatId: number,
   items: Array<{ kind: string; ref: string }>,
   caption?: string,
+  protect = false,
 ): Promise<boolean> {
   const valid = items.filter(i => i.ref).slice(0, 10)
   if (valid.length === 0) return true
   if (valid.length === 1) {
     return valid[0].kind === 'video'
-      ? sendTelegramVideo(token, chatId, valid[0].ref, caption)
-      : sendTelegramPhoto(token, chatId, valid[0].ref, caption)
+      ? sendTelegramVideo(token, chatId, valid[0].ref, caption, protect)
+      : sendTelegramPhoto(token, chatId, valid[0].ref, caption, protect)
   }
   const media = valid.map((i, idx) => ({
     type:  i.kind === 'video' ? 'video' : 'photo',
     media: i.ref,
     ...(idx === 0 && caption ? { caption, parse_mode: 'HTML' } : {}),
   }))
-  return tgApi(token, 'sendMediaGroup', { chat_id: chatId, media })
+  return tgApi(token, 'sendMediaGroup', { chat_id: chatId, media, protect_content: protect })
 }
 
 export async function sendTelegramWithKeyboard(
@@ -108,12 +111,14 @@ export async function sendTelegramWithKeyboard(
   chatId: number,
   text: string,
   keyboard: Array<Array<{ text: string; callback_data?: string; url?: string }>>,
+  protect = false,
 ): Promise<boolean> {
   return tgApi(token, 'sendMessage', {
     chat_id: chatId,
     text: text || '​', // zero-width space fallback
     parse_mode: 'HTML',
     reply_markup: { inline_keyboard: keyboard },
+    protect_content: protect,
   })
 }
 
@@ -122,9 +127,9 @@ export async function answerCallbackQuery(token: string, callbackQueryId: string
 }
 
 // Wrapper de sendTelegramMessage que retorna boolean (lib/telegram retorna void)
-async function sendMessageOk(token: string, chatId: number, text: string): Promise<boolean> {
+async function sendMessageOk(token: string, chatId: number, text: string, protect = false): Promise<boolean> {
   try {
-    await sendTelegramMessage(token, chatId, text)
+    await sendTelegramMessage(token, chatId, text, 'HTML', protect)
     return true
   } catch {
     return false
@@ -331,6 +336,7 @@ export interface ExecuteOpts {
   userId:      string
   supabase:    SupabaseAdmin
   depth?:      number
+  protectContent?: boolean   // Proteção anti-clonagem (protect_content no Telegram)
 }
 
 const MAX_DEPTH = 20
@@ -341,6 +347,7 @@ export async function executeFlowNode(opts: ExecuteOpts): Promise<void> {
     flowId, flowVersion, userId, supabase,
   } = opts
   const depth = opts.depth ?? 0
+  const protect = opts.protectContent ?? false   // anti-clonagem
 
   if (depth > MAX_DEPTH) {
     logNodeEvent(supabase, {
@@ -384,6 +391,7 @@ export async function executeFlowNode(opts: ExecuteOpts): Promise<void> {
         nodeId: next.target,
         nodes, edgeMap, contact, firstName, botName, plainToken, chatId,
         flowId, flowVersion, userId, supabase, depth: depth + 1,
+        protectContent: protect,
       } as ExecuteOpts)
     } else {
       logNodeEvent(supabase, {
@@ -407,7 +415,7 @@ export async function executeFlowNode(opts: ExecuteOpts): Promise<void> {
       const text = subVars((node.data.text as string) ?? '', flowVars, firstName, botName)
       let ok = true
       if (text.trim()) {
-        ok = await sendMessageOk(plainToken, chatId, text)
+        ok = await sendMessageOk(plainToken, chatId, text, protect)
       }
       await advance({ ok, errorMsg: ok ? undefined : 'sendMessage failed' })
       break
@@ -417,7 +425,7 @@ export async function executeFlowNode(opts: ExecuteOpts): Promise<void> {
       const text = subVars((node.data.text as string) ?? '', flowVars, firstName, botName)
       let ok = true
       if (text.trim()) {
-        ok = await sendMessageOk(plainToken, chatId, text)
+        ok = await sendMessageOk(plainToken, chatId, text, protect)
       }
       logNodeEvent(supabase, {
         userId, flowId, nodeId: node.id, nodeType: node.type,
@@ -434,7 +442,7 @@ export async function executeFlowNode(opts: ExecuteOpts): Promise<void> {
       let ok = true
       if (options.length > 0) {
         const keyboard = options.map((opt, i) => [{ text: opt, callback_data: `flow_btn_${i}` }])
-        ok = await sendTelegramWithKeyboard(plainToken, chatId, text, keyboard)
+        ok = await sendTelegramWithKeyboard(plainToken, chatId, text, keyboard, protect)
       }
       logNodeEvent(supabase, {
         userId, flowId, nodeId: node.id, nodeType: node.type,
@@ -499,7 +507,7 @@ export async function executeFlowNode(opts: ExecuteOpts): Promise<void> {
       const caption = subVars((node.data.caption as string) ?? '', flowVars, firstName, botName)
       let ok = true
       if (media) {
-        ok = await sendTelegramPhoto(plainToken, chatId, media, caption)
+        ok = await sendTelegramPhoto(plainToken, chatId, media, caption, protect)
       }
       await advance({ ok, errorMsg: ok ? undefined : 'sendPhoto failed' })
       break
@@ -511,7 +519,7 @@ export async function executeFlowNode(opts: ExecuteOpts): Promise<void> {
       const caption = subVars((node.data.caption as string) ?? '', flowVars, firstName, botName)
       let ok = true
       if (media) {
-        ok = await sendTelegramVideo(plainToken, chatId, media, caption)
+        ok = await sendTelegramVideo(plainToken, chatId, media, caption, protect)
       }
       await advance({ ok, errorMsg: ok ? undefined : 'sendVideo failed' })
       break
@@ -527,7 +535,7 @@ export async function executeFlowNode(opts: ExecuteOpts): Promise<void> {
       })).filter(i => i.ref)
       let ok = true
       if (refs.length > 0) {
-        ok = await sendTelegramMediaGroup(plainToken, chatId, refs, caption)
+        ok = await sendTelegramMediaGroup(plainToken, chatId, refs, caption, protect)
       }
       await advance({ ok, errorMsg: ok ? undefined : 'sendMediaGroup failed' })
       break
@@ -538,7 +546,7 @@ export async function executeFlowNode(opts: ExecuteOpts): Promise<void> {
       const url     = (node.data.url as string) ?? ''
       let ok = true
       if (url) {
-        ok = await sendTelegramWithKeyboard(plainToken, chatId, '🔗 ' + btnText, [[{ text: btnText, url }]])
+        ok = await sendTelegramWithKeyboard(plainToken, chatId, '🔗 ' + btnText, [[{ text: btnText, url }]], protect)
       }
       await advance({ ok, errorMsg: ok ? undefined : 'sendLink failed' })
       break
@@ -554,7 +562,7 @@ export async function executeFlowNode(opts: ExecuteOpts): Promise<void> {
         cta,
       ].filter(Boolean).join('\n\n')
       let ok = true
-      if (lines) ok = await sendMessageOk(plainToken, chatId, lines)
+      if (lines) ok = await sendMessageOk(plainToken, chatId, lines, protect)
       await advance({ ok, errorMsg: ok ? undefined : 'sendOffer failed' })
       break
     }
@@ -590,7 +598,7 @@ export async function executeFlowNode(opts: ExecuteOpts): Promise<void> {
     case 'phone': {
       const text = subVars((node.data.text as string) ?? 'Qual é o seu telefone?', flowVars, firstName, botName)
       let ok = true
-      if (text.trim()) ok = await sendMessageOk(plainToken, chatId, text)
+      if (text.trim()) ok = await sendMessageOk(plainToken, chatId, text, protect)
       logNodeEvent(supabase, {
         userId, flowId, nodeId: node.id, nodeType: node.type,
         contactId: contact.id, event: ok ? 'sent' : 'failed',
@@ -674,9 +682,9 @@ export async function executeFlowNode(opts: ExecuteOpts): Promise<void> {
         description,
       ].filter(Boolean).join('\n\n')
       let ok = true
-      if (lines) ok = await sendMessageOk(plainToken, chatId, lines)
+      if (lines) ok = await sendMessageOk(plainToken, chatId, lines, protect)
       if (url && cta && ok) {
-        ok = await sendTelegramWithKeyboard(plainToken, chatId, cta, [[{ text: cta, url }]])
+        ok = await sendTelegramWithKeyboard(plainToken, chatId, cta, [[{ text: cta, url }]], protect)
       }
       await advance({ ok, errorMsg: ok ? undefined : 'sendUpsell failed' })
       break
@@ -693,8 +701,8 @@ export async function executeFlowNode(opts: ExecuteOpts): Promise<void> {
         price != null && `➕ por apenas R$ ${Number(price).toFixed(2)}`,
       ].filter(Boolean).join('\n')
       let ok = true
-      if (lines) ok = await sendMessageOk(plainToken, chatId, lines)
-      if (cta && ok) ok = await sendMessageOk(plainToken, chatId, cta)
+      if (lines) ok = await sendMessageOk(plainToken, chatId, lines, protect)
+      if (cta && ok) ok = await sendMessageOk(plainToken, chatId, cta, protect)
       await advance({ ok, errorMsg: ok ? undefined : 'sendOrderbump failed' })
       break
     }

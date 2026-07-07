@@ -84,6 +84,7 @@ export default function BotsClient({ initialBots, flows, userId }: {
       if (patch.welcomeMessage   !== undefined) dbPatch.welcome_message  = patch.welcomeMessage
       if (patch.fallbackMessage  !== undefined) dbPatch.fallback_message = patch.fallbackMessage
       if (patch.activeFlowId     !== undefined) dbPatch.active_flow_id   = patch.activeFlowId
+      if (patch.antiClone        !== undefined) dbPatch.anti_clone       = patch.antiClone
 
       if (Object.keys(dbPatch).length > 0) {
         await updateBotAction(selectedId, dbPatch)

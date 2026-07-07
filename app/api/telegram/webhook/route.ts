@@ -146,7 +146,7 @@ export async function POST(request: NextRequest) {
 
   const { data: bot, error: botError } = await supabase
     .from('bots')
-    .select('id, user_id, token, webhook_secret, name, username, welcome_message, fallback_message, status, active_flow_id')
+    .select('id, user_id, token, webhook_secret, name, username, welcome_message, fallback_message, status, active_flow_id, anti_clone')
     .eq('id', botId)
     .single()
 
@@ -245,6 +245,7 @@ export async function POST(request: NextRequest) {
             flowVersion: flow.version,
             userId:      bot.user_id as string,
             supabase,
+            protectContent: Boolean(bot.anti_clone),
           })
         }
       }
@@ -377,6 +378,7 @@ export async function POST(request: NextRequest) {
             flowVersion: flow.version,
             userId:      bot.user_id as string,
             supabase,
+            protectContent: Boolean(bot.anti_clone),
           })
           return new NextResponse(null, { status: 200 })
         }
@@ -394,7 +396,7 @@ export async function POST(request: NextRequest) {
           .replace(/\{data\}/g,    new Date().toLocaleDateString('pt-BR'))
       : `Olá, <b>${firstName}</b>! 👋\n\nSeja bem-vindo ao <b>${bot.name}</b>. Em breve você receberá mais informações.`
 
-    await sendTelegramMessage(plainToken, chatId, welcomeText).catch(() => {})
+    await sendTelegramMessage(plainToken, chatId, welcomeText, 'HTML', Boolean(bot.anti_clone)).catch(() => {})
     return new NextResponse(null, { status: 200 })
   }
 
@@ -486,6 +488,7 @@ export async function POST(request: NextRequest) {
             flowVersion: flow.version,
             userId:      bot.user_id as string,
             supabase,
+            protectContent: Boolean(bot.anti_clone),
           })
         } else {
           await supabase
@@ -544,6 +547,7 @@ export async function POST(request: NextRequest) {
               flowVersion: flow.version,
               userId:      bot.user_id as string,
               supabase,
+              protectContent: Boolean(bot.anti_clone),
             })
             return new NextResponse(null, { status: 200 })
           }

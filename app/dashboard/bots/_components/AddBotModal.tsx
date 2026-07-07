@@ -94,6 +94,7 @@ export function AddBotModal({ open, onClose, flows, onAdded }: {
         welcomeMessage: 'Olá {nome}! Bem-vindo. Em que posso te ajudar?',
         fallbackMessage:'Não entendi sua mensagem. Digite /menu para ver as opções.',
         description:    '',
+        antiClone:      false,
         lastSync:       Date.now(),
         addedAt:        Date.now(),
       }

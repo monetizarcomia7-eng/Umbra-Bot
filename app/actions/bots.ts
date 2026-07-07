@@ -184,6 +184,7 @@ export async function updateBotAction(
     welcome_message:  string
     fallback_message: string
     active_flow_id:   string | null
+    anti_clone:       boolean
   }>,
 ): Promise<void> {
   const supabase = await createClient()

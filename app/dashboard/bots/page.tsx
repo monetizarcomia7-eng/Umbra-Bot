@@ -13,7 +13,7 @@ export default async function BotsPage() {
       .from('bots')
       .select(
         'id, name, username, status, leads, sales, conversion, revenue, ' +
-        'active_flow_id, color, telegram_id, webhook_url, last_sync, added_at, description',
+        'active_flow_id, color, telegram_id, webhook_url, last_sync, added_at, description, anti_clone',
       )
       .eq('user_id', user.id)
       .order('added_at', { ascending: false }),

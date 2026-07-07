@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import {
   ChevronLeft, ExternalLink, Pause, Play, Settings, MessageSquare, GitBranch,
   Eye, EyeOff, AlertCircle, Webhook, Trash2, Save, Users, ShoppingBag, Target,
-  CircleDollarSign, Info, Loader2, TriangleAlert, Pencil, ArrowUpRight, X,
+  CircleDollarSign, Info, Loader2, TriangleAlert, Pencil, ArrowUpRight, X, ShieldCheck,
 } from 'lucide-react'
 import {
   BotData, FlowData, MESSAGE_VARS, STATUS_CONFIG,
@@ -189,6 +189,40 @@ function GeneralTab({ bot, onUpdate, onStateUpdate, onDelete }: {
             <Btn variant="secondary" size="sm" onClick={() => setTgProfileOpen(true)} className="shrink-0">
               <Pencil size={13} /> Editar perfil
             </Btn>
+          </div>
+        </Card>
+
+        <Card title="🔒 Proteção Anti-Clonagem" subtitle="Bloqueia encaminhar e salvar as mídias enviadas pelo bot">
+          <div className="mt-1">
+            <p className="text-[12.5px] text-text-muted leading-relaxed">
+              Quando ativada, bloqueia o encaminhamento e o salvamento das mídias enviadas pelo bot
+              (sequência inicial, remarketing, order bump e upsell). Não afeta mensagens de compra ou QR Code.
+            </p>
+            <div className="mt-3 inline-flex rounded-lg border border-border overflow-hidden">
+              <button
+                type="button"
+                onClick={() => { if (bot.antiClone) onUpdate({ antiClone: false }) }}
+                className={`h-9 px-6 text-[12.5px] font-semibold transition-colors ${
+                  !bot.antiClone ? 'bg-surface-2 text-text' : 'text-text-muted hover:bg-surface-2'
+                }`}
+              >
+                NÃO
+              </button>
+              <button
+                type="button"
+                onClick={() => { if (!bot.antiClone) onUpdate({ antiClone: true }) }}
+                className={`h-9 px-6 text-[12.5px] font-semibold border-l border-border transition-colors ${
+                  bot.antiClone ? 'bg-success text-white' : 'text-text-muted hover:bg-surface-2'
+                }`}
+              >
+                SIM
+              </button>
+            </div>
+            {bot.antiClone && (
+              <p className="mt-2 text-[11.5px] text-success flex items-center gap-1.5">
+                <ShieldCheck size={12} /> Proteção ativa — mídias não podem ser encaminhadas nem salvas.
+              </p>
+            )}
           </div>
         </Card>
 
