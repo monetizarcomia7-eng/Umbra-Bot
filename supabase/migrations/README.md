@@ -1,11 +1,15 @@
 # Umbra Bot — Schema do Banco de Dados
 
 Schema extraído diretamente do banco Supabase (projeto: `aoycxcepjvpmeptdafxn`).
-**40 tabelas** no schema `public` (adicionadas `flow_versions` + `flow_node_events` na mig 103).
+**44 tabelas** no schema `public` (adicionadas `flow_versions` + `flow_node_events` na mig 103 + `instagram_accounts` + `instagram_posts` + `instagram_publish_logs` na mig 106 + `instagram_webhook_events` na mig 107).
 
-> **Última migração aplicada:** 105 (Flows: refactor `recompute_all_flow_conversions` O(N²)→O(N) com CTE+JOIN; RPC `cleanup_flow_node_events` (TTL 30d); RPCs `flow_node_stats_v2` + `flow_events_timeseries` para o dashboard analytics por fluxo; CHECK `contacts.flow_vars ≤ 64 KB`).
+> **Última migração aplicada:** 107 (Instagram: tabela `instagram_webhook_events` para registrar eventos do webhook Meta — `field`, `entry_id`, `payload`, `received_at`. Validação HMAC `X-Hub-Signature-256` com `META_APP_SECRET` na rota `/api/webhooks/instagram`).
 >
 > **Migrações dos Fluxos:** 103 (bot_id FK + telemetria + versionamento + 5 RPCs), 104 (user_id NOT NULL + CHECK 1MB + view debug), 105 (performance + TTL + dashboard).
+>
+> **Migrações do Instagram Scheduler:** 106 (3 tabelas + bucket `instagram-medias` + RPCs `instagram_stats` e `cleanup_instagram_logs`), 107 (`instagram_webhook_events`).
+>
+> **Migração consolidada disponível:** `_pending_instagram_consolidated.sql` — script idempotente standalone (`IF NOT EXISTS` / `OR REPLACE` em tudo) cobrindo as 3 tabelas principais do Instagram + bucket + RPCs + webhook events. Pode ser rodado num banco zerado OU sobre um banco que já tem as migs 106/107 (sem efeito colateral).
 >
 > **Próximas migrações pendentes:** nenhuma.
 
@@ -782,6 +786,115 @@ Nota: sem user_id FK nos artigos/faqs — são conteúdo global não vinculado a
 
 ---
 
+## public.instagram_accounts
+
+```
+id:                uuid        NOT NULL  default gen_random_uuid()
+user_id:           uuid        NOT NULL  FK → auth.users(id)  ON DELETE CASCADE
+ig_user_id:        text        NOT NULL  (ID da conta no Instagram)
+username:          text                  (@username)
+profile_picture:   text                  (URL da foto)
+access_token:      text        NOT NULL  (criptografado AES-256-GCM via lib/crypto)
+token_expires_at:  timestamptz           (~60 dias; renovado pelo cron refresh-instagram-tokens)
+page_id:           text                  (Facebook Page vinculada)
+page_token:        text                  (token da page — criptografado AES-256-GCM)
+is_active:         boolean     NOT NULL  default true
+created_at:        timestamptz NOT NULL  default now()
+updated_at:        timestamptz NOT NULL  default now()
+UNIQUE (user_id, ig_user_id)
+```
+
+**Índices:**
+- `ig_accounts_user_id_idx (user_id)`
+- `ig_accounts_token_expires_idx (token_expires_at) WHERE is_active = true` — usado pelo cron `refresh-instagram-tokens` para buscar tokens próximos da expiração
+
+**RLS:** `ig_accounts_owner` → `auth.uid() = user_id` (for all)
+**Trigger:** `ig_accounts_updated_at` → `set_updated_at()`
+**Realtime:** canal `instagram-accounts-realtime` (consumido por `components/instagram/accounts/AccountsClient.tsx`)
+
+---
+
+## public.instagram_posts
+
+```
+id:            uuid        NOT NULL  default gen_random_uuid()
+user_id:       uuid        NOT NULL  FK → auth.users(id)         ON DELETE CASCADE
+account_id:    uuid        NOT NULL  FK → instagram_accounts(id) ON DELETE CASCADE
+media_type:    text        NOT NULL  CHECK in ('IMAGE','REELS','CAROUSEL')
+media_urls:    text[]      NOT NULL  (URLs das mídias no bucket instagram-medias)
+caption:       text        NOT NULL  default ''                  (até 2200 chars)
+scheduled_at:  timestamptz NOT NULL  (mínimo +3 min do agora)
+status:        text        NOT NULL  default 'scheduled'
+                 CHECK in ('draft','scheduled','publishing','published','failed','cancelled')
+ig_post_id:    text                  (ID do post no IG após publicação)
+published_at:  timestamptz
+error_msg:     text                  (preenchido em falhas)
+retry_count:   integer     NOT NULL  default 0
+max_retries:   integer     NOT NULL  default 3
+created_at:    timestamptz NOT NULL  default now()
+updated_at:    timestamptz NOT NULL  default now()
+```
+
+**Índices:**
+- `ig_posts_cron_idx (scheduled_at, status) WHERE status = 'scheduled'` — usado pelo cron `publish-instagram` (1x/min) para buscar pendentes
+- `ig_posts_user_id_idx (user_id, created_at desc)`
+- `ig_posts_account_id_idx (account_id, created_at desc)`
+
+**RLS:** `ig_posts_owner` → `auth.uid() = user_id` (for all)
+**Trigger:** `ig_posts_updated_at` → `set_updated_at()`
+**Realtime:** canal `instagram-posts-realtime` (consumido por `components/instagram/posts/PostsClient.tsx`)
+
+**Worker:** `app/api/cron/publish-instagram/route.ts` busca 20 posts WHERE status='scheduled' AND scheduled_at <= now(), faz CAS lock para 'publishing' e chama `publishPost` de `lib/instagram/publish.ts`. NON_RETRYABLE_CODES = {190, 200, 368, 100}; token expirado (190) marca conta `is_active=false` + cria alerta critical.
+
+---
+
+## public.instagram_publish_logs
+
+```
+id:          uuid        NOT NULL  default gen_random_uuid()
+post_id:     uuid        NOT NULL  FK → instagram_posts(id)  ON DELETE CASCADE
+attempt_at:  timestamptz NOT NULL  default now()
+success:     boolean     NOT NULL
+response:    jsonb                 (resposta da API da Meta)
+error_code:  text
+duration_ms: integer
+```
+
+**Índice:** `ig_logs_post_idx (post_id, attempt_at desc)`
+
+**RLS (SELECT only):** `ig_logs_owner_select` → usuário só vê logs dos próprios posts:
+```sql
+EXISTS (SELECT 1 FROM instagram_posts WHERE id = instagram_publish_logs.post_id AND user_id = auth.uid())
+```
+
+**TTL:** cron `cleanup-instagram-logs` (1x/dia 07:00) chama RPC `cleanup_instagram_logs(p_days=30)` que deleta logs com mais de 30 dias.
+
+**Consumido por:** `getPostLogsAction` de `app/actions/instagram.ts` (lazy ao expandir `PostDetailsModal` em `components/instagram/posts/`).
+
+---
+
+## public.instagram_webhook_events
+
+```
+id:          uuid        NOT NULL  default gen_random_uuid()
+field:       text        NOT NULL  (comments, mentions, story_insights, ...)
+entry_id:    text        NOT NULL  (ID da entidade IG — page/user)
+payload:     jsonb       NOT NULL
+received_at: timestamptz NOT NULL  default now()
+```
+
+**Índices:**
+- `ig_webhook_events_received_idx (received_at desc)`
+- `ig_webhook_events_field_idx (field, received_at desc)`
+
+**RLS:** habilitado mas **sem policies** — leitura/escrita exclusivamente via service role (admin client) na rota `/api/webhooks/instagram`.
+
+**Validação de entrada:** rota usa HMAC SHA-256 no header `X-Hub-Signature-256` com `META_APP_SECRET`. Handshake GET valida `hub.verify_token` contra `INSTAGRAM_WEBHOOK_VERIFY_TOKEN`.
+
+**Resposta sempre 200** mesmo em erro de insert (Meta faz retry agressivo se não receber 2xx).
+
+---
+
 ## public.invoices
 
 ```
@@ -1194,6 +1307,12 @@ courses  (sem user_id — conteúdo global gerenciado pelo admin)
   ├── course_certificates (user_id → auth.users(id), course_id → courses(id))  [mig 096]
   └── course_modules      (course_id → courses(id))  [mig 097]
         └── course_lessons (module_id → course_modules(id), course_id → courses(id))  [mig 097]
+
+instagram_accounts        (user_id → auth.users(id))  [mig 106]
+  └── instagram_posts     (user_id, account_id → instagram_accounts(id))  [mig 106]
+        └── instagram_publish_logs (post_id → instagram_posts(id))  [mig 106]
+
+instagram_webhook_events  (sem user_id — webhook Meta global, acesso só via service role)  [mig 107]
 ```
 
 ---
@@ -1271,6 +1390,61 @@ adicionam telemetria, versionamento e analytics. A engine foi extraída para
 | `/api/cron/recompute-flow-conversion` | 1x/dia 03:00 | Chama RPC `recompute_all_flow_conversions()` — atualiza `flows.conversion%` |
 | `/api/cron/cleanup-flow-events` | 1x/dia 06:00 | Chama RPC `cleanup_flow_node_events(30)` — TTL telemetria |
 | `/api/cron/process-remarketing` | 1x/hora | Também retoma fluxos com nó `delay` via `executeFlowNode` (importa `lib/flow-engine.ts`) |
+
+---
+
+## Migrações do Instagram Scheduler (106–107)
+
+### Contexto
+
+Agendador de posts/reels/carrosséis no Instagram Business via Meta Graph API v19.0. Tokens criptografados com `lib/crypto` (AES-256-GCM, mesma chave `BOT_TOKEN_ENCRYPTION_KEY` dos bots). Mídias armazenadas no bucket público `instagram-medias` (Supabase Storage, 500 MB max).
+
+| Migração | Resumo |
+|---|---|
+| **106** | 3 tabelas (`instagram_accounts`, `instagram_posts`, `instagram_publish_logs`), bucket `instagram-medias`, 2 RPCs (`instagram_stats`, `cleanup_instagram_logs`), triggers `updated_at` |
+| **107** | Tabela `instagram_webhook_events` para eventos do webhook Meta (`field`, `entry_id`, `payload`) |
+| **`_pending_instagram_consolidated.sql`** | Script standalone idempotente (`IF NOT EXISTS` / `OR REPLACE`) cobrindo as 4 tabelas + bucket + RPCs. Pode ser rodado num banco zerado OU sobre um já migrado |
+
+### Migração 106 — Instagram Scheduler base
+
+| Item | Detalhe |
+|---|---|
+| Tabela `instagram_accounts` | OAuth Meta (60d). `access_token`/`page_token` criptografados. RLS owner. Índice parcial `WHERE is_active=true` p/ cron de refresh |
+| Tabela `instagram_posts` | `media_type CHECK in (IMAGE,REELS,CAROUSEL)`. `status` 6 valores. Índice parcial `(scheduled_at, status) WHERE status='scheduled'` — usado pelo cron a cada 1 min |
+| Tabela `instagram_publish_logs` | Log por tentativa (success/response/error_code/duration_ms). RLS SELECT via JOIN com `instagram_posts` |
+| RPC `instagram_stats(p_user_id)` | `{ accounts_count, scheduled_count, published_30d, failed_30d }` — KPIs do dashboard |
+| RPC `cleanup_instagram_logs(p_days=30)` | DELETE de logs com mais de N dias. Chamada pelo cron diário |
+| Storage `instagram-medias` | Bucket público (Meta precisa baixar). 500 MB max. MIMEs imagem+vídeo. RLS de escrita por pasta `{user_id}/` |
+
+### Migração 107 — Webhooks Meta
+
+| Item | Detalhe |
+|---|---|
+| Tabela `instagram_webhook_events` | `field` (comments/mentions/...), `entry_id` (page/user IG), `payload` JSONB, `received_at` |
+| Índices | `(received_at desc)` + `(field, received_at desc)` |
+| RLS | Habilitado mas **sem policies** — acesso só via service role (admin client em `/api/webhooks/instagram`) |
+| Validação | Rota faz HMAC `X-Hub-Signature-256` com `META_APP_SECRET`. Handshake GET valida `hub.verify_token` contra `INSTAGRAM_WEBHOOK_VERIFY_TOKEN` |
+
+### Crons relacionados ao Instagram
+
+| Cron (cron-job.org) | Schedule | Função |
+|---|---|---|
+| `/api/cron/publish-instagram` | A cada 1 min | Busca 20 posts `status='scheduled' AND scheduled_at <= now()`, CAS lock → `publishing`, chama `publishPost` de `lib/instagram/publish.ts`. NON_RETRYABLE_CODES = {190, 200, 368, 100}. Token expirado (190) → conta `is_active=false` + alerta critical |
+| `/api/cron/refresh-instagram-tokens` | A cada 12 h | Renova tokens com expiração em <30d via `fb_exchange_token`. Falha → desativa conta + alerta |
+| `/api/cron/cleanup-instagram-logs` | 1x/dia 07:00 | Chama `cleanup_instagram_logs(30)` — TTL logs |
+
+### Variáveis de ambiente
+
+| Variável | Função |
+|---|---|
+| `META_APP_ID` | App ID criado em developers.facebook.com (Instagram Business) |
+| `META_APP_SECRET` | App Secret + valida HMAC do webhook |
+| `META_REDIRECT_URI` | `https://yourdomain.com/api/auth/instagram/callback` |
+| `INSTAGRAM_WEBHOOK_VERIFY_TOKEN` | Token usado no handshake `hub.verify_token` |
+
+### Frontend
+
+Reestruturado em **4 abas** (commit `b5b4b74`): `/dashboard/instagram/{posts,schedule,accounts,settings}/` com `layout.tsx` compartilhado (auth guard + `<InstagramTabs />`) e componentes em `components/instagram/{shared,accounts,schedule,posts,settings}/`. Realtime nos canais `instagram-posts-realtime` e `instagram-accounts-realtime`. Ver Seção 21b do `CLAUDE.md` para detalhes.
 
 ---
 

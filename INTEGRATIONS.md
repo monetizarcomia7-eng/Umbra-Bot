@@ -30,7 +30,7 @@
 | Google Measurement Protocol | Server-side GA4 | ✅ Em uso | `lib/capi.ts` |
 | Google reCAPTCHA v2 | Anti-bot / formulários | ✅ Em uso | `lib/recaptcha.ts`, `components/ReCaptchaWidget.tsx` |
 | Telegram MTProto (GramJS) | Upload de foto de bot | ✅ Dependência instalada | `package.json` — `telegram@^2.26.22` |
-| Meta Graph API (Instagram) | Agendador de posts/reels/carrosséis | ✅ Em uso | `lib/instagram/`, `app/api/auth/instagram/`, `app/api/cron/publish-instagram/`, módulo `/dashboard/instagram` |
+| Meta Graph API (Instagram) | Agendador de posts/reels/carrosséis | ✅ Em uso | `lib/instagram/`, `app/api/auth/instagram/`, `app/api/cron/publish-instagram/`, módulo `/dashboard/instagram` (4 abas: posts/schedule/accounts/settings — components em `components/instagram/**`) |
 | PushinPay | Gateway de pagamento | ❌ Não iniciado | Apenas no `GATEWAY_CREDENTIAL` do Onboarding |
 | Pagar.me | Gateway de pagamento | ❌ Não iniciado | Apenas no `GATEWAY_CREDENTIAL` do Onboarding |
 | Stripe | Gateway de pagamento | ❌ Não iniciado | Apenas no `GATEWAY_CREDENTIAL` do Onboarding |
@@ -143,8 +143,8 @@ Todos os canais usam `postgres_changes` (eventos de banco) ou `presence` (rastre
 | `remarketing-campaigns` | `INSERT` + `UPDATE` + `DELETE` | `remarketing_campaigns` | `RemarketingClient.tsx` | Sincroniza listagem de campanhas entre abas |
 | `finance-tx-realtime` | `INSERT` | `transactions` | `FinanceDashboard.tsx` | Prepend de novas transações sem recarregar a página; filtrado por `user_id` |
 | `affiliates-realtime` | `INSERT` + `UPDATE` | `affiliates` | `AffiliatesClient.tsx` | ⏳ **Pendente** — candidaturas novas e atualizações de cliques/vendas em tempo real (sem implementação atual) |
-| `instagram-posts-realtime` | `INSERT` + `UPDATE` + `DELETE` | `instagram_posts` | `InstagramClient.tsx` | Atualiza status de posts (scheduled → publishing → published/failed) em tempo real |
-| `instagram-accounts-realtime` | `*` | `instagram_accounts` | `InstagramClient.tsx` | Detecta desativação por token expirado (cron desativa) + novas conexões via OAuth |
+| `instagram-posts-realtime` | `INSERT` + `UPDATE` + `DELETE` | `instagram_posts` | `components/instagram/posts/PostsClient.tsx` | Atualiza status de posts (scheduled → publishing → published/failed) em tempo real (aba /dashboard/instagram/posts) |
+| `instagram-accounts-realtime` | `*` | `instagram_accounts` | `components/instagram/accounts/AccountsClient.tsx` | Detecta desativação por token expirado (cron desativa) + novas conexões via OAuth (aba /dashboard/instagram/accounts) |
 | Presence por checkout | `presence` | — | `CheckoutPageClient.tsx` | Contador de visitantes ao vivo em `/c/[slug]` quando `visitor_tracking=true` |
 
 **Padrão de assinatura (exemplo):**
@@ -335,6 +335,44 @@ supabase
 | `TELEGRAM_API_HASH` | Hash do app MTProto (my.telegram.org) |
 
 **Status:** ✅ Dependência instalada e Server Action implementada
+
+---
+
+### Meta Graph API (Instagram Scheduler)
+
+**Para que serve:** Agendador de posts (IMAGE/REELS/CAROUSEL) no Instagram Business via Meta Graph API v19.0.
+
+**Onde é chamado:**
+
+- `lib/instagram/auth.ts` — OAuth helpers (`exchangeCodeForToken`, `getLongLivedToken`, `getFacebookPages`, `getInstagramBusinessAccount`)
+- `lib/instagram/publish.ts` — `publishImage` / `publishReel` / `publishCarousel` / `publishPost` (router); `waitForVideoProcessing` (polling 5s × 120 = 10 min); `MetaAPIError` + `META_ERROR_MESSAGES` (10 códigos)
+- `lib/instagram/tokens.ts` — `refreshLongLivedToken` (renova +60d via `fb_exchange_token`)
+- `app/api/auth/instagram/connect/route.ts` + `callback/route.ts` — fluxo OAuth completo
+- `app/api/cron/publish-instagram/route.ts` — worker que publica posts agendados (1x/min)
+- `app/api/cron/refresh-instagram-tokens/route.ts` — renova tokens com expiração <30d (1x/12h)
+- `app/api/cron/cleanup-instagram-logs/route.ts` — TTL 30d nos logs (1x/dia)
+- `app/api/webhooks/instagram/route.ts` — recebe eventos (comments/mentions) via Meta (handshake `hub.verify_token` + HMAC `X-Hub-Signature-256`)
+- `app/api/instagram/upload/route.ts` — upload multipart para Supabase Storage (`instagram-medias`)
+- `app/actions/instagram.ts` — 5 Server Actions (Zod + rate-limit): `schedulePostAction`, `cancelPostAction`, `deletePostAction`, `disconnectAccountAction`, `getPostLogsAction`
+
+**Frontend (4 abas):** `app/dashboard/instagram/{layout,page,posts,schedule,accounts,settings}/` com `layout.tsx` compartilhado e componentes organizados sob `components/instagram/{shared,accounts,schedule,posts,settings}/`. O root `page.tsx` faz `redirect('/posts')`. Ver Seção 21b do `CLAUDE.md` para mapa detalhado das abas.
+
+**Tokens criptografados:** `access_token` e `page_token` armazenados via `encryptToken()` (AES-256-GCM, mesma `BOT_TOKEN_ENCRYPTION_KEY`).
+
+**Storage:** bucket público `instagram-medias` (500 MB max, MIMEs imagem+vídeo, RLS escrita por pasta `{user_id}/`).
+
+**Variáveis de ambiente:**
+
+| Variável | Função |
+|---|---|
+| `META_APP_ID` | App ID criado em developers.facebook.com (tipo Business) |
+| `META_APP_SECRET` | App Secret + valida HMAC do webhook (`X-Hub-Signature-256`) |
+| `META_REDIRECT_URI` | `https://yourdomain.com/api/auth/instagram/callback` |
+| `INSTAGRAM_WEBHOOK_VERIFY_TOKEN` | Token usado no handshake `hub.verify_token` do webhook Meta |
+
+**App Review:** obrigatório para `instagram_content_publish` em produção. Em dev funciona apenas para test users adicionados no painel Meta.
+
+**Status:** ✅ Em uso completo (backend + frontend reestruturado em 4 abas no commit `b5b4b74`)
 
 ---
 
@@ -970,6 +1008,15 @@ Fonte: `.env.example` na raiz do repositório.
 |---|---|---|
 | `TELEGRAM_API_ID` | ID do app MTProto | ❌ Não (só para upload de foto) |
 | `TELEGRAM_API_HASH` | Hash do app MTProto | ❌ Não (idem) |
+
+### Meta / Instagram
+
+| Variável | Função | Obrigatória |
+|---|---|---|
+| `META_APP_ID` | App ID criado em developers.facebook.com (Instagram Business) | ❌ Não (módulo IG desabilitado sem ela) |
+| `META_APP_SECRET` | App Secret + valida HMAC do webhook IG (`X-Hub-Signature-256`) | ❌ Não (idem) |
+| `META_REDIRECT_URI` | URL de callback OAuth (`https://yourdomain.com/api/auth/instagram/callback`) | ❌ Não (idem) |
+| `INSTAGRAM_WEBHOOK_VERIFY_TOKEN` | Token comparado no handshake `hub.verify_token` ao registrar webhook no Meta | ❌ Não (sem webhooks IG) |
 
 ### Supabase Management API
 

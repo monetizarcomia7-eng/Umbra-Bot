@@ -3644,23 +3644,56 @@ Adicionar novo template: incluir em `FLOW_TEMPLATES` com `category` válida (def
 
 Agendador de posts/reels/carrosséis no Instagram Business via Meta Graph API v19.0.
 
-### Arquivos
+### Arquivos — estrutura em 4 abas
 
 ```
 app/dashboard/instagram/
-  ├── page.tsx              # SSR: instagram_accounts + instagram_posts + RPC instagram_stats
-  │                         # Exporta RawIgAccount, RawIgPost, IgStats
-  ├── InstagramClient.tsx   # Client: Realtime (posts + accounts), Toast, OAuth feedback
-  └── _components/
-      ├── KpiRow.tsx        # 4 cards: contas / agendados / publicados 30d / falhas 30d
-      ├── ConnectButton.tsx # Botão gradient IG → redireciona /api/auth/instagram/connect
-      ├── AccountCard.tsx   # Card por conta: avatar + username + ExpiryBadge + Disconectar inline
-      ├── PostForm.tsx      # Modal: upload drag&drop (até 10), detecção auto IMAGE/REELS/CAROUSEL,
-      │                     # caption 2200 chars, datetime min+3min, schedulePostAction
-      └── PostList.tsx      # Lista com filtro por status, thumb, link p/ post no IG, cancel/delete
+  ├── layout.tsx                # Auth guard + header "Instagram" + <InstagramTabs />
+  ├── page.tsx                  # Redirect → /dashboard/instagram/posts
+  │                             # Exporta interfaces compartilhadas: RawIgAccount, RawIgPost, IgStats
+  ├── posts/page.tsx            # SSR Posts: instagram_posts (limit 200, order scheduled_at desc)
+  │                             # + accounts + RPC instagram_stats em paralelo
+  ├── schedule/page.tsx         # SSR Agendar: instagram_accounts WHERE is_active=true
+  ├── accounts/page.tsx         # SSR Contas: instagram_accounts + RPC instagram_stats
+  └── settings/page.tsx         # SSR Configurações: accounts + flags de env (META/CRON_SECRET)
 
-app/actions/instagram.ts    # 5 Server Actions: schedulePostAction (Zod), cancelPostAction,
-                            # deletePostAction, disconnectAccountAction, getPostLogsAction
+components/instagram/
+  ├── InstagramTabs.tsx         # Nav com 4 abas — usePathname + border-bottom no ativo
+  ├── shared/
+  │   ├── Toast.tsx             # Toast reutilizável (success/error, auto-close 4s)
+  │   └── Badge.tsx             # Badge com 6 tons (success/danger/warning/info/primary/muted)
+  ├── accounts/
+  │   ├── AccountsClient.tsx    # Realtime canal 'instagram-accounts-realtime',
+  │   │                         # OAuth feedback via useSearchParams (?success=connected | ?error=...)
+  │   ├── AccountCard.tsx       # Card por conta com ExpiryBadge + disconnect inline (confirmação)
+  │   ├── AccountStats.tsx      # 4 KPI cards (compartilhado por Accounts + Posts)
+  │   └── ConnectButton.tsx     # Botão gradient IG (purple→red→yellow) → /api/auth/instagram/connect
+  ├── schedule/
+  │   ├── ScheduleClient.tsx    # Form: account picker + MediaUpload + caption 2200ch + datetime min+3min
+  │   │                         # → schedulePostAction → redirect /posts após sucesso
+  │   │                         # Empty state quando accounts.length === 0
+  │   ├── MediaUpload.tsx       # Drag&drop + click (até 10 arquivos), grid preview com remove,
+  │   │                         # exporta UploadedMedia
+  │   └── PostPreview.tsx       # Preview estilo IG (header avatar/username, square media,
+  │                             # ações fake Heart/Comment/Send/Bookmark, caption, schedule footer)
+  ├── posts/
+  │   ├── PostsClient.tsx       # Orquestrador: 3 modos (Cards/Tabela/Calendário) + filtros + Realtime
+  │   │                         # canal 'instagram-posts-realtime' (INSERT/UPDATE/DELETE filter user_id)
+  │   ├── PostStats.tsx         # 4 KPI cards (contas / agendados / publicados 30d / falhas 30d)
+  │   ├── PostFilters.tsx       # Chips de status com contagens + dropdown conta + busca legenda
+  │   ├── PostsTable.tsx        # Tabela com menu de ações (detalhes/abrir no IG/cancelar/apagar)
+  │   ├── PostCards.tsx         # Grid de cards (1/2/3/4 cols responsivo) com badges sobre a mídia
+  │   ├── PostsCalendar.tsx     # Calendário mensal com nav prev/next/hoje, contagem por dia,
+  │   │                         # +N mais quando >3 posts/dia, padding 6 semanas (42 células)
+  │   └── PostDetailsModal.tsx  # Modal completo: mídia + info + erros + logs de publicação
+  │                             # (getPostLogsAction lazy on mount, sem auto-refresh)
+  └── settings/
+      └── AccountSettings.tsx   # Status integração (envs), limites IG, contas (ExpiryBadge +
+                                # Reconectar + Disconnect inline), URL do webhook Meta, docs
+
+app/actions/instagram.ts        # 5 Server Actions (inalteradas):
+                                # schedulePostAction (Zod), cancelPostAction, deletePostAction,
+                                # disconnectAccountAction, getPostLogsAction
 
 lib/instagram/
   ├── auth.ts               # OAuth Meta: buildAuthUrl, exchangeCodeForToken, getLongLivedToken,
@@ -3693,6 +3726,20 @@ app/api/webhooks/instagram/route.ts # GET handshake (hub.mode + hub.verify_token
                                     # (mig 107) com field/entry_id/payload. Retorna sempre 200
                                     # mesmo em erro de insert (Meta faz retry agressivo se não 2xx)
 ```
+
+### Mapa das 4 abas
+
+| Aba | Rota | Função principal | Componentes |
+|---|---|---|---|
+| **Posts** | `/dashboard/instagram/posts` | Listar todos os posts agendados/publicados em 3 visualizações (Cards/Tabela/Calendário) | `PostsClient` + `PostStats` + `PostFilters` + `PostsTable/Cards/Calendar` + `PostDetailsModal` |
+| **Agendar** | `/dashboard/instagram/schedule` | Criar novo agendamento (upload + caption + datetime) | `ScheduleClient` + `MediaUpload` + `PostPreview` (sticky sidebar) |
+| **Contas** | `/dashboard/instagram/accounts` | Listar contas conectadas, OAuth feedback, conectar nova, desconectar | `AccountsClient` + `AccountCard` + `AccountStats` + `ConnectButton` |
+| **Configurações** | `/dashboard/instagram/settings` | Status das envs Meta/CRON_SECRET, limites IG, contas (Reconectar/Disconnect), URL do webhook, docs | `AccountSettings` |
+
+- `/dashboard/instagram` raiz faz `redirect('/dashboard/instagram/posts')` — Posts é a aba padrão.
+- O `layout.tsx` é compartilhado: faz auth guard, mostra o header "Instagram" + `<InstagramTabs />` e renderiza `{children}` abaixo. Todas as 4 abas reaproveitam o cabeçalho.
+- `RawIgAccount`, `RawIgPost` e `IgStats` são exportados de `app/dashboard/instagram/page.tsx` e importados via `import type` por todos os Server Components das abas filhas e por todos os componentes em `components/instagram/**`.
+- `_components/` antigo foi **removido** (commit `b5b4b74`) — todo componente IG agora vive em `components/instagram/{shared,accounts,schedule,posts,settings}/`.
 
 ### Banco — migração 106
 
