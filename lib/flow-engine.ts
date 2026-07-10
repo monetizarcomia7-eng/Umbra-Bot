@@ -153,10 +153,12 @@ export async function answerCallbackQuery(token: string, callbackQueryId: string
 // Requer que o bot seja ADMIN do chat com permissão de convidar. Retorna null em falha.
 export async function createChatInviteLink(token: string, chatRef: string): Promise<string | null> {
   try {
+    // IDs numéricos (ex.: -1001234567890) devem ir como number; @username vai como string.
+    const chatId: number | string = /^-?\d+$/.test(chatRef) ? Number(chatRef) : chatRef
     const res = await fetch(`https://api.telegram.org/bot${token}/createChatInviteLink`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatRef, member_limit: 1, name: 'Umbra Bot' }),
+      body: JSON.stringify({ chat_id: chatId, member_limit: 1, name: 'Umbra Bot' }),
     })
     const j = await res.json().catch(() => null)
     return j?.ok && typeof j.result?.invite_link === 'string' ? j.result.invite_link : null

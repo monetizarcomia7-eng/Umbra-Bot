@@ -8,6 +8,7 @@ import { SupabaseClient } from '@supabase/supabase-js'
 import { decryptToken } from '@/lib/crypto'
 import { sendTelegramMessage } from '@/lib/telegram'
 import { sendTelegramPhoto, sendTelegramVideo } from '@/lib/flow-engine'
+import type { BotChannel } from '@/app/dashboard/flows/_shared/types'
 
 // ─── Schemas Zod ────────────────────────────────────────────────────────────
 
@@ -769,5 +770,135 @@ export async function testRemarketingSendAction(
     return { ok: true }
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message.slice(0, 140) : 'Erro ao enviar teste.' }
+  }
+}
+
+// ─── Canais do bot (nó Entregável — modo convite) ────────────────────────────
+
+// Lista os canais/grupos onde o bot do fluxo é admin (populados por my_chat_member
+// no webhook, ou manualmente por connectBotChannelAction).
+export async function listBotChannelsAction(
+  botId: string | null,
+): Promise<{ ok: boolean; channels: BotChannel[]; error?: string }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { ok: false, channels: [], error: 'Não autorizado.' }
+  if (!botId) return { ok: false, channels: [], error: 'Vincule um bot ao fluxo primeiro.' }
+
+  const { data: bot } = await supabase
+    .from('bots').select('id').eq('id', botId).eq('user_id', user.id).single()
+  if (!bot) return { ok: false, channels: [], error: 'Bot não encontrado.' }
+
+  const { data } = await supabase
+    .from('bot_channels')
+    .select('chat_id, title, username, type, can_invite')
+    .eq('bot_id', botId)
+    .eq('user_id', user.id)
+    .eq('is_admin', true)
+    .order('updated_at', { ascending: false })
+
+  const channels: BotChannel[] = (data ?? []).map((c) => {
+    const row = c as { chat_id: string; title: string | null; username: string | null; type: string | null; can_invite: boolean }
+    return {
+      chatId:    String(row.chat_id),
+      title:     row.title ?? 'Canal',
+      username:  row.username ?? null,
+      type:      row.type ?? '',
+      canInvite: Boolean(row.can_invite),
+    }
+  })
+  return { ok: true, channels }
+}
+
+// Conecta manualmente um canal: valida via getChat + getChatMember que o bot é admin
+// com permissão de convidar, e salva em bot_channels.
+export async function connectBotChannelAction(
+  botId: string | null,
+  chatRef: string,
+): Promise<{ ok: boolean; channel?: BotChannel; error?: string }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { ok: false, error: 'Não autorizado.' }
+  if (!botId) return { ok: false, error: 'Vincule um bot ao fluxo primeiro.' }
+
+  const ref = (chatRef ?? '').trim()
+  if (!ref) return { ok: false, error: 'Informe o @canal ou o ID do canal.' }
+
+  const rl = await rateLimit(`connect-channel:${user.id}`, 20, 60_000)
+  if (!rl.ok) return { ok: false, error: 'Muitas tentativas. Aguarde um momento.' }
+
+  const { data: bot } = await supabase
+    .from('bots').select('token, telegram_id').eq('id', botId).eq('user_id', user.id).single()
+  if (!bot?.token) return { ok: false, error: 'Bot não encontrado.' }
+
+  let token: string
+  try { token = decryptToken(bot.token as string) } catch { return { ok: false, error: 'Token do bot inválido.' } }
+
+  // Aceita "@canal", "-100123...", "123..." ou "canal" (vira @canal).
+  const chatParam = ref.startsWith('@') || ref.startsWith('-') || /^\d+$/.test(ref) ? ref : `@${ref}`
+
+  // 1) getChat — resolve id/título/tipo
+  let chat: { id: number; type: string; title?: string; username?: string }
+  try {
+    const r = await fetch(`https://api.telegram.org/bot${token}/getChat?chat_id=${encodeURIComponent(chatParam)}`)
+    const j = await r.json()
+    if (!j.ok) return { ok: false, error: 'Canal não encontrado. Confira o @/ID e se o bot já está no canal.' }
+    chat = j.result
+  } catch { return { ok: false, error: 'Não consegui consultar o canal agora. Tente de novo.' } }
+
+  if (!(chat.type === 'channel' || chat.type === 'supergroup' || chat.type === 'group')) {
+    return { ok: false, error: 'Isso não é um canal ou grupo.' }
+  }
+
+  // Telegram id do próprio bot (getMe como fallback).
+  let botTgId = bot.telegram_id ? Number(bot.telegram_id) : null
+  if (!botTgId) {
+    try {
+      const r = await fetch(`https://api.telegram.org/bot${token}/getMe`)
+      const j = await r.json()
+      if (j.ok) botTgId = Number(j.result.id)
+    } catch { /* ignora */ }
+  }
+  if (!botTgId) return { ok: false, error: 'Não consegui identificar o bot.' }
+
+  // 2) getChatMember — confirma que o bot é admin com permissão de convidar.
+  let canInvite = false
+  try {
+    const r = await fetch(`https://api.telegram.org/bot${token}/getChatMember?chat_id=${chat.id}&user_id=${botTgId}`)
+    const j = await r.json()
+    if (!j.ok) return { ok: false, error: 'Não consegui verificar as permissões do bot no canal.' }
+    const status = j.result.status as string
+    if (status !== 'administrator' && status !== 'creator') {
+      return { ok: false, error: 'O bot precisa ser ADMINISTRADOR do canal. Promova-o e tente de novo.' }
+    }
+    canInvite = status === 'creator' || Boolean(j.result.can_invite_users)
+  } catch { return { ok: false, error: 'Não consegui verificar as permissões do bot no canal.' } }
+
+  if (!canInvite) {
+    return { ok: false, error: 'O bot é admin, mas sem a permissão "Convidar usuários via link". Ative-a no canal.' }
+  }
+
+  // 3) Salva.
+  await supabase.from('bot_channels').upsert({
+    user_id:    user.id,
+    bot_id:     botId,
+    chat_id:    String(chat.id),
+    title:      chat.title ?? null,
+    username:   chat.username ?? null,
+    type:       chat.type,
+    is_admin:   true,
+    can_invite: canInvite,
+    updated_at: new Date().toISOString(),
+  }, { onConflict: 'bot_id,chat_id' })
+
+  return {
+    ok: true,
+    channel: {
+      chatId:    String(chat.id),
+      title:     chat.title ?? 'Canal',
+      username:  chat.username ?? null,
+      type:      chat.type,
+      canInvite,
+    },
   }
 }

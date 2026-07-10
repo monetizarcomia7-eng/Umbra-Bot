@@ -54,11 +54,23 @@ interface TelegramMessage {
   date: number
 }
 
+interface TelegramChatMemberUpdated {
+  chat: { id: number; type: string; title?: string; username?: string }
+  from?: { id: number }
+  date: number
+  new_chat_member?: {
+    user: { id: number; is_bot?: boolean }
+    status: string                 // 'administrator' | 'creator' | 'member' | 'left' | 'kicked' | 'restricted'
+    can_invite_users?: boolean
+  }
+}
+
 interface TelegramUpdate {
   update_id: number
   message?: TelegramMessage
   channel_post?: TelegramMessage
   edited_channel_post?: TelegramMessage
+  my_chat_member?: TelegramChatMemberUpdated
   callback_query?: {
     id: string
     from: { id: number; first_name: string; last_name?: string; username?: string }
@@ -173,6 +185,42 @@ export async function POST(request: NextRequest) {
   if (channelPost) {
     try {
       await captureChannelMedia(supabase, bot, channelPost)
+    } catch {
+      // fire-and-forget — nunca bloqueia o 200 para o Telegram
+    }
+    return new NextResponse(null, { status: 200 })
+  }
+
+  // ── Bot promovido/rebaixado como admin em canal/grupo (my_chat_member) ────────
+  // Popula bot_channels automaticamente: quando o dono adiciona o bot como admin,
+  // o canal passa a aparecer no seletor do nó Entregável (modo convite).
+  const mcm = update.my_chat_member
+  if (mcm) {
+    try {
+      const chat   = mcm.chat
+      const status = mcm.new_chat_member?.status ?? ''
+      const isAdmin = status === 'administrator' || status === 'creator'
+      const isChat  = chat.type === 'channel' || chat.type === 'supergroup' || chat.type === 'group'
+      if (isChat && isAdmin) {
+        const canInvite = status === 'creator' || (mcm.new_chat_member?.can_invite_users ?? false)
+        await supabase.from('bot_channels').upsert({
+          user_id:    bot.user_id,
+          bot_id:     bot.id,
+          chat_id:    String(chat.id),
+          title:      chat.title ?? null,
+          username:   chat.username ?? null,
+          type:       chat.type,
+          is_admin:   true,
+          can_invite: canInvite,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'bot_id,chat_id' })
+      } else if (isChat) {
+        // Rebaixado / removido → marca como inativo (some do seletor).
+        await supabase.from('bot_channels')
+          .update({ is_admin: false, updated_at: new Date().toISOString() })
+          .eq('bot_id', bot.id)
+          .eq('chat_id', String(chat.id))
+      }
     } catch {
       // fire-and-forget — nunca bloqueia o 200 para o Telegram
     }

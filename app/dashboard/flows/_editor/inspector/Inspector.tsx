@@ -1,10 +1,10 @@
 'use client'
-import { useState } from 'react'
-import { Copy, Trash2, AlertCircle, CheckCircle2, FolderOpen, X, Send, Loader2 } from 'lucide-react'
+import { useState, useEffect, useCallback } from 'react'
+import { Copy, Trash2, AlertCircle, CheckCircle2, FolderOpen, X, Send, Loader2, RefreshCw, Plus, Radio } from 'lucide-react'
 import { nodeTypes } from '../../_shared/nodeTypes'
 import { isSafeUrl } from '../../_shared/constants'
-import { testRemarketingSendAction } from '@/app/actions/flows'
-import type { FlowNodeType, FlowNodeStatsRow, GalleryItem } from '../../_shared/types'
+import { testRemarketingSendAction, listBotChannelsAction, connectBotChannelAction } from '@/app/actions/flows'
+import type { FlowNodeType, FlowNodeStatsRow, GalleryItem, BotChannel } from '../../_shared/types'
 import MediaLibraryModal from '../MediaLibraryModal'
 
 interface Props {
@@ -122,6 +122,123 @@ function MediaField({
         style={{ color: 'var(--primary)', border: '1px solid var(--border)' }}>
         <FolderOpen size={12} /> {fileId ? 'Trocar pela biblioteca' : 'Escolher da biblioteca'}
       </button>
+    </Field>
+  )
+}
+
+// Seletor de canal/grupo onde o bot é admin (nó Entregável — modo convite).
+function DeliveryChannelPicker({
+  botId, value, onChange,
+}: {
+  botId: string | null
+  value: string
+  onChange: (chatId: string) => void
+}) {
+  const [channels, setChannels] = useState<BotChannel[]>([])
+  const [loading, setLoading] = useState(false)
+  const [manualRef, setManualRef] = useState('')
+  const [connecting, setConnecting] = useState(false)
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+
+  const load = useCallback(async () => {
+    if (!botId) return
+    setLoading(true)
+    try {
+      const res = await listBotChannelsAction(botId)
+      if (res.ok) setChannels(res.channels)
+    } finally {
+      setLoading(false)
+    }
+  }, [botId])
+
+  useEffect(() => { void load() }, [load])
+
+  const selected = channels.find(c => c.chatId === value)
+
+  async function handleConnect() {
+    if (!manualRef.trim() || connecting) return
+    setConnecting(true)
+    setMsg(null)
+    try {
+      const res = await connectBotChannelAction(botId, manualRef)
+      if (res.ok && res.channel) {
+        setChannels(prev => {
+          const others = prev.filter(c => c.chatId !== res.channel!.chatId)
+          return [res.channel!, ...others]
+        })
+        onChange(res.channel.chatId)
+        setManualRef('')
+        setMsg({ ok: true, text: `Canal "${res.channel.title}" conectado!` })
+      } else {
+        setMsg({ ok: false, text: res.error ?? 'Não consegui conectar o canal.' })
+      }
+    } finally {
+      setConnecting(false)
+    }
+  }
+
+  if (!botId) {
+    return (
+      <Field label="Canal do Telegram">
+        <p className="text-[11px] rounded-lg px-3 py-2" style={{ background: 'var(--warning-soft)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
+          Vincule um bot ao fluxo (no topo do editor) para escolher o canal.
+        </p>
+      </Field>
+    )
+  }
+
+  return (
+    <Field label="Canal do Telegram" hint="O bot precisa ser admin do canal com permissão de convidar. A cada venda ele gera um convite de uso único.">
+      {/* Lista de canais conectados */}
+      <div className="flex items-center gap-1.5">
+        <select className={inputCls} style={inputStyle}
+          value={value}
+          onChange={e => onChange(e.target.value)}
+        >
+          <option value="">{loading ? 'Carregando canais…' : channels.length ? 'Selecione um canal…' : 'Nenhum canal conectado ainda'}</option>
+          {channels.map(c => (
+            <option key={c.chatId} value={c.chatId}>
+              {c.title}{c.username ? ` (@${c.username})` : ''}{c.canInvite ? '' : ' — sem permissão de convidar'}
+            </option>
+          ))}
+          {value && !selected && <option value={value}>Canal {value}</option>}
+        </select>
+        <button type="button" onClick={() => void load()} title="Atualizar lista"
+          className="shrink-0 rounded-lg p-1.5 transition-colors hover:bg-surface-2"
+          style={{ border: '1px solid var(--border)', color: 'var(--text-muted)' }}>
+          <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+        </button>
+      </div>
+
+      {selected && !selected.canInvite && (
+        <p className="text-[10px] mt-1" style={{ color: 'var(--danger)' }}>
+          Este canal está sem a permissão “Convidar usuários via link”. Ative-a nas permissões do bot no canal.
+        </p>
+      )}
+
+      {/* Conectar manualmente */}
+      <div className="mt-2 rounded-lg p-2" style={{ background: 'var(--surface-2)', border: '1px dashed var(--border)' }}>
+        <div className="flex items-center gap-1.5 mb-1.5 text-[10px]" style={{ color: 'var(--text-muted)' }}>
+          <Radio size={11} /> Não apareceu? Adicione o bot como admin no canal — ele aparece sozinho. Ou conecte na mão:
+        </div>
+        <div className="flex items-center gap-1.5">
+          <input className={inputCls} style={inputStyle}
+            value={manualRef}
+            onChange={e => setManualRef(e.target.value)}
+            placeholder="@meucanal  ou  -1001234567890"
+          />
+          <button type="button" onClick={handleConnect} disabled={connecting || !manualRef.trim()}
+            className="shrink-0 inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors disabled:opacity-50"
+            style={{ background: 'var(--primary)', color: 'var(--primary-fg, #fff)' }}>
+            {connecting ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />} Conectar
+          </button>
+        </div>
+        {msg && (
+          <p className="text-[10px] mt-1.5" style={{ color: msg.ok ? 'var(--success)' : 'var(--danger)' }}>
+            {msg.text}
+          </p>
+        )}
+      </div>
     </Field>
   )
 }
@@ -604,13 +721,11 @@ export default function Inspector({ node, stats, botId, onChange, onDelete, onDu
                 />
               </Field>
             ) : (
-              <Field label="Grupo / canal do Telegram" hint="@usuario do grupo público ou ID -100... do grupo/canal. O bot precisa ser ADMIN com permissão de convidar.">
-                <input className={inputCls} style={inputStyle}
-                  value={node.data.chatRef ?? ''}
-                  onChange={e => set({ chatRef: e.target.value })}
-                  placeholder="@meugrupo  ou  -1001234567890"
-                />
-              </Field>
+              <DeliveryChannelPicker
+                botId={botId}
+                value={node.data.chatRef ?? ''}
+                onChange={v => set({ chatRef: v })}
+              />
             )}
             <Field label="Texto do botão">
               <input className={inputCls} style={inputStyle}

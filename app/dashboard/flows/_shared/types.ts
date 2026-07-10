@@ -97,6 +97,15 @@ export interface FlowNodeType {
   data: NodeData
 }
 
+// Canal/grupo onde o bot é admin — usado no nó Entregável (modo convite)
+export interface BotChannel {
+  chatId:    string
+  title:     string
+  username:  string | null
+  type:      string
+  canInvite: boolean
+}
+
 export interface FlowEdgeType {
   id: string
   source: string
