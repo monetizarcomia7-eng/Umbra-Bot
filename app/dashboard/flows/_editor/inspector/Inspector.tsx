@@ -243,6 +243,78 @@ function DeliveryChannelPicker({
   )
 }
 
+const NR_DAYS: Array<[string, number]> = [['Dom', 0], ['Seg', 1], ['Ter', 2], ['Qua', 3], ['Qui', 4], ['Sex', 5], ['Sáb', 6]]
+
+// Campos do nó "Sem resposta" (cobrança + delay + janela de dias/horário + tag).
+function NoReplyFields({ data, set }: {
+  data: FlowNodeType['data']
+  set: (patch: Partial<FlowNodeType['data']>) => void
+}) {
+  const days: number[] = data.days === undefined || data.days === ''
+    ? [0, 1, 2, 3, 4, 5, 6]
+    : String(data.days).split(',').map(Number).filter((n) => n >= 0 && n <= 6)
+  const startHour = Number(data.startHour ?? 0)
+  const endHour   = Number(data.endHour ?? 24)
+  const toggleDay = (d: number) => {
+    const s = new Set(days); if (s.has(d)) s.delete(d); else s.add(d)
+    set({ days: [...s].sort((a, b) => a - b).join(',') })
+  }
+  return (
+    <>
+      <Field label="Mensagem de cobrança" hint="Enviada só se o lead não responder. Suporta {nome}, {bot}.">
+        <textarea className={inputCls} style={{ ...inputStyle, resize: 'vertical', minHeight: 70 }}
+          value={data.text ?? ''} onChange={e => set({ text: e.target.value })}
+          placeholder="Oi {nome}! Vi que você sumiu 👀 Ainda posso te ajudar?" />
+      </Field>
+      <Field label="Cobrar após (sem resposta)">
+        <div className="flex gap-2">
+          <input type="number" min={1} className={inputCls} style={{ ...inputStyle, maxWidth: 100 }}
+            value={data.delayAmount ?? 1} onChange={e => set({ delayAmount: Math.max(1, Number(e.target.value)) })} />
+          <select className={inputCls} style={inputStyle} value={(data.delayUnit as string) ?? 'horas'}
+            onChange={e => set({ delayUnit: e.target.value })}>
+            <option value="minutos">minutos</option>
+            <option value="horas">horas</option>
+            <option value="dias">dias</option>
+          </select>
+        </div>
+      </Field>
+      <Field label="Dias de envio">
+        <div className="flex flex-wrap gap-1">
+          {NR_DAYS.map(([lbl, d]) => {
+            const on = days.includes(d)
+            return (
+              <button key={d} type="button" onClick={() => toggleDay(d)}
+                className="px-2 h-7 rounded-md text-[11px] font-medium border transition-colors"
+                style={{ background: on ? 'var(--primary)' : 'var(--surface-2)', color: on ? '#fff' : 'var(--text-muted)', borderColor: on ? 'var(--primary)' : 'var(--border)' }}>
+                {lbl}
+              </button>
+            )
+          })}
+        </div>
+      </Field>
+      <Field label="Horário de envio (fuso de São Paulo)" hint="Fora da janela, espera o próximo horário permitido.">
+        <div className="flex items-center gap-2">
+          <select className={inputCls} style={{ ...inputStyle, maxWidth: 90 }} value={startHour} onChange={e => set({ startHour: Number(e.target.value) })}>
+            {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{String(h).padStart(2, '0')}h</option>)}
+          </select>
+          <span className="text-xs" style={{ color: 'var(--text-muted)' }}>até</span>
+          <select className={inputCls} style={{ ...inputStyle, maxWidth: 90 }} value={endHour} onChange={e => set({ endHour: Number(e.target.value) })}>
+            {Array.from({ length: 24 }, (_, i) => { const h = i + 1; return <option key={h} value={h}>{String(h).padStart(2, '0')}h</option> })}
+          </select>
+        </div>
+      </Field>
+      <Field label="Tag ao cobrar (opcional)" hint="Marca o contato com essa tag quando a cobrança for enviada.">
+        <input className={inputCls} style={inputStyle} value={(data.tag as string) ?? ''}
+          onChange={e => set({ tag: e.target.value })} placeholder="Ex: sumiu" />
+      </Field>
+      <p className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>
+        Coloque este nó depois de uma pergunta ou mensagem. Se o lead responder, o fluxo segue sem cobrar.
+        Se ficar em silêncio pelo tempo definido, a cobrança é enviada (dentro do horário) e o fluxo continua.
+      </p>
+    </>
+  )
+}
+
 export default function Inspector({ node, stats, botId, onChange, onDelete, onDuplicate }: Props) {
   const t = nodeTypes[node.type]
   const [libOpen, setLibOpen] = useState(false)
@@ -741,6 +813,9 @@ export default function Inspector({ node, stats, botId, onChange, onDelete, onDu
             </p>
           </>
         )}
+
+        {/* Sem resposta */}
+        {node.type === 'noreply' && <NoReplyFields data={node.data} set={set} />}
 
         {/* Phone */}
         {node.type === 'phone' && (

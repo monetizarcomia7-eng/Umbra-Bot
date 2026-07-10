@@ -11,7 +11,9 @@ import {
   sendTelegramPhoto,
   sendTelegramVideo,
   sendTelegramWithKeyboard,
+  subVars,
 } from '@/lib/flow-engine'
+import { readWindow, isWithinWindow } from '@/lib/schedule'
 
 // Constrói o inline_keyboard (1 botão por linha) a partir dos botões da etapa.
 // Só inclui botões com texto e URL http(s) válida — evita rejeição do Telegram.
@@ -135,6 +137,14 @@ async function findEligibleContactIds(
       const days   = Number(cfg.days ?? 30)
       const cutoff = new Date(Date.now() - days * 86_400_000).toISOString()
       query = query.lte('last_contact', cutoff)
+      break
+    }
+    case 'nao_respondeu': {
+      // Lead parou de responder o bot há X tempo (last_contact = última msg do lead).
+      const amount = Number(cfg.amount ?? 24)
+      const unit   = String(cfg.unit ?? 'horas')
+      const cutoff = new Date(Date.now() - delayMs(amount, unit)).toISOString()
+      query = query.not('last_contact', 'is', null).lte('last_contact', cutoff)
       break
     }
     case 'tag_adicionada':
@@ -289,6 +299,101 @@ export async function GET(request: Request) {
           continue
         }
 
+        // ── Nó "Sem resposta": cobra só se o lead NÃO respondeu ────────────────
+        if (row.message.startsWith('__noreply__:') && row.flow_id) {
+          const targetNodeId = row.message.slice('__noreply__:'.length)
+          const { data: cont } = await supabase
+            .from('contacts')
+            .select('id, first_name, tags, flow_id, flow_node_id, flow_vars, flow_version')
+            .eq('id', row.contact_id).maybeSingle()
+
+          if (!cont) {
+            await supabase.from('flow_scheduled_sends')
+              .update({ status: 'failed', error: 'contato não encontrado', sent_at: new Date().toISOString() })
+              .eq('id', row.id)
+            fssFailed++
+            continue
+          }
+
+          // Respondeu? flow_node_id != nó → engajou → não cobra.
+          if ((cont.flow_node_id as string | null) !== targetNodeId) {
+            await supabase.from('flow_scheduled_sends')
+              .update({ status: 'skipped', sent_at: new Date().toISOString() })
+              .eq('id', row.id)
+            continue
+          }
+
+          const contFlowVersion = (cont as Record<string, unknown>).flow_version as number | null
+          const flow = await loadFlow(row.flow_id, supabase, contFlowVersion)
+          const node = flow?.nodes.find((n) => n.id === targetNodeId)
+          if (!flow || !node) {
+            await supabase.from('flow_scheduled_sends')
+              .update({ status: 'failed', error: 'fluxo/nó não encontrado', sent_at: new Date().toISOString() })
+              .eq('id', row.id)
+            fssFailed++
+            continue
+          }
+
+          // Janela de dias/horário — fora dela, deixa pendente (envia na próxima rodada).
+          const win = readWindow(node.data as Record<string, unknown>)
+          if (!isWithinWindow(win.days, win.startHour, win.endHour)) continue
+
+          // Não respondeu e dentro da janela → cobra + avança.
+          const firstName = (cont.first_name as string) ?? ''
+          const flowVars  = (cont.flow_vars as Record<string, string>) ?? {}
+          const nudge = subVars((node.data.text as string) ?? '', flowVars, firstName, (bot as { name: string }).name)
+          if (nudge.trim()) await sendTelegramMessage(token, row.chat_id, nudge, 'HTML', protect)
+
+          const tag = (node.data.tag as string) ?? ''
+          if (tag) {
+            const tags: string[] = (cont.tags as string[]) ?? []
+            if (!tags.includes(tag)) {
+              await supabase.from('contacts').update({ tags: [...tags, tag] }).eq('id', cont.id)
+            }
+          }
+
+          await supabase.from('contacts').update({ flow_node_id: null }).eq('id', cont.id)
+          await supabase.from('flow_scheduled_sends')
+            .update({ status: 'sent', sent_at: new Date().toISOString() })
+            .eq('id', row.id)
+
+          // Avança para a saída do nó (se houver).
+          const edgeMap  = buildEdgeMap(flow.edges)
+          const nextEdge = (edgeMap.get(targetNodeId) ?? [])[0]
+          if (nextEdge) {
+            const contactState: ContactState = {
+              id:           cont.id as string,
+              first_name:   firstName,
+              tags:         (cont.tags as string[] | null) ?? null,
+              flow_id:      row.flow_id,
+              flow_node_id: null,
+              flow_vars:    flowVars,
+            }
+            await executeFlowNode({
+              nodeId:      nextEdge.target,
+              nodes:       flow.nodes,
+              edgeMap,
+              contact:     contactState,
+              firstName,
+              botName:     (bot as { name: string }).name,
+              plainToken:  token,
+              chatId:      row.chat_id,
+              flowId:      flow.id,
+              flowVersion: flow.version,
+              userId:      (bot as { user_id: string }).user_id,
+              supabase,
+              protectContent: protect,
+            })
+          } else {
+            await supabase.from('contacts')
+              .update({ flow_id: null, flow_node_id: null, flow_version: null })
+              .eq('id', cont.id)
+          }
+
+          fssSent++
+          continue
+        }
+
         // Com mídia anexada (imagem/vídeo) → envia como foto/vídeo com legenda;
         // sem mídia → mensagem de texto simples.
         const rowMedia = row as { media_type?: string | null; media_ref?: string | null }
@@ -389,7 +494,7 @@ export async function GET(request: Request) {
   const botIds      = [...new Set(pending.map((p: RawExec) => p.bot_id).filter(Boolean))]
 
   const [campRes, contRes, botRes] = await Promise.all([
-    supabase.from('remarketing_campaigns').select('id, steps, status').in('id', campaignIds),
+    supabase.from('remarketing_campaigns').select('id, steps, status, trigger_type, trigger_config').in('id', campaignIds),
     supabase.from('contacts').select('id, first_name, name, telegram_id').in('id', contactIds),
     supabase.from('bots').select('id, token, name, anti_clone').in('id', botIds),
   ])
@@ -425,6 +530,13 @@ export async function GET(request: Request) {
           .update({ status: 'skipped', executed_at: now })
           .eq('id', exec.id)
         continue
+      }
+
+      // Janela de envio (só o gatilho "Não respondeu" usa dias/horário).
+      // Fora da janela: deixa pendente (não marca nada) — envia na próxima rodada dentro do horário.
+      if ((campaign as { trigger_type?: string }).trigger_type === 'nao_respondeu') {
+        const win = readWindow((campaign as { trigger_config?: Record<string, unknown> }).trigger_config)
+        if (!isWithinWindow(win.days, win.startHour, win.endHour)) continue
       }
 
       const token     = decryptToken(bot.token as string)

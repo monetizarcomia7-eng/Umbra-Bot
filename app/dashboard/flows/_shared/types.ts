@@ -88,6 +88,10 @@ export interface NodeData {
   mode?: 'link' | 'invite'   // link fixo OU convite único do Telegram
   chatRef?: string           // @grupo ou id -100... (modo convite)
   buttonText?: string        // texto do botão de acesso
+  // Sem resposta (noreply) — janela de envio da cobrança
+  days?: string              // dias permitidos "0,1,2..." (vazio = todos)
+  startHour?: number         // hora inicial (0-23)
+  endHour?: number           // hora final (1-24, exclusiva)
 }
 
 export interface FlowNodeType {

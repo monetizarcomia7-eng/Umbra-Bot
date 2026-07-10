@@ -117,6 +117,15 @@ const DELIVERY_DATA     = z.object({
   chatRef:    z.string().max(120).default(''),      // modo 'invite': @grupo ou id -100... do grupo/canal
   buttonText: z.string().max(64).default('Acessar agora'),
 })
+const NOREPLY_DATA      = z.object({
+  text:        z.string().max(4096).default(''),               // mensagem de cobrança
+  delayAmount: z.number().int().min(1).max(1440).default(1),
+  delayUnit:   z.enum(['minutos','horas','dias']).default('horas'),
+  tag:         z.string().max(64).default(''),
+  days:        z.string().max(20).default(''),                 // "0,1,2..." dias permitidos (vazio = todos)
+  startHour:   z.number().int().min(0).max(23).default(0),
+  endHour:     z.number().int().min(1).max(24).default(24),
+})
 
 const NODE_SCHEMA = z.discriminatedUnion('type', [
   z.object({ ...NODE_BASE, type: z.literal('message'),     data: MESSAGE_DATA }),
@@ -139,6 +148,7 @@ const NODE_SCHEMA = z.discriminatedUnion('type', [
   z.object({ ...NODE_BASE, type: z.literal('orderbump'),   data: ORDERBUMP_DATA }),
   z.object({ ...NODE_BASE, type: z.literal('remarketing'), data: REMARKETING_DATA }),
   z.object({ ...NODE_BASE, type: z.literal('delivery'),    data: DELIVERY_DATA }),
+  z.object({ ...NODE_BASE, type: z.literal('noreply'),     data: NOREPLY_DATA }),
 ])
 
 // 1.7 — sourceHandle agora é só number (0-20)

@@ -37,6 +37,7 @@ const NODE_COLORS: Record<string, { bg: string; accent: string }> = {
   orderbump:  { bg: 'oklch(0.6 0.18 300)', accent: 'oklch(0.6 0.18 300)' },
   remarketing:{ bg: 'var(--danger)',  accent: 'var(--danger)' },
   delivery:   { bg: 'oklch(0.62 0.17 155)', accent: 'oklch(0.62 0.17 155)' },
+  noreply:    { bg: 'oklch(0.60 0.16 25)', accent: 'oklch(0.60 0.16 25)' },
 }
 
 function FlowNodeRaw({ node, isSelected, isStart, isError, stats, connecting, onMouseDown, onDoubleClick, onStartConnect, onEndConnect }: Props) {

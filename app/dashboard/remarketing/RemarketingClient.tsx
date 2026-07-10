@@ -140,6 +140,11 @@ const TRIGGERS: Record<string, TriggerInfo> = {
     desc: 'Cliente sem interagir há mais de N dias.',
     configFields: [{ key: 'days', label: 'Dias de inatividade', placeholder: 'Ex: 30', type: 'number' }],
   },
+  nao_respondeu: {
+    label: 'Não respondeu', icon: 'clock', color: 'oklch(0.60 0.16 25)',
+    desc: 'Envia quando o lead para de responder o bot por um tempo. Você escolhe os dias e o horário.',
+    // Configuração (tempo sem resposta + dias + horário) via UI de agenda customizada.
+  },
   tag_adicionada: {
     label: 'Tag adicionada', icon: 'tag', color: 'var(--primary)',
     desc: 'Quando uma tag específica é adicionada ao contato.',
@@ -172,6 +177,87 @@ const DELAY_PRESETS = [
   { label: '72 h',     amount: 72, unit: 'horas'   },
   { label: '7 dias',   amount: 7,  unit: 'dias'    },
 ]
+
+const WEEKDAYS = [
+  { d: 0, label: 'Dom' }, { d: 1, label: 'Seg' }, { d: 2, label: 'Ter' },
+  { d: 3, label: 'Qua' }, { d: 4, label: 'Qui' }, { d: 5, label: 'Sex' }, { d: 6, label: 'Sáb' },
+]
+const FIELD_CLS = 'w-full h-9 px-3 bg-surface border border-border rounded-lg text-[12.5px] text-text focus:outline-none focus:ring-2 focus:ring-primary/30'
+const SUBLABEL_CLS = 'block text-[10.5px] uppercase tracking-wider font-semibold text-text-subtle mb-1.5'
+
+// Configuração do gatilho "Não respondeu": tempo sem resposta + dias + horário.
+function NoReplyScheduleConfig({ config, onChange }: {
+  config: Record<string, string | number>
+  onChange: (patch: Record<string, string | number>) => void
+}) {
+  const amount = Number(config.amount ?? 24)
+  const unit   = String(config.unit ?? 'horas')
+  const selectedDays: number[] =
+    config.days === undefined || config.days === ''
+      ? [0, 1, 2, 3, 4, 5, 6]
+      : String(config.days).split(',').map(Number).filter((n) => n >= 0 && n <= 6)
+  const startHour = Number(config.startHour ?? 9)
+  const endHour   = Number(config.endHour ?? 21)
+
+  const toggleDay = (d: number) => {
+    const set = new Set(selectedDays)
+    if (set.has(d)) set.delete(d); else set.add(d)
+    onChange({ days: [...set].sort((a, b) => a - b).join(',') })
+  }
+
+  return (
+    <div className="md:col-span-2 space-y-3 rounded-xl border border-border bg-surface/40 p-3">
+      <div>
+        <label className={SUBLABEL_CLS}>Tempo sem resposta</label>
+        <div className="flex gap-2">
+          <input type="number" min={1} value={amount}
+            onChange={(e) => onChange({ amount: Math.max(1, Number(e.target.value)) })}
+            className={FIELD_CLS + ' max-w-[110px]'} />
+          <select value={unit} onChange={(e) => onChange({ unit: e.target.value })} className={FIELD_CLS}>
+            <option value="minutos">minutos</option>
+            <option value="horas">horas</option>
+            <option value="dias">dias</option>
+          </select>
+        </div>
+        <p className="text-[10.5px] text-text-muted mt-1">Depois desse tempo sem o lead responder, a mensagem é enviada (respeitando os dias e o horário abaixo).</p>
+      </div>
+
+      <div>
+        <label className={SUBLABEL_CLS}>Dias de envio</label>
+        <div className="flex flex-wrap gap-1.5">
+          {WEEKDAYS.map((w) => {
+            const on = selectedDays.includes(w.d)
+            return (
+              <button key={w.d} type="button" onClick={() => toggleDay(w.d)}
+                className="px-2.5 h-8 rounded-lg text-[11.5px] font-medium border transition-colors"
+                style={{
+                  background:  on ? 'var(--primary)' : 'var(--surface)',
+                  color:       on ? '#fff' : 'var(--text-muted)',
+                  borderColor: on ? 'var(--primary)' : 'var(--border)',
+                }}>
+                {w.label}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
+      <div>
+        <label className={SUBLABEL_CLS}>Horário de envio (fuso de São Paulo)</label>
+        <div className="flex items-center gap-2">
+          <select value={startHour} onChange={(e) => onChange({ startHour: Number(e.target.value) })} className={FIELD_CLS + ' max-w-[110px]'}>
+            {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{String(h).padStart(2, '0')}h</option>)}
+          </select>
+          <span className="text-text-muted text-[12px]">até</span>
+          <select value={endHour} onChange={(e) => onChange({ endHour: Number(e.target.value) })} className={FIELD_CLS + ' max-w-[110px]'}>
+            {Array.from({ length: 24 }, (_, i) => { const h = i + 1; return <option key={h} value={h}>{String(h).padStart(2, '0')}h</option> })}
+          </select>
+        </div>
+        <p className="text-[10.5px] text-text-muted mt-1">Fora dessa janela, o envio espera o próximo horário permitido.</p>
+      </div>
+    </div>
+  )
+}
 
 const TEMPLATES: Array<{ id: string; name: string; trigger: string; audience: string; steps: CampaignStep[] }> = [
   {
@@ -830,7 +916,12 @@ function TriggerCard({ campaign, bots, onUpdate }: {
             options={Object.values(TRIGGERS).map((t) => t.label)}
             onChange={(v) => {
               const newKey = Object.entries(TRIGGERS).find(([, t]) => t.label === v)?.[0]
-              if (newKey) onUpdate({ trigger: newKey, triggerConfig: {} })
+              if (newKey) {
+                const initCfg: Record<string, string | number> = newKey === 'nao_respondeu'
+                  ? { amount: 24, unit: 'horas', days: '', startHour: 9, endHour: 21 }
+                  : {}
+                onUpdate({ trigger: newKey, triggerConfig: initCfg })
+              }
             }}
           />
         </div>
@@ -859,6 +950,14 @@ function TriggerCard({ campaign, bots, onUpdate }: {
             />
           </div>
         ))}
+
+        {/* Agenda do gatilho "Não respondeu" (tempo sem resposta + dias + horário) */}
+        {campaign.trigger === 'nao_respondeu' && (
+          <NoReplyScheduleConfig
+            config={campaign.triggerConfig}
+            onChange={(patch) => onUpdate({ triggerConfig: { ...campaign.triggerConfig, ...patch } })}
+          />
+        )}
 
         {/* Bot vinculado */}
         {bots.length > 0 && (

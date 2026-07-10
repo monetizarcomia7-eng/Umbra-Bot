@@ -4,7 +4,7 @@ import {
   ShoppingBag, Tag, UserRound,
   Image as LucideImage, Link2, ShoppingCart, Phone,
   TrendingUp, TrendingDown, PackagePlus, Megaphone, Video, Images, QrCode,
-  PackageCheck,
+  PackageCheck, BellOff,
 } from 'lucide-react'
 import type { NodeData } from './types'
 
@@ -43,6 +43,7 @@ export const nodeTypes: Record<string, NodeTypeDef> = {
   downsell:    { label: 'Downsell',    Icon: TrendingDown,      color: 'oklch(0.58 0.16 30)',    category: 'Comercial',  description: 'Oferece uma alternativa mais acessível quando o lead recusa a oferta principal.',                    defaultData: { product: 'Produto Básico', originalPrice: 497, discountPrice: 197, description: 'Tudo bem! Tenho uma opção mais em conta para você.', cta: 'Quero essa opção', url: '' }, outputs: 1 },
   orderbump:   { label: 'Order Bump',  Icon: PackagePlus,       color: 'oklch(0.58 0.16 200)',   category: 'Comercial',  description: 'Adiciona um produto complementar com desconto na mesma compra.',                                     defaultData: { product: 'Bônus Especial', price: 97, description: 'Inclua também por apenas:', cta: 'Sim, quero o bônus!' },                                                     outputs: 1 },
   remarketing: { label: 'Remarketing', Icon: Megaphone,         color: 'oklch(0.52 0.18 285)',   category: 'CRM',        description: 'Agenda uma mensagem de follow-up para contatos que não converteram.',                                defaultData: { text: 'Oi {nome}! Vi que você ainda não finalizou. Posso te ajudar? 😊', delayAmount: 1, delayUnit: 'horas', tag: '' },                                            outputs: 1 },
+  noreply:     { label: 'Sem resposta', Icon: BellOff,           color: 'oklch(0.60 0.16 25)',    category: 'CRM',        description: 'Espera uma resposta do lead. Se ele não responder no tempo/horário definido, envia a mensagem de cobrança.', defaultData: { text: 'Oi {nome}! Vi que você sumiu 👀 Ainda posso te ajudar?', delayAmount: 1, delayUnit: 'horas', tag: '', days: '', startHour: 0, endHour: 24 },                    outputs: 1 },
 }
 
 export const flowStatusMap: Record<string, { label: string; tone: string }> = {

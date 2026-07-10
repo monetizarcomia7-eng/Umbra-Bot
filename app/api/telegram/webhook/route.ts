@@ -355,14 +355,15 @@ export async function POST(request: NextRequest) {
     .from('contacts')
     .upsert(
       {
-        user_id:     bot.user_id,
-        bot_id:      bot.id,
-        telegram_id: telegramId,
-        name:        fullName || firstName,
-        first_name:  firstName,
-        last_name:   lastName,
+        user_id:      bot.user_id,
+        bot_id:       bot.id,
+        telegram_id:  telegramId,
+        name:         fullName || firstName,
+        first_name:   firstName,
+        last_name:    lastName,
         username,
-        language:    msg.from.language_code ?? 'pt',
+        language:     msg.from.language_code ?? 'pt',
+        last_contact: new Date().toISOString(),   // última vez que o lead falou com o bot (Remarketing "Não respondeu")
       },
       { onConflict: 'bot_id,telegram_id', ignoreDuplicates: false },
     )
@@ -544,6 +545,35 @@ export async function POST(request: NextRequest) {
         const outEdges = edgeMap.get(currentNode.id) ?? []
         const nextEdge = outEdges[0]
         if (nextEdge) {
+          await executeFlowNode({
+            nodeId:      nextEdge.target,
+            nodes:       flow.nodes,
+            edgeMap,
+            contact:     contactState,
+            firstName:   contactState.first_name,
+            botName:     bot.name as string,
+            plainToken,
+            chatId,
+            flowId:      flow.id,
+            flowVersion: flow.version,
+            userId:      bot.user_id as string,
+            supabase,
+            protectContent: Boolean(bot.anti_clone),
+          })
+        } else {
+          await supabase
+            .from('contacts')
+            .update({ flow_id: null, flow_node_id: null, flow_version: null })
+            .eq('id', contactState.id)
+        }
+      } else if (currentNode?.type === 'noreply') {
+        // Lead respondeu num nó "Sem resposta" → engajou. Avança para a saída sem cobrar.
+        // O envio __noreply__ pendente vira no-op (o cron verá flow_node_id != nó).
+        contactState.flow_node_id = null
+        const outEdges = edgeMap.get(currentNode.id) ?? []
+        const nextEdge = outEdges[0]
+        if (nextEdge) {
+          await supabase.from('contacts').update({ flow_node_id: null }).eq('id', contactState.id)
           await executeFlowNode({
             nodeId:      nextEdge.target,
             nodes:       flow.nodes,

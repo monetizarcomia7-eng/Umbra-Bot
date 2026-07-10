@@ -14,7 +14,7 @@ const CATEGORIES: Array<{ label: string; types: string[] }> = [
   { label: 'Lógica', types: ['condition', 'delay'] },
   { label: 'Comercial', types: ['offer', 'pix', 'checkout', 'upsell', 'downsell', 'orderbump', 'delivery'] },
   { label: 'Mídia', types: ['image', 'video', 'gallery', 'link'] },
-  { label: 'CRM', types: ['tag', 'phone', 'handoff', 'remarketing'] },
+  { label: 'CRM', types: ['tag', 'phone', 'handoff', 'remarketing', 'noreply'] },
 ]
 
 function buildNode(type: string, center: { x: number; y: number }): FlowNodeType {

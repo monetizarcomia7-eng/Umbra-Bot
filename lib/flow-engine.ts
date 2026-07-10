@@ -907,6 +907,41 @@ export async function executeFlowNode(opts: ExecuteOpts): Promise<void> {
       break
     }
 
+    case 'noreply': {
+      // Espera a resposta do lead. Agenda a cobrança em flow_scheduled_sends com o
+      // sentinel __noreply__:<nodeId>. O cron só envia se o contato AINDA estiver parado
+      // neste nó (= não respondeu). Se responder, o webhook avança e a cobrança é pulada.
+      const delayAmount = Number(node.data.delayAmount ?? 1)
+      const delayUnit   = (node.data.delayUnit as string) ?? 'horas'
+      const ms          = delayAmount * (DELAY_UNIT_MS[delayUnit] ?? 3_600_000)
+      const scheduledAt = new Date(Date.now() + ms).toISOString()
+
+      const { data: contactMeta } = await supabase
+        .from('contacts').select('user_id, bot_id').eq('id', contact.id).single()
+
+      if (contactMeta?.user_id && contactMeta?.bot_id) {
+        supabase.from('flow_scheduled_sends').insert({
+          user_id:      contactMeta.user_id,
+          bot_id:       contactMeta.bot_id,
+          contact_id:   contact.id,
+          chat_id:      chatId,
+          message:      `__noreply__:${node.id}`,
+          scheduled_at: scheduledAt,
+          flow_id:      flowId,
+        }).then(({ error }) => {
+          if (error) console.error('[flow-engine] noreply schedule:', error.message)
+        })
+        logNodeEvent(supabase, {
+          userId, flowId, nodeId: node.id, nodeType: node.type,
+          contactId: contact.id, event: 'sent', latencyMs: Date.now() - t0,
+        })
+        await pauseAt(node.id)
+      } else {
+        await advance({ ok: true })
+      }
+      break
+    }
+
     case 'upsell':
     case 'downsell': {
       const product       = subVars((node.data.product      as string) ?? '', flowVars, firstName, botName)

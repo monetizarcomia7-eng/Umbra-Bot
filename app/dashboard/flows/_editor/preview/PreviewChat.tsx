@@ -100,6 +100,9 @@ function buildPreviewPath(
     case 'remarketing':
       botText(`📣 (remarketing) ${(node.data.text || '').slice(0, 40)}`)
       break
+    case 'noreply':
+      entries.push({ side: 'bot', text: `⏰ (se o lead não responder) ${(node.data.text || '').slice(0, 40)}` } as ChatBubble)
+      break
     default:
       break
   }

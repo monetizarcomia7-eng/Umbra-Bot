@@ -262,6 +262,7 @@ export function getNodePreview(node: FlowNodeType): string {
     case 'delivery':    return node.data.mode === 'invite'
                           ? `🎁 Convite único · ${node.data.chatRef || '(grupo)'}`
                           : `🎁 Link · ${node.data.url || '(sem link)'}`
+    case 'noreply':     return `Cobra se sem resposta em ${node.data.delayAmount ?? 1} ${node.data.delayUnit ?? 'horas'}`
     default: return ''
   }
 }
@@ -388,6 +389,10 @@ export function validateFlow(nodes: FlowNodeType[], edges: FlowEdgeType[]): Flow
         } else if (!isSafeUrl(d.url)) {
           errors.push({ nodeId: node.id, message: 'Nó "Entregável" tem link inválido.' })
         }
+        break
+      case 'noreply':
+        if (!d.text?.trim())
+          errors.push({ nodeId: node.id, message: 'Nó "Sem resposta" precisa da mensagem de cobrança.' })
         break
     }
   }
