@@ -259,6 +259,78 @@ export async function POST(request: NextRequest) {
       return new NextResponse(null, { status: 200 })
     }
 
+    // ── Remarketing: botão que continua um fluxo (rmk:<execId>:<i>) ─────────────
+    if (cbData.startsWith('rmk:')) {
+      const parts  = cbData.split(':')
+      const execId = parts[1] ?? ''
+      const btnIdx = parseInt(parts[2] ?? '0', 10) || 0
+      const cbTgId = String(cbq.from.id)
+
+      const rl = await rateLimit(`flow-exec:${bot.id}:${cbTgId}`, 60, 60_000)
+      if (!rl.ok) return new NextResponse(null, { status: 429 })
+
+      // Resolve o nó de botões alvo via execução → campanha → etapa.flowRef
+      const { data: exec } = await supabase
+        .from('remarketing_executions')
+        .select('campaign_id, step_index')
+        .eq('id', execId).maybeSingle()
+      if (!exec) return new NextResponse(null, { status: 200 })
+
+      const { data: camp } = await supabase
+        .from('remarketing_campaigns')
+        .select('steps')
+        .eq('id', exec.campaign_id).maybeSingle()
+      const steps   = (camp?.steps as Array<{ flowRef?: { flowId?: string; nodeId?: string } | null }> | null) ?? []
+      const flowRef = steps[exec.step_index as number]?.flowRef
+      if (!flowRef?.flowId || !flowRef.nodeId) return new NextResponse(null, { status: 200 })
+
+      const { data: cbContact } = await supabase
+        .from('contacts')
+        .select('id, first_name, tags, flow_vars')
+        .eq('bot_id', bot.id).eq('telegram_id', cbTgId).maybeSingle()
+      if (!cbContact) return new NextResponse(null, { status: 200 })
+
+      const ver  = await getLatestFlowVersion(flowRef.flowId, supabase)
+      const flow = await loadFlow(flowRef.flowId, supabase, ver)
+      if (flow) {
+        const edgeMap  = buildEdgeMap(flow.edges)
+        const outEdges = edgeMap.get(flowRef.nodeId) ?? []
+        const targetEdge =
+          outEdges.find(e => Number(e.sourceHandle) === btnIdx) ??
+          outEdges[btnIdx] ??
+          outEdges[0]
+        if (targetEdge) {
+          await supabase.from('contacts')
+            .update({ flow_id: flowRef.flowId, flow_node_id: null, flow_version: ver })
+            .eq('id', cbContact.id)
+          const contactState: ContactState = {
+            id:            cbContact.id,
+            first_name:    cbContact.first_name,
+            tags:          cbContact.tags ?? null,
+            flow_id:       flowRef.flowId,
+            flow_node_id:  null,
+            flow_vars:     (cbContact.flow_vars as Record<string, string>) ?? null,
+          }
+          await executeFlowNode({
+            nodeId:      targetEdge.target,
+            nodes:       flow.nodes,
+            edgeMap,
+            contact:     contactState,
+            firstName:   cbContact.first_name,
+            botName:     bot.name as string,
+            plainToken,
+            chatId:      cbChatId,
+            flowId:      flowRef.flowId,
+            flowVersion: ver,
+            userId:      bot.user_id as string,
+            supabase,
+            protectContent: Boolean(bot.anti_clone),
+          })
+        }
+      }
+      return new NextResponse(null, { status: 200 })
+    }
+
     if (!cbData.startsWith('flow_btn_')) return new NextResponse(null, { status: 200 })
 
     const btnIdx = parseInt(cbData.replace('flow_btn_', ''), 10)

@@ -11,6 +11,8 @@ import {
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { useAnalytics } from '@/hooks/use-analytics'
+import { listBotFlowButtonsAction } from '@/app/actions/flows'
+import type { FlowWithButtons } from '@/app/dashboard/flows/_shared/types'
 
 /* ── Raw types (from Supabase) ───────────────────────────────── */
 
@@ -82,12 +84,20 @@ interface StepDelay {
   unit: string
 }
 
+interface StepFlowRef {
+  flowId: string
+  nodeId: string
+  flowName: string
+  options: string[]
+}
+
 export interface CampaignStep {
   id: string
   delay: StepDelay
   message: string
   offer: StepOffer | null
   buttons?: StepButton[]
+  flowRef?: StepFlowRef | null   // reusar botões de um nó de fluxo para continuar o fluxo
 }
 
 type CampaignStatus = 'active' | 'paused' | 'draft' | 'finished'
@@ -691,8 +701,42 @@ function DeleteModal({ open, name, loading, onClose, onConfirm }: {
 
 const INPUT_CLS = 'w-full h-8 px-2 bg-surface border border-border rounded-md text-[12px] text-text focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50'
 
-function StepCard({ step, index, total, onUpdate, onDelete, onMoveUp, onMoveDown }: {
+// Picker de fluxo + nó de botões (Remarketing → continuar fluxo).
+function FlowButtonPicker({ flows, onPick }: {
+  flows: FlowWithButtons[]
+  onPick: (ref: { flowId: string; nodeId: string; flowName: string; options: string[] }) => void
+}) {
+  const [flowId, setFlowId] = useState('')
+  const flow = flows.find((f) => f.flowId === flowId)
+  return (
+    <div className="space-y-2">
+      <select className={INPUT_CLS} value={flowId} onChange={(e) => setFlowId(e.target.value)}>
+        <option value="">Escolha um fluxo…</option>
+        {flows.map((f) => <option key={f.flowId} value={f.flowId}>{f.flowName}</option>)}
+      </select>
+      {flow && (
+        <div className="space-y-1.5">
+          <p className="text-[10.5px] text-text-muted">Escolha o grupo de botões para reusar:</p>
+          {flow.nodes.map((n) => (
+            <button key={n.nodeId} type="button"
+              onClick={() => onPick({ flowId: flow.flowId, nodeId: n.nodeId, flowName: flow.flowName, options: n.options })}
+              className="w-full text-left px-2.5 py-1.5 rounded-md border border-border hover:border-primary/50 hover:bg-primary/5 transition-colors focus:outline-none">
+              <div className="flex flex-wrap gap-1">
+                {n.options.map((o, i) => (
+                  <span key={i} className="text-[11px] px-1.5 py-0.5 rounded bg-surface border border-primary/30 text-primary">{o}</span>
+                ))}
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function StepCard({ step, index, total, onUpdate, onDelete, onMoveUp, onMoveDown, flowButtons }: {
   step: CampaignStep; index: number; total: number
+  flowButtons: FlowWithButtons[]
   onUpdate: (s: CampaignStep) => void
   onDelete: (id: string) => void
   onMoveUp: (id: string) => void
@@ -882,6 +926,36 @@ function StepCard({ step, index, total, onUpdate, onDelete, onMoveUp, onMoveDown
             </div>
           )}
         </div>
+
+        {/* Continuar fluxo — reusa os botões de um nó do fluxo */}
+        <div className="border border-border rounded-lg p-3">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-1.5 text-[10.5px] uppercase tracking-wider font-semibold text-text-subtle">
+              <Icon name="bot" size={11} /> Continuar fluxo (opcional)
+            </div>
+            {step.flowRef && (
+              <button onClick={() => onUpdate({ ...step, flowRef: null })}
+                className="text-[10.5px] text-text-muted hover:text-text inline-flex items-center gap-1 focus:outline-none rounded px-1">
+                <Icon name="x" size={11} /> remover
+              </button>
+            )}
+          </div>
+          {step.flowRef ? (
+            <div>
+              <div className="text-[11.5px] text-text mb-1.5">Fluxo: <b>{step.flowRef.flowName}</b></div>
+              <div className="flex flex-wrap gap-1">
+                {step.flowRef.options.map((o, i) => (
+                  <span key={i} className="text-[11px] px-1.5 py-0.5 rounded bg-surface border border-primary/30 text-primary">{o}</span>
+                ))}
+              </div>
+              <p className="text-[10.5px] text-text-muted mt-1.5">Ao clicar num botão, o lead volta pro fluxo neste ponto e segue a ramificação. (Substitui os botões de link acima.)</p>
+            </div>
+          ) : flowButtons.length === 0 ? (
+            <p className="text-[11px] text-text-muted">Nenhum fluxo publicado com botões para este bot. Crie/publique um fluxo com um nó “Botões” vinculado a este bot.</p>
+          ) : (
+            <FlowButtonPicker flows={flowButtons} onPick={(ref) => onUpdate({ ...step, flowRef: ref })} />
+          )}
+        </div>
       </div>
     </div>
   )
@@ -1027,7 +1101,17 @@ function PreviewSequence({ campaign }: { campaign: Campaign }) {
                 </div>
               </div>
             )}
-            {(step.buttons ?? []).filter((b) => b.label.trim()).length > 0 && (
+            {step.flowRef && step.flowRef.options.length > 0 ? (
+              <div className="flex justify-start">
+                <div className="ml-2 w-[260px] space-y-1.5">
+                  {step.flowRef.options.map((o, i) => (
+                    <div key={i} className="w-full h-7 flex items-center justify-center gap-1 bg-surface border border-primary/30 text-primary text-[11.5px] font-medium rounded-md">
+                      {o}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (step.buttons ?? []).filter((b) => b.label.trim()).length > 0 && (
               <div className="flex justify-start">
                 <div className="ml-2 w-[260px] space-y-1.5">
                   {(step.buttons ?? []).filter((b) => b.label.trim()).map((b, i) => (
@@ -1254,6 +1338,16 @@ function CampaignEditor({ campaign, bots, saving, onBack, onSave, onActivate, on
   const [triggerConfig, setTriggerConfig] = useState(campaign.triggerConfig)
   const [botId,    setBotId]    = useState(campaign.botId)
   const [steps,    setSteps]    = useState<CampaignStep[]>(campaign.steps)
+  const [flowButtons, setFlowButtons] = useState<FlowWithButtons[]>([])
+
+  useEffect(() => {
+    let cancelled = false
+    if (!botId) { setFlowButtons([]); return }
+    listBotFlowButtonsAction(botId).then((res) => {
+      if (!cancelled && res.ok) setFlowButtons(res.flows)
+    })
+    return () => { cancelled = true }
+  }, [botId])
   const [saved,            setSaved]            = useState(false)
   const [previewOpen,      setPreviewOpen]      = useState(false)
   const [nameError,        setNameError]        = useState(false)
@@ -1412,6 +1506,7 @@ function CampaignEditor({ campaign, bots, saving, onBack, onSave, onActivate, on
                       onUpdate={updateStep} onDelete={deleteStep}
                       onMoveUp={() => moveStep(step.id, -1)}
                       onMoveDown={() => moveStep(step.id, 1)}
+                      flowButtons={flowButtons}
                     />
                     {i < steps.length - 1 && (
                       <div className="flex justify-center text-text-subtle">

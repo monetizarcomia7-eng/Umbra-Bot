@@ -110,6 +110,17 @@ export interface BotChannel {
   canInvite: boolean
 }
 
+// Nó de "Botões" de um fluxo — usado no Remarketing para reusar os botões e continuar o fluxo
+export interface FlowButtonNode {
+  nodeId:  string
+  options: string[]
+}
+export interface FlowWithButtons {
+  flowId:   string
+  flowName: string
+  nodes:    FlowButtonNode[]
+}
+
 export interface FlowEdgeType {
   id: string
   source: string

@@ -8,7 +8,7 @@ import { SupabaseClient } from '@supabase/supabase-js'
 import { decryptToken } from '@/lib/crypto'
 import { sendTelegramMessage } from '@/lib/telegram'
 import { sendTelegramPhoto, sendTelegramVideo } from '@/lib/flow-engine'
-import type { BotChannel } from '@/app/dashboard/flows/_shared/types'
+import type { BotChannel, FlowWithButtons } from '@/app/dashboard/flows/_shared/types'
 
 // ─── Schemas Zod ────────────────────────────────────────────────────────────
 
@@ -911,4 +911,37 @@ export async function connectBotChannelAction(
       canInvite,
     },
   }
+}
+
+// ─── Botões de fluxo (Remarketing → continuar fluxo) ─────────────────────────
+
+// Lista os fluxos publicados do bot que têm nós de "Botões", com suas opções.
+// Usado no editor de campanhas para reusar os botões e continuar o fluxo.
+export async function listBotFlowButtonsAction(
+  botId: string | null,
+): Promise<{ ok: boolean; flows: FlowWithButtons[]; error?: string }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { ok: false, flows: [], error: 'Não autorizado.' }
+  if (!botId) return { ok: false, flows: [], error: 'Vincule um bot à campanha primeiro.' }
+
+  const { data } = await supabase
+    .from('flows')
+    .select('id, name, nodes')
+    .eq('user_id', user.id)
+    .eq('bot_id', botId)
+    .eq('status', 'published')
+
+  const flows: FlowWithButtons[] = (data ?? []).map((f) => {
+    const rawNodes = (f.nodes as Array<{ id?: string; type?: string; data?: { options?: unknown } }> | null) ?? []
+    const nodes = rawNodes
+      .filter((n) => n.type === 'buttons' && Array.isArray(n.data?.options) && (n.data!.options as unknown[]).length > 0)
+      .map((n) => ({
+        nodeId:  String(n.id),
+        options: (n.data!.options as unknown[]).map((o) => String(o)).slice(0, 6),
+      }))
+    return { flowId: String(f.id), flowName: (f.name as string) ?? 'Fluxo', nodes }
+  }).filter((f) => f.nodes.length > 0)
+
+  return { ok: true, flows }
 }

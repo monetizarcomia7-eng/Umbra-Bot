@@ -15,9 +15,18 @@ import {
 } from '@/lib/flow-engine'
 import { readWindow, isWithinWindow } from '@/lib/schedule'
 
-// Constrói o inline_keyboard (1 botão por linha) a partir dos botões da etapa.
-// Só inclui botões com texto e URL http(s) válida — evita rejeição do Telegram.
-function buildStepKeyboard(step: CampaignStep): Array<Array<{ text: string; url: string }>> {
+// Constrói o inline_keyboard (1 botão por linha) da etapa.
+// Se a etapa tem flowRef (continuar fluxo), gera botões callback rmk:<execId>:<i>
+// que devolvem o lead ao fluxo. Senão, botões de link http(s) válidos.
+function buildStepKeyboard(
+  step: CampaignStep,
+  execId: string,
+): Array<Array<{ text: string; url?: string; callback_data?: string }>> {
+  if (step.flowRef?.flowId && step.flowRef.nodeId && (step.flowRef.options?.length ?? 0) > 0) {
+    return step.flowRef.options.slice(0, 6).map((opt, i) => [
+      { text: opt, callback_data: `rmk:${execId}:${i}` },
+    ])
+  }
   return (step.buttons ?? [])
     .filter((b) => b.label.trim() && /^https?:\/\//i.test(b.url.trim()))
     .slice(0, 3)
@@ -41,6 +50,7 @@ interface CampaignStep {
   message: string
   offer:   { product: string; price: number; cta: string } | null
   buttons?: { label: string; url: string }[]
+  flowRef?: { flowId: string; nodeId: string; flowName?: string; options: string[] } | null
 }
 
 interface RawCampaign {
@@ -542,7 +552,7 @@ export async function GET(request: Request) {
       const token     = decryptToken(bot.token as string)
       const firstName = ((contact.first_name || contact.name) as string) || ''
       const text      = buildMessage(step, firstName, bot.name as string)
-      const keyboard  = buildStepKeyboard(step)
+      const keyboard  = buildStepKeyboard(step, exec.id)
 
       const protect = Boolean((bot as { anti_clone?: boolean }).anti_clone)
       if (keyboard.length > 0) {
