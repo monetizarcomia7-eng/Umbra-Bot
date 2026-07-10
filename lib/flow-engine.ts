@@ -149,6 +149,22 @@ export async function answerCallbackQuery(token: string, callbackQueryId: string
   return tgApi(token, 'answerCallbackQuery', { callback_query_id: callbackQueryId })
 }
 
+// Gera um link de convite de uso único para um grupo/canal.
+// Requer que o bot seja ADMIN do chat com permissão de convidar. Retorna null em falha.
+export async function createChatInviteLink(token: string, chatRef: string): Promise<string | null> {
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${token}/createChatInviteLink`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatRef, member_limit: 1, name: 'Umbra Bot' }),
+    })
+    const j = await res.json().catch(() => null)
+    return j?.ok && typeof j.result?.invite_link === 'string' ? j.result.invite_link : null
+  } catch {
+    return null
+  }
+}
+
 // Wrapper de sendTelegramMessage que retorna boolean (lib/telegram retorna void)
 async function sendMessageOk(token: string, chatId: number, text: string, protect = false): Promise<boolean> {
   try {
@@ -663,7 +679,13 @@ export async function executeFlowNode(opts: ExecuteOpts): Promise<void> {
 
       if (!accessToken || price <= 0) {
         await sendMessageOk(plainToken, chatId, '😕 Ops! O pagamento está indisponível no momento. Tente novamente mais tarde. 🙏', protect)
-        await advance({ ok: false, errorMsg: 'pix: sem gateway ou preço inválido' })
+        // Falha na geração: NÃO segue para a saída "Pago" (senão entregaria sem pagamento).
+        logNodeEvent(supabase, {
+          userId, flowId, nodeId: node.id, nodeType: node.type,
+          contactId: contact.id, event: 'failed', errorMsg: 'pix: sem gateway ou preço inválido',
+          latencyMs: Date.now() - t0,
+        })
+        await clearFlowState(contact.id, supabase)
         break
       }
 
@@ -715,7 +737,13 @@ export async function executeFlowNode(opts: ExecuteOpts): Promise<void> {
       if (!mpData?.id || !pixInfo?.qr_code) {
         // Mensagem genérica para o cliente. O motivo real fica no log/telemetria.
         await sendMessageOk(plainToken, chatId, '😕 Ops! Não consegui gerar seu PIX agora. Tente novamente em alguns instantes. 🙏', protect)
-        await advance({ ok: false, errorMsg: `pix: MP falhou ${mpErrMsg.slice(0, 80)}` })
+        // Falha na geração: NÃO segue para a saída "Pago".
+        logNodeEvent(supabase, {
+          userId, flowId, nodeId: node.id, nodeType: node.type,
+          contactId: contact.id, event: 'failed', errorMsg: `pix: MP falhou ${mpErrMsg.slice(0, 80)}`,
+          latencyMs: Date.now() - t0,
+        })
+        await clearFlowState(contact.id, supabase)
         break
       }
 
@@ -741,6 +769,9 @@ export async function executeFlowNode(opts: ExecuteOpts): Promise<void> {
         product_name:         product,
         customer_name:        firstName || null,
         customer_telegram_id: String(chatId),
+        contact_id:           contact.id,
+        flow_node_id:         node.id,       // nó de Pix — usado para retomar após o pagamento
+        flow_version:         flowVersion,   // snapshot do fluxo no momento da cobrança
       }).select('id').single()
 
       const txId = txRow?.id ?? ''
@@ -769,7 +800,58 @@ export async function executeFlowNode(opts: ExecuteOpts): Promise<void> {
         [{ text: '📋 Copiar Chave Pix', copy_text: { text: pixInfo.qr_code } }],
       ]
       const ok = await sendTelegramWithKeyboard(plainToken, chatId, text, kb, protect)
-      await advance({ ok, errorMsg: ok ? undefined : 'pix: envio falhou' })
+      logNodeEvent(supabase, {
+        userId, flowId, nodeId: node.id, nodeType: node.type,
+        contactId: contact.id, event: ok ? 'sent' : 'failed',
+        errorMsg: ok ? undefined : 'pix: envio falhou', latencyMs: Date.now() - t0,
+      })
+      // Não avança na hora: o fluxo fica "parqueado" aguardando o pagamento.
+      // A retomada acontece em resumeFlowAfterPayment() (webhook do MP ou "Verificar Status"),
+      // seguindo a saída "✅ Pago" (handle 0) ou "❌ Não pago" (handle 1).
+      await clearFlowState(contact.id, supabase)
+      break
+    }
+
+    case 'delivery': {
+      // Entrega do acesso — só é alcançado após o pagamento confirmado (saída "Pago" do Pix).
+      const mode    = (node.data.mode as string) ?? 'link'
+      const message = subVars((node.data.message as string) ?? '', flowVars, firstName, botName)
+      const btnText = subVars((node.data.buttonText as string) ?? 'Acessar agora', flowVars, firstName, botName)
+      let accessUrl = (node.data.url as string) ?? ''
+      let ok = true
+
+      if (mode === 'invite') {
+        const chatRef = String(node.data.chatRef ?? '').trim()
+        const link = chatRef ? await createChatInviteLink(plainToken, chatRef) : null
+        if (link) {
+          accessUrl = link
+        } else {
+          // Não gerou o convite (bot não é admin, chat inválido...): avisa o cliente sem quebrar.
+          ok = false
+          if (message.trim()) await sendMessageOk(plainToken, chatId, message, protect)
+          await sendMessageOk(
+            plainToken, chatId,
+            '⚠️ Seu pagamento foi confirmado, mas não consegui gerar o convite automático. Fale com o suporte para receber seu acesso. 🙏',
+            protect,
+          )
+          await advance({ ok: false, errorMsg: 'delivery: convite não gerado' })
+          break
+        }
+      }
+
+      if (accessUrl) {
+        // Mensagem + botão com o link de acesso.
+        ok = await sendTelegramWithKeyboard(
+          plainToken, chatId,
+          message.trim() ? message : btnText,
+          [[{ text: btnText, url: accessUrl }]],
+          protect,
+        )
+      } else if (message.trim()) {
+        // Sem link configurado: manda só a mensagem.
+        ok = await sendMessageOk(plainToken, chatId, message, protect)
+      }
+      await advance({ ok, errorMsg: ok ? undefined : 'delivery: envio falhou' })
       break
     }
 
@@ -871,6 +953,106 @@ export async function executeFlowNode(opts: ExecuteOpts): Promise<void> {
       await clearFlowState(contact.id, supabase)
       break
   }
+}
+
+/**
+ * Retoma o fluxo após a confirmação (ou expiração) de um pagamento gerado por um nó de Pix.
+ * Chamado pelo webhook do Mercado Pago e pelo botão "Verificar Status" do Telegram.
+ *
+ * Idempotente: a trava atômica (flow_delivered) garante que a entrega aconteça UMA única vez,
+ * mesmo que webhook e clique disparem ao mesmo tempo.
+ *
+ *   paid=true  → segue a saída "✅ Pago"     (handle 0) → normalmente o nó Entregável.
+ *   paid=false → segue a saída "❌ Não pago" (handle 1) → follow-up opcional (só se houver aresta).
+ */
+export async function resumeFlowAfterPayment(opts: {
+  txId: string
+  paid: boolean
+  supabase?: SupabaseAdmin
+}): Promise<void> {
+  const supabase = opts.supabase ?? createAdminClient()
+  const { txId, paid } = opts
+
+  // Trava atômica de idempotência: só prossegue quem conseguir virar flow_delivered=true.
+  // O filtro flow_node_id garante que transações de checkout (sem fluxo) não são afetadas.
+  const { data: tx } = await supabase
+    .from('transactions')
+    .update({ flow_delivered: true })
+    .eq('id', txId)
+    .eq('flow_delivered', false)
+    .not('flow_node_id', 'is', null)
+    .select('id, user_id, bot_id, flow_id, flow_node_id, flow_version, contact_id, customer_telegram_id, customer_name')
+    .maybeSingle()
+
+  if (!tx || !tx.flow_id || !tx.flow_node_id || !tx.bot_id) return
+
+  const { data: bot } = await supabase
+    .from('bots')
+    .select('token, name, anti_clone')
+    .eq('id', tx.bot_id)
+    .single()
+  if (!bot?.token) return
+  let plainToken: string
+  try { plainToken = decryptToken(bot.token) } catch { return }
+
+  // Snapshot do fluxo na versão em que a cobrança nasceu (imutável).
+  const flow = await loadFlow(tx.flow_id, supabase, tx.flow_version as number | null)
+  if (!flow) return
+  const edgeMap = buildEdgeMap(flow.edges)
+
+  // Saída: 0 = Pago, 1 = Não pago. Estritamente separadas — um pagamento NUNCA
+  // segue a aresta de "Não pago" (evita entregar/atalhar pela ramificação errada).
+  const outEdges = edgeMap.get(tx.flow_node_id) ?? []
+  const edge = paid
+    // Pago: aresta do handle 0; fallback só para aresta sem handle definido (dados legados).
+    ? (outEdges.find(e => Number(e.sourceHandle) === 0) ?? outEdges.find(e => e.sourceHandle == null))
+    // Não pago: apenas a aresta do handle 1 (nada de fallback).
+    : outEdges.find(e => Number(e.sourceHandle) === 1)
+  if (!edge) return  // sem aresta nessa saída (ex.: follow-up de "Não pago" não configurado)
+
+  // Carrega o contato (por contact_id; fallback por bot_id + telegram_id).
+  type ContactRow = { id: string; first_name: string | null; tags: string[] | null; flow_vars: Record<string, string> | null }
+  let contactRow: ContactRow | null = null
+  if (tx.contact_id) {
+    const { data } = await supabase
+      .from('contacts').select('id, first_name, tags, flow_vars').eq('id', tx.contact_id).maybeSingle()
+    contactRow = (data as ContactRow | null) ?? null
+  }
+  if (!contactRow && tx.customer_telegram_id) {
+    const { data } = await supabase
+      .from('contacts').select('id, first_name, tags, flow_vars')
+      .eq('bot_id', tx.bot_id).eq('telegram_id', tx.customer_telegram_id).maybeSingle()
+    contactRow = (data as ContactRow | null) ?? null
+  }
+  if (!contactRow || !tx.customer_telegram_id) return
+
+  const chatId = Number(tx.customer_telegram_id)
+  if (!Number.isFinite(chatId)) return
+
+  const firstName = contactRow.first_name ?? tx.customer_name ?? ''
+
+  await executeFlowNode({
+    nodeId:   edge.target,
+    nodes:    flow.nodes,
+    edgeMap,
+    contact: {
+      id:           contactRow.id,
+      first_name:   firstName,
+      tags:         contactRow.tags ?? [],
+      flow_id:      tx.flow_id,
+      flow_node_id: null,
+      flow_vars:    contactRow.flow_vars ?? {},
+    },
+    firstName,
+    botName:        bot.name ?? '',
+    plainToken,
+    chatId,
+    flowId:         tx.flow_id,
+    flowVersion:    (tx.flow_version as number | null) ?? null,
+    userId:         tx.user_id,
+    supabase,
+    protectContent: Boolean((bot as { anti_clone?: boolean }).anti_clone),
+  })
 }
 
 // ─── Re-exports úteis ────────────────────────────────────────────────────────

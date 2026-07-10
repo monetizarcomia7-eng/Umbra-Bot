@@ -258,6 +258,10 @@ export function getNodePreview(node: FlowNodeType): string {
     case 'downsell':    return `${node.data.product || 'Alternativa'} · ${fmtBRLdec(node.data.discountPrice || 0)}`
     case 'orderbump':   return `${node.data.product || 'Bônus'} por ${fmtBRLdec(node.data.price || 0)}`
     case 'remarketing': return `Em ${node.data.delayAmount} ${node.data.delayUnit}: "${(node.data.text || '').slice(0, 40)}…"`
+    case 'pix':         return `PIX no chat · ${fmtBRLdec(node.data.price || 0)}`
+    case 'delivery':    return node.data.mode === 'invite'
+                          ? `🎁 Convite único · ${node.data.chatRef || '(grupo)'}`
+                          : `🎁 Link · ${node.data.url || '(sem link)'}`
     default: return ''
   }
 }
@@ -374,6 +378,16 @@ export function validateFlow(nodes: FlowNodeType[], edges: FlowEdgeType[]): Flow
       case 'tag':
         if (!d.tag?.trim())
           errors.push({ nodeId: node.id, message: 'Nó "Tag" precisa de um nome de tag.' })
+        break
+      case 'delivery':
+        if (d.mode === 'invite') {
+          if (!d.chatRef?.trim())
+            errors.push({ nodeId: node.id, message: 'Nó "Entregável" (convite) precisa do @grupo ou ID do grupo/canal.' })
+        } else if (!d.url?.trim()) {
+          errors.push({ nodeId: node.id, message: 'Nó "Entregável" precisa do link de acesso.' })
+        } else if (!isSafeUrl(d.url)) {
+          errors.push({ nodeId: node.id, message: 'Nó "Entregável" tem link inválido.' })
+        }
         break
     }
   }

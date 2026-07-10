@@ -36,6 +36,7 @@ const NODE_COLORS: Record<string, { bg: string; accent: string }> = {
   downsell:   { bg: 'var(--warning)', accent: 'var(--warning)' },
   orderbump:  { bg: 'oklch(0.6 0.18 300)', accent: 'oklch(0.6 0.18 300)' },
   remarketing:{ bg: 'var(--danger)',  accent: 'var(--danger)' },
+  delivery:   { bg: 'oklch(0.62 0.17 155)', accent: 'oklch(0.62 0.17 155)' },
 }
 
 function FlowNodeRaw({ node, isSelected, isStart, isError, stats, connecting, onMouseDown, onDoubleClick, onStartConnect, onEndConnect }: Props) {
@@ -176,6 +177,8 @@ function FlowNodeRaw({ node, isSelected, isStart, isError, stats, connecting, on
           : i === 0 ? x + 50 : x + NODE_W - 50
         const label = node.type === 'condition'
           ? (i === 0 ? 'Sim' : 'Não')
+          : node.type === 'pix'
+          ? (i === 0 ? '✅ Pago' : '❌ Não pago')
           : node.data.options?.[i] ?? `${i + 1}`
         return (
           <NodeHandle

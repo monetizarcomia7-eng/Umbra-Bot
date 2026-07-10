@@ -109,6 +109,13 @@ const REMARKETING_DATA  = z.object({
   mediaUrl:    URL_SAFE.default(''),               // URL pública (alternativa à biblioteca)
   mediaFileId: z.string().max(256).default(''),    // file_id da Biblioteca de Mídia
 })
+const DELIVERY_DATA     = z.object({
+  mode:       z.enum(['link','invite']).default('link'),
+  message:    z.string().max(4096).default(''),
+  url:        URL_SAFE.default(''),                 // modo 'link': link fixo do grupo/produto
+  chatRef:    z.string().max(120).default(''),      // modo 'invite': @grupo ou id -100... do grupo/canal
+  buttonText: z.string().max(64).default('Acessar agora'),
+})
 
 const NODE_SCHEMA = z.discriminatedUnion('type', [
   z.object({ ...NODE_BASE, type: z.literal('message'),     data: MESSAGE_DATA }),
@@ -130,6 +137,7 @@ const NODE_SCHEMA = z.discriminatedUnion('type', [
   z.object({ ...NODE_BASE, type: z.literal('downsell'),    data: UPSELL_DATA }),
   z.object({ ...NODE_BASE, type: z.literal('orderbump'),   data: ORDERBUMP_DATA }),
   z.object({ ...NODE_BASE, type: z.literal('remarketing'), data: REMARKETING_DATA }),
+  z.object({ ...NODE_BASE, type: z.literal('delivery'),    data: DELIVERY_DATA }),
 ])
 
 // 1.7 — sourceHandle agora é só number (0-20)

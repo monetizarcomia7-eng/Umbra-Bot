@@ -7,6 +7,7 @@ import { sendTelegramMessage } from '@/lib/telegram'
 import { fireCapiPurchase } from '@/lib/capi'
 import { dispatchWebhookEvent } from '@/lib/webhooks'
 import { notifyOwnerTelegram } from '@/lib/notifications'
+import { resumeFlowAfterPayment } from '@/lib/flow-engine'
 
 // Verifies Mercado Pago webhook signature.
 // MP sends: x-signature: ts=<ts>,v1=<hmac>
@@ -235,6 +236,16 @@ export async function POST(request: NextRequest) {
         Sentry.captureException(err, { extra: { txId: tx.id, context: 'mp_webhook_pix_expired' } })
       })
     }
+  }
+
+  // ── Entrega automática do fluxo (nó Entregável) ────────────────────────────
+  // Retoma o fluxo na saída "✅ Pago" (approved) ou "❌ Não pago" (cancelled).
+  // Idempotente: a trava flow_delivered garante entrega única mesmo com o clique
+  // em "Verificar Status" acontecendo em paralelo. Só afeta transações de fluxo (Pix no chat).
+  if (newStatus === 'approved' || newStatus === 'cancelled') {
+    await resumeFlowAfterPayment({ txId: tx.id, paid: newStatus === 'approved' }).catch((err) => {
+      Sentry.captureException(err, { extra: { txId: tx.id, context: 'mp_webhook_flow_delivery' } })
+    })
   }
 
   return new NextResponse(null, { status: 200 })

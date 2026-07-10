@@ -84,6 +84,10 @@ export interface NodeData {
   mediaKind?: 'none' | 'image' | 'video'
   mediaUrl?: string
   mediaFileId?: string
+  // Entregável (delivery) — entrega o acesso só para quem pagou
+  mode?: 'link' | 'invite'   // link fixo OU convite único do Telegram
+  chatRef?: string           // @grupo ou id -100... (modo convite)
+  buttonText?: string        // texto do botão de acesso
 }
 
 export interface FlowNodeType {

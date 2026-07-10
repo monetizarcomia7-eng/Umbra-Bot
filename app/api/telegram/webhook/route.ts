@@ -13,6 +13,7 @@ import {
   getLatestFlowVersion,
   executeFlowNode,
   answerCallbackQuery,
+  resumeFlowAfterPayment,
 } from '@/lib/flow-engine'
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
@@ -203,6 +204,10 @@ export async function POST(request: NextRequest) {
       if (tx?.status === 'approved')       msg = '✅ <b>Pagamento confirmado!</b> Obrigado pela sua compra. 🎉'
       else if (tx?.status === 'cancelled') msg = '❌ Este PIX expirou. Gere um novo para concluir o pagamento.'
       await sendTelegramMessage(plainToken, cbChatId, msg).catch(() => {})
+      // Retoma o fluxo na saída "Pago"/"Não pago" (entrega). Idempotente — só entrega uma vez.
+      if (tx?.status === 'approved' || tx?.status === 'cancelled') {
+        await resumeFlowAfterPayment({ txId, paid: tx.status === 'approved', supabase }).catch(() => {})
+      }
       return new NextResponse(null, { status: 200 })
     }
 

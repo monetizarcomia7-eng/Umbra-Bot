@@ -83,6 +83,13 @@ function buildPreviewPath(
     case 'checkout':
       entries.push({ side: 'bot', text: `🛒 Checkout: ${node.data.url || '(url)'}` } as ChatBubble)
       break
+    case 'pix':
+      entries.push({ side: 'bot', text: `💠 PIX de ${node.data.product || 'produto'} (QR + copia-e-cola)` } as ChatBubble)
+      entries.push({ side: 'user', text: '💳 (paga)' } as ChatBubble)
+      break
+    case 'delivery':
+      botText(node.data.message || '🎁 Acesso liberado!', [node.data.buttonText || 'Acessar'])
+      break
     case 'phone':
       botText((node.data.text as string) || 'Compartilhe seu telefone')
       entries.push({ side: 'user', text: '📱 (número)' } as ChatBubble)

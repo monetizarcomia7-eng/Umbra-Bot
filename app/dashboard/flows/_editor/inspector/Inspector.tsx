@@ -568,7 +568,61 @@ export default function Inspector({ node, stats, botId, onChange, onDelete, onDu
             </Field>
             <p className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>
               Gera o PIX no chat (QR + copia-e-cola + botões). Requer o gateway Mercado Pago conectado no bot.
-              A confirmação do pagamento é enviada automaticamente ao cliente.
+              O fluxo só avança quando o pagamento cai: ligue o nó <b>Entregável</b> na saída <b>✅ Pago</b>
+              e (opcional) uma mensagem de follow-up na saída <b>❌ Não pago</b>.
+            </p>
+          </>
+        )}
+
+        {/* Entregável */}
+        {node.type === 'delivery' && (
+          <>
+            <Field label="Mensagem de entrega" hint="Suporta {nome}, {email}, {bot}, {data}">
+              <textarea
+                className={inputCls}
+                style={{ ...inputStyle, resize: 'vertical', minHeight: 70 }}
+                value={node.data.message ?? ''}
+                onChange={e => set({ message: e.target.value })}
+                placeholder="🎉 Pagamento confirmado! Aqui está o seu acesso:"
+              />
+            </Field>
+            <Field label="Forma de entrega">
+              <select className={inputCls} style={inputStyle}
+                value={(node.data.mode as string) ?? 'link'}
+                onChange={e => set({ mode: e.target.value as 'link' | 'invite' })}
+              >
+                <option value="link">Link fixo (grupo, canal, área de membros…)</option>
+                <option value="invite">Convite único do Telegram (por venda)</option>
+              </select>
+            </Field>
+            {((node.data.mode as string) ?? 'link') === 'link' ? (
+              <Field label="Link de acesso" hint="Enviado só para quem pagou. Ex.: convite do grupo, área de membros, Drive.">
+                <UrlInput
+                  value={node.data.url ?? ''}
+                  onChange={v => set({ url: v })}
+                  placeholder="https://t.me/+abc123 ou https://..."
+                />
+              </Field>
+            ) : (
+              <Field label="Grupo / canal do Telegram" hint="@usuario do grupo público ou ID -100... do grupo/canal. O bot precisa ser ADMIN com permissão de convidar.">
+                <input className={inputCls} style={inputStyle}
+                  value={node.data.chatRef ?? ''}
+                  onChange={e => set({ chatRef: e.target.value })}
+                  placeholder="@meugrupo  ou  -1001234567890"
+                />
+              </Field>
+            )}
+            <Field label="Texto do botão">
+              <input className={inputCls} style={inputStyle}
+                value={node.data.buttonText ?? ''}
+                onChange={e => set({ buttonText: e.target.value })}
+                placeholder="🔓 Acessar agora"
+              />
+            </Field>
+            <p className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>
+              Conecte este nó na saída <b>✅ Pago</b> do Pix. Ele só é executado após o pagamento
+              ser confirmado (webhook do Mercado Pago ou clique em “Verificar Status”), e entrega uma única vez.
+              No modo <b>convite único</b>, o bot gera um link de uso único a cada venda.
             </p>
           </>
         )}
