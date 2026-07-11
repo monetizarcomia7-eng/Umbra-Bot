@@ -745,11 +745,12 @@ function FlowButtonPicker({ flows, onPick }: {
   )
 }
 
-function StepCard({ step, index, total, onUpdate, onDelete, onMoveUp, onMoveDown, flowButtons, botId }: {
+function StepCard({ step, index, total, onUpdate, onCommit, onDelete, onMoveUp, onMoveDown, flowButtons, botId }: {
   step: CampaignStep; index: number; total: number
   flowButtons: FlowWithButtons[]
   botId: string | null
   onUpdate: (s: CampaignStep) => void
+  onCommit: (s: CampaignStep) => void   // salva imediatamente (fluxo/mídia)
   onDelete: (id: string) => void
   onMoveUp: (id: string) => void
   onMoveDown: (id: string) => void
@@ -766,16 +767,16 @@ function StepCard({ step, index, total, onUpdate, onDelete, onMoveUp, onMoveDown
   const media = step.media ?? []
   function addMediaFromLibrary(item: MediaItem) {
     if (media.length >= 10) return
-    onUpdate({ ...step, media: [...media, { kind: item.media_type, fileId: item.file_id }] })
+    onCommit({ ...step, media: [...media, { kind: item.media_type, fileId: item.file_id }] })
   }
   function addMediaUrl() {
     if (media.length >= 10) return
     const url = window.prompt('Cole a URL da imagem ou vídeo:')?.trim()
     if (!url) return
     const kind = /\.(mp4|mov|webm|m4v)(\?|$)/i.test(url) ? 'video' : 'image'
-    onUpdate({ ...step, media: [...media, { kind, url }] })
+    onCommit({ ...step, media: [...media, { kind, url }] })
   }
-  function removeMedia(i: number) { onUpdate({ ...step, media: media.filter((_, idx) => idx !== i) }) }
+  function removeMedia(i: number) { onCommit({ ...step, media: media.filter((_, idx) => idx !== i) }) }
 
   const buttons = step.buttons ?? []
   function addButton() {
@@ -1003,7 +1004,7 @@ function StepCard({ step, index, total, onUpdate, onDelete, onMoveUp, onMoveDown
               <Icon name="bot" size={11} /> Continuar fluxo (opcional)
             </div>
             {step.flowRef && (
-              <button onClick={() => onUpdate({ ...step, flowRef: null })}
+              <button onClick={() => onCommit({ ...step, flowRef: null })}
                 className="text-[10.5px] text-text-muted hover:text-text inline-flex items-center gap-1 focus:outline-none rounded px-1">
                 <Icon name="x" size={11} /> remover
               </button>
@@ -1022,7 +1023,7 @@ function StepCard({ step, index, total, onUpdate, onDelete, onMoveUp, onMoveDown
           ) : flowButtons.length === 0 ? (
             <p className="text-[11px] text-text-muted">Nenhum fluxo publicado com botões para este bot. Crie/publique um fluxo com um nó “Botões” vinculado a este bot.</p>
           ) : (
-            <FlowButtonPicker flows={flowButtons} onPick={(ref) => onUpdate({ ...step, flowRef: ref })} />
+            <FlowButtonPicker flows={flowButtons} onPick={(ref) => onCommit({ ...step, flowRef: ref })} />
           )}
         </div>
 
@@ -1505,6 +1506,16 @@ function CampaignEditor({ campaign, bots, saving, onBack, onSave, onActivate, on
     setTimeout(() => setSaved(false), 2500)
   }
 
+  // Commit imediato de uma etapa (fluxo/mídia): salva já, sem esperar o auto-save de 30 s.
+  async function commitStep(updated: CampaignStep) {
+    const newSteps = stateRef.current.steps.map((s) => (s.id === updated.id ? updated : s))
+    setSteps(newSteps)
+    if (!name.trim()) return
+    await onSave({ ...campaignRef.current, name, description: desc, trigger, audience, triggerConfig, botId, steps: newSteps })
+    setSaved(true)
+    setTimeout(() => setSaved(false), 2000)
+  }
+
   function handleTriggerUpdate(patch: Partial<Campaign>) {
     if (patch.trigger  !== undefined) setTrigger(patch.trigger)
     if (patch.audience !== undefined) setAudience(patch.audience)
@@ -1591,7 +1602,7 @@ function CampaignEditor({ campaign, bots, saving, onBack, onSave, onActivate, on
                   <React.Fragment key={step.id}>
                     <StepCard
                       step={step} index={i} total={steps.length}
-                      onUpdate={updateStep} onDelete={deleteStep}
+                      onUpdate={updateStep} onCommit={commitStep} onDelete={deleteStep}
                       onMoveUp={() => moveStep(step.id, -1)}
                       onMoveDown={() => moveStep(step.id, 1)}
                       flowButtons={flowButtons}
