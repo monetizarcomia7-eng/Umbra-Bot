@@ -1507,11 +1507,14 @@ function CampaignEditor({ campaign, bots, saving, onBack, onSave, onActivate, on
   }
 
   // Commit imediato de uma etapa (fluxo/mídia): salva já, sem esperar o auto-save de 30 s.
+  // Cancela qualquer auto-save pendente (evita que um timer antigo salve steps stale e
+  // sobrescreva o flowRef/mídia recém-selecionados) e usa os valores atuais direto.
   async function commitStep(updated: CampaignStep) {
-    const newSteps = stateRef.current.steps.map((s) => (s.id === updated.id ? updated : s))
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current)
+    const newSteps = steps.map((s) => (s.id === updated.id ? updated : s))
     setSteps(newSteps)
     if (!name.trim()) return
-    await onSave({ ...campaignRef.current, name, description: desc, trigger, audience, triggerConfig, botId, steps: newSteps })
+    await onSave({ ...campaign, name, description: desc, trigger, audience, triggerConfig, botId, steps: newSteps })
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
   }
