@@ -719,6 +719,10 @@ function FlowButtonPicker({ flows, onPick }: {
 }) {
   const [flowId, setFlowId] = useState('')
   const flow = flows.find((f) => f.flowId === flowId)
+  // Remove grupos de botões duplicados (mesmas opções) para não confundir.
+  const uniqueNodes = flow
+    ? flow.nodes.filter((n, i, arr) => arr.findIndex((x) => x.options.join('|') === n.options.join('|')) === i)
+    : []
   return (
     <div className="space-y-2">
       <select className={INPUT_CLS} value={flowId} onChange={(e) => setFlowId(e.target.value)}>
@@ -727,16 +731,24 @@ function FlowButtonPicker({ flows, onPick }: {
       </select>
       {flow && (
         <div className="space-y-1.5">
-          <p className="text-[10.5px] text-text-muted">Escolha o grupo de botões para reusar:</p>
-          {flow.nodes.map((n) => (
+          <p className="text-[11px] font-medium text-text">👇 Clique no grupo de botões para usar:</p>
+          {uniqueNodes.map((n, idx) => (
             <button key={n.nodeId} type="button"
               onClick={() => onPick({ flowId: flow.flowId, nodeId: n.nodeId, flowName: flow.flowName, options: n.options })}
-              className="w-full text-left px-2.5 py-1.5 rounded-md border border-border hover:border-primary/50 hover:bg-primary/5 transition-colors focus:outline-none">
-              <div className="flex flex-wrap gap-1">
-                {n.options.map((o, i) => (
-                  <span key={i} className="text-[11px] px-1.5 py-0.5 rounded bg-surface border border-primary/30 text-primary">{o}</span>
-                ))}
+              className="w-full flex items-center justify-between gap-2 text-left px-2.5 py-2 rounded-lg border-2 border-border hover:border-primary hover:bg-primary/5 transition-colors focus:outline-none cursor-pointer">
+              <div className="min-w-0">
+                {uniqueNodes.length > 1 && (
+                  <div className="text-[10px] text-text-subtle uppercase tracking-wide mb-1">Grupo {idx + 1}</div>
+                )}
+                <div className="flex flex-wrap gap-1">
+                  {n.options.map((o, i) => (
+                    <span key={i} className="text-[11px] px-1.5 py-0.5 rounded bg-surface border border-primary/30 text-primary">{o}</span>
+                  ))}
+                </div>
               </div>
+              <span className="shrink-0 inline-flex items-center gap-1 text-[11px] font-semibold text-white bg-primary rounded-md px-2 py-1">
+                Usar <Icon name="check" size={11} />
+              </span>
             </button>
           ))}
         </div>
@@ -1011,8 +1023,11 @@ function StepCard({ step, index, total, onUpdate, onCommit, onDelete, onMoveUp, 
             )}
           </div>
           {step.flowRef ? (
-            <div>
-              <div className="text-[11.5px] text-text mb-1.5">Fluxo: <b>{step.flowRef.flowName}</b></div>
+            <div className="rounded-lg p-2" style={{ background: 'var(--success-soft, rgba(34,197,94,0.08))', border: '1px solid color-mix(in oklab, var(--success) 40%, var(--border))' }}>
+              <div className="flex items-center gap-1.5 text-[11.5px] text-text mb-1.5">
+                <Icon name="check-circle-2" size={13} style={{ color: 'var(--success)' }} />
+                Botões salvos do fluxo: <b>{step.flowRef.flowName}</b>
+              </div>
               <div className="flex flex-wrap gap-1">
                 {step.flowRef.options.map((o, i) => (
                   <span key={i} className="text-[11px] px-1.5 py-0.5 rounded bg-surface border border-primary/30 text-primary">{o}</span>
