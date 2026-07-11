@@ -26,6 +26,7 @@ import {
 interface LinkItem {
   id: string; type: string; label: string; url: string
   icon: string; highlight: boolean
+  imageUrl?: string   // tipo 'image': fonte da imagem (url = link opcional ao clicar)
 }
 
 interface SocialIcon { platform: string; url: string }
@@ -78,6 +79,7 @@ const linkTypes: Record<string, { label: string; iconName: string; color: string
   custom:  { label: 'Link externo',    iconName: 'link',         color: 'oklch(0.58 0.05 280)' },
   social:  { label: 'Rede social',     iconName: 'at-sign',      color: 'oklch(0.62 0.18 320)' },
   video:   { label: 'Vídeo / YouTube', iconName: 'play',         color: '#ef4444' },
+  image:   { label: 'Imagem',          iconName: 'image',        color: 'oklch(0.62 0.16 200)' },
 }
 
 const SOCIAL_PRESETS = [
@@ -175,7 +177,7 @@ const ICON_MAP: Record<string, React.ElementType> = {
   bot: Bot, 'shopping-bag': ShoppingBag, link: Link2, 'at-sign': AtSign,
   play: Play, instagram: Camera, youtube: Play, music: Music,
   twitter: MessageCircle, linkedin: Briefcase, facebook: Globe, calendar: Calendar,
-  'arrow-up-right': ArrowUpRight,
+  'arrow-up-right': ArrowUpRight, image: ImageIcon,
 }
 
 function DynIcon({ name, size = 14, className }: { name: string; size?: number; className?: string }) {
@@ -392,20 +394,32 @@ function PhonePreview({ page, theme, publicUrl }: { page: BioPage; theme: ThemeP
             <div className="text-center text-[11px] py-6 italic" style={{ color: t.muted }}>Nenhum link adicionado.</div>
           )}
           {page.links.map((l) => (
-            <div key={l.id} className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-[12px] font-semibold"
-              style={{
-                background: l.highlight ? t.primary : t.surface,
-                color: l.highlight ? '#fff' : t.text,
-                borderRadius: buttonRadius,
-                border: l.highlight ? 'none' : `1px solid ${t.primary}33`,
-              }}
-            >
-              <span className={`w-6 h-6 rounded flex items-center justify-center shrink-0 ${l.highlight ? 'bg-white/20' : ''}`}>
-                <DynIcon name={l.icon} size={12} />
-              </span>
-              <span className="flex-1 truncate">{l.label}</span>
-              <ArrowUpRight size={11} style={{ opacity: 0.5 }} />
-            </div>
+            l.type === 'image' ? (
+              l.imageUrl ? (
+                <img key={l.id} src={l.imageUrl} alt={l.label || ''}
+                  className="w-full object-cover" style={{ borderRadius: buttonRadius, maxHeight: 180 }} />
+              ) : (
+                <div key={l.id} className="w-full flex items-center justify-center py-6 text-[11px]"
+                  style={{ background: t.surface, color: t.muted, borderRadius: buttonRadius, border: `1px dashed ${t.primary}55` }}>
+                  Imagem (envie no editor)
+                </div>
+              )
+            ) : (
+              <div key={l.id} className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-[12px] font-semibold"
+                style={{
+                  background: l.highlight ? t.primary : t.surface,
+                  color: l.highlight ? '#fff' : t.text,
+                  borderRadius: buttonRadius,
+                  border: l.highlight ? 'none' : `1px solid ${t.primary}33`,
+                }}
+              >
+                <span className={`w-6 h-6 rounded flex items-center justify-center shrink-0 ${l.highlight ? 'bg-white/20' : ''}`}>
+                  <DynIcon name={l.icon} size={12} />
+                </span>
+                <span className="flex-1 truncate">{l.label}</span>
+                <ArrowUpRight size={11} style={{ opacity: 0.5 }} />
+              </div>
+            )
           ))}
         </div>
       </div>
@@ -432,14 +446,18 @@ function PhonePreview({ page, theme, publicUrl }: { page: BioPage; theme: ThemeP
    Link Item Row — drag-and-drop
    ============================================================ */
 
-function LinkItemRow({ link, onUpdate, onDelete, isDragOver, onDragStart, onDragEnd, onDragEnter, onDragOver: handleDragOver, onDrop }: {
+function LinkItemRow({ link, onUpdate, onDelete, onImageUpload, isDragOver, onDragStart, onDragEnd, onDragEnter, onDragOver: handleDragOver, onDrop }: {
   link: LinkItem
   onUpdate: (l: LinkItem) => void; onDelete: (id: string) => void
+  onImageUpload: (file: File) => Promise<void>
   isDragOver: boolean
   onDragStart: () => void; onDragEnd: () => void
   onDragEnter: () => void; onDragOver: (e: React.DragEvent) => void; onDrop: () => void
 }) {
   const lt = linkTypes[link.type] ?? linkTypes.custom
+  const fileRef = useRef<HTMLInputElement>(null)
+  const [uploading, setUploading] = useState(false)
+  async function doUpload(f: File) { setUploading(true); try { await onImageUpload(f) } finally { setUploading(false) } }
   return (
     <div
       draggable
@@ -458,11 +476,13 @@ function LinkItemRow({ link, onUpdate, onDelete, isDragOver, onDragStart, onDrag
           <DynIcon name={link.icon} size={14} />
         </div>
         <div className="flex-1 min-w-0 space-y-1.5">
-          <input type="text" value={link.label}
-            onChange={(e) => onUpdate({ ...link, label: e.target.value })}
-            placeholder="Rótulo do link"
-            className="w-full h-8 px-2.5 bg-[var(--surface-2)]/40 border border-[var(--border)] rounded-md text-[12.5px] font-medium text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/30 focus:border-[var(--primary)]/50"
-          />
+          {link.type !== 'image' && (
+            <input type="text" value={link.label}
+              onChange={(e) => onUpdate({ ...link, label: e.target.value })}
+              placeholder="Rótulo do link"
+              className="w-full h-8 px-2.5 bg-[var(--surface-2)]/40 border border-[var(--border)] rounded-md text-[12.5px] font-medium text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/30 focus:border-[var(--primary)]/50"
+            />
+          )}
           <div className="flex items-center gap-1.5">
             <select value={link.type}
               onChange={(e) => {
@@ -473,18 +493,41 @@ function LinkItemRow({ link, onUpdate, onDelete, isDragOver, onDragStart, onDrag
             >
               {Object.entries(linkTypes).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
             </select>
-            <input type="text" value={link.url}
-              onChange={(e) => onUpdate({ ...link, url: e.target.value })}
-              placeholder="https://…"
-              className="flex-1 h-8 px-2.5 bg-[var(--surface-2)]/40 border border-[var(--border)] rounded-md text-[11.5px] font-mono text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/30 focus:border-[var(--primary)]/50"
-            />
+            {link.type !== 'image' && (
+              <input type="text" value={link.url}
+                onChange={(e) => onUpdate({ ...link, url: e.target.value })}
+                placeholder="https://…"
+                className="flex-1 h-8 px-2.5 bg-[var(--surface-2)]/40 border border-[var(--border)] rounded-md text-[11.5px] font-mono text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/30 focus:border-[var(--primary)]/50"
+              />
+            )}
           </div>
-          <div className="flex items-center gap-3 pt-1">
-            <label className="inline-flex items-center gap-2 cursor-pointer">
-              <Toggle checked={!!link.highlight} onChange={() => onUpdate({ ...link, highlight: !link.highlight })} />
-              <span className="text-[11px] text-[var(--text-muted)]">Destacar</span>
-            </label>
-          </div>
+
+          {link.type === 'image' ? (
+            <>
+              {link.imageUrl && (
+                <img src={link.imageUrl} alt={link.label || ''} className="w-full max-h-36 object-cover rounded-md border border-[var(--border)]" />
+              )}
+              <input ref={fileRef} type="file" accept="image/*" className="hidden"
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) doUpload(f); e.currentTarget.value = '' }} />
+              <button type="button" onClick={() => fileRef.current?.click()} disabled={uploading}
+                className="inline-flex items-center gap-1.5 h-8 px-2.5 rounded-md border border-[var(--border)] text-[11.5px] text-[var(--text)] hover:bg-[var(--surface-2)] transition-colors disabled:opacity-50">
+                {uploading ? <Loader2 size={12} className="animate-spin" /> : <ImageIcon size={12} />}
+                {uploading ? 'Enviando…' : link.imageUrl ? 'Trocar imagem' : 'Enviar imagem'}
+              </button>
+              <input type="text" value={link.url}
+                onChange={(e) => onUpdate({ ...link, url: e.target.value })}
+                placeholder="Link ao clicar (opcional) — https://…"
+                className="w-full h-8 px-2.5 bg-[var(--surface-2)]/40 border border-[var(--border)] rounded-md text-[11.5px] font-mono text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/30 focus:border-[var(--primary)]/50"
+              />
+            </>
+          ) : (
+            <div className="flex items-center gap-3 pt-1">
+              <label className="inline-flex items-center gap-2 cursor-pointer">
+                <Toggle checked={!!link.highlight} onChange={() => onUpdate({ ...link, highlight: !link.highlight })} />
+                <span className="text-[11px] text-[var(--text-muted)]">Destacar</span>
+              </label>
+            </div>
+          )}
         </div>
         <button onClick={() => onDelete(link.id)}
           className="w-7 h-7 inline-flex items-center justify-center rounded-md text-[var(--text-muted)] hover:bg-red-500/10 hover:text-red-500 transition-colors focus:outline-none">
@@ -1243,6 +1286,29 @@ function BioLinkEditor({ userId, appUrl, initialPage, onBack, onSaved }: BioLink
     }
   }
 
+  async function handleLinkImageUpload(linkId: string, file: File) {
+    if (file.size > 5 * 1024 * 1024) {
+      showToast('Imagem deve ter no máximo 5 MB.', 'error')
+      return
+    }
+    if (!page.id) {
+      showToast('Salve a página antes de enviar imagens.', 'error')
+      return
+    }
+    try {
+      const sb = createClient()
+      const ext = file.name.split('.').pop()?.toLowerCase() ?? 'jpg'
+      const path = `${userId}/${page.id}-link-${linkId}.${ext}`
+      const { error: upErr } = await sb.storage.from('bio-avatars').upload(path, file, { upsert: true })
+      if (upErr) throw upErr
+      const { data: { publicUrl } } = sb.storage.from('bio-avatars').getPublicUrl(path)
+      const busted = `${publicUrl}?v=${Date.now()}`   // cache-bust ao re-enviar
+      setPage((p) => ({ ...p, links: p.links.map((l) => (l.id === linkId ? { ...l, imageUrl: busted } : l)) }))
+    } catch {
+      showToast('Erro ao enviar imagem.', 'error')
+    }
+  }
+
   const theme = themePresets.find((t) => t.id === page.themeId) ?? themePresets[0]
 
   const clicksByLink = useMemo(() => analytics.clicks_by_link ?? {}, [analytics.clicks_by_link])
@@ -1407,6 +1473,7 @@ function BioLinkEditor({ userId, appUrl, initialPage, onBack, onSaved }: BioLink
                 <LinkItemRow
                   key={l.id} link={l}
                   onUpdate={updateLink} onDelete={deleteLink}
+                  onImageUpload={(file) => handleLinkImageUpload(l.id, file)}
                   isDragOver={dragOverId === l.id}
                   onDragStart={() => setDragId(l.id)}
                   onDragEnd={() => { setDragId(null); setDragOverId(null) }}

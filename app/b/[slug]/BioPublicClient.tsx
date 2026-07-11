@@ -21,6 +21,7 @@ interface LinkItem {
   url: string
   icon: string
   highlight: boolean
+  imageUrl?: string
 }
 
 interface ThemePreset {
@@ -250,6 +251,29 @@ export function BioPublicClient({ biolink, slug }: Props) {
             </p>
           )}
           {links.map((link) => (
+            link.type === 'image' && link.imageUrl ? (
+              link.url ? (
+                <a
+                  key={link.id}
+                  href={link.url}
+                  onClick={(e) => handleLinkClick(link, e)}
+                  rel="noopener noreferrer"
+                  className="w-full block transition-transform duration-150 hover:scale-[1.015] active:scale-[0.99] cursor-pointer"
+                >
+                  <img src={link.imageUrl} alt={link.label || ''} loading="lazy"
+                    className="w-full object-cover" style={{ borderRadius: buttonRadius }} />
+                </a>
+              ) : (
+                <img
+                  key={link.id}
+                  src={link.imageUrl}
+                  alt={link.label || ''}
+                  loading="lazy"
+                  className="w-full object-cover"
+                  style={{ borderRadius: buttonRadius }}
+                />
+              )
+            ) : (
             <a
               key={link.id}
               href={link.url || '#'}
@@ -281,6 +305,7 @@ export function BioPublicClient({ biolink, slug }: Props) {
                 style={{ opacity: 0.5, flexShrink: 0 }}
               />
             </a>
+            )
           ))}
         </div>
 
