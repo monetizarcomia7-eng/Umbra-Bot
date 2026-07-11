@@ -1473,7 +1473,7 @@ function CampaignEditor({ campaign, bots, saving, onBack, onSave, onActivate, on
     || botId !== campaign.botId
     || JSON.stringify(steps) !== JSON.stringify(campaign.steps)
 
-  // Auto-save: debounce 30 s após a última alteração (pula se nome vazio)
+  // Auto-save: debounce 3 s após a última alteração (pula se nome vazio)
   useEffect(() => {
     if (!dirty || !name.trim()) return
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current)
@@ -1488,7 +1488,7 @@ function CampaignEditor({ campaign, bots, saving, onBack, onSave, onActivate, on
       })
       setSaved(true)
       setTimeout(() => setSaved(false), 2500)
-    }, 30_000)
+    }, 3_000)
     return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current) }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dirty, name, desc, trigger, audience, botId,
@@ -1574,7 +1574,7 @@ function CampaignEditor({ campaign, bots, saving, onBack, onSave, onActivate, on
             </span>
           )}
           {dirty && !saved && (
-            <span className="hidden sm:inline text-[10.5px] text-text-subtle mr-1">Auto-save em 30 s</span>
+            <span className="hidden sm:inline text-[10.5px] text-text-subtle mr-1">Salvando…</span>
           )}
           <Btn variant="ghost" size="sm" icon="eye" className="xl:hidden" onClick={() => setPreviewOpen(true)}>Prévia</Btn>
           <Btn variant="secondary" size="sm" icon="save" loading={saving} disabled={!dirty} onClick={save}>Salvar</Btn>
