@@ -10,6 +10,7 @@ import {
   executeFlowNode,
   sendTelegramPhoto,
   sendTelegramVideo,
+  sendTelegramMediaGroup,
   sendTelegramWithKeyboard,
   subVars,
 } from '@/lib/flow-engine'
@@ -51,6 +52,7 @@ interface CampaignStep {
   offer:   { product: string; price: number; cta: string } | null
   buttons?: { label: string; url: string }[]
   flowRef?: { flowId: string; nodeId: string; flowName?: string; options: string[] } | null
+  media?: { kind: 'image' | 'video'; fileId?: string; url?: string }[]
 }
 
 interface RawCampaign {
@@ -555,9 +557,19 @@ export async function GET(request: Request) {
       const keyboard  = buildStepKeyboard(step, exec.id)
 
       const protect = Boolean((bot as { anti_clone?: boolean }).anti_clone)
+
+      // Mídia da etapa (imagens/vídeos): 1 = foto/vídeo, 2+ = álbum. Enviada antes do texto.
+      const mediaRefs = (step.media ?? [])
+        .map((m) => ({ kind: m.kind, ref: m.fileId || m.url || '' }))
+        .filter((m) => m.ref)
+      if (mediaRefs.length > 0) {
+        await sendTelegramMediaGroup(token, Number(contact.telegram_id), mediaRefs, undefined, protect)
+      }
+
+      // Texto + botões. Se só há mídia (sem texto e sem botões), não manda mensagem vazia.
       if (keyboard.length > 0) {
         await sendTelegramWithKeyboard(token, Number(contact.telegram_id), text, keyboard, protect)
-      } else {
+      } else if (text.trim() || mediaRefs.length === 0) {
         await sendTelegramMessage(token, contact.telegram_id as string, text, 'HTML', protect)
       }
 

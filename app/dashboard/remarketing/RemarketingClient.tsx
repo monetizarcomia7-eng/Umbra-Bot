@@ -8,11 +8,14 @@ import {
   Layers, ChevronUp, ChevronDown, Trash2, ShoppingBag, X, Plus,
   ChevronLeft, Check, Eye, Save, Pause, ArrowDown, MessageSquarePlus,
   HelpCircle, Copy, Loader2, Bot, FileDown, History, Clock,
+  Image as ImageIcon,
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { useAnalytics } from '@/hooks/use-analytics'
 import { listBotFlowButtonsAction } from '@/app/actions/flows'
 import type { FlowWithButtons } from '@/app/dashboard/flows/_shared/types'
+import MediaLibraryModal from '@/app/dashboard/flows/_editor/MediaLibraryModal'
+import type { MediaItem } from '@/app/actions/media'
 
 /* ── Raw types (from Supabase) ───────────────────────────────── */
 
@@ -91,6 +94,12 @@ interface StepFlowRef {
   options: string[]
 }
 
+interface StepMedia {
+  kind: 'image' | 'video'
+  fileId?: string   // da Biblioteca de Mídia (file_id por-bot)
+  url?: string      // alternativa por URL pública
+}
+
 export interface CampaignStep {
   id: string
   delay: StepDelay
@@ -98,6 +107,7 @@ export interface CampaignStep {
   offer: StepOffer | null
   buttons?: StepButton[]
   flowRef?: StepFlowRef | null   // reusar botões de um nó de fluxo para continuar o fluxo
+  media?: StepMedia[]            // imagens/vídeos enviados com a mensagem (até 10 = álbum)
 }
 
 type CampaignStatus = 'active' | 'paused' | 'draft' | 'finished'
@@ -371,6 +381,7 @@ const ICON_MAP: Record<string, React.ElementType> = {
   'chevron-left': ChevronLeft, 'check': Check, 'eye': Eye, 'save': Save,
   'pause': Pause, 'arrow-down': ArrowDown, 'message-square-plus': MessageSquarePlus,
   'copy': Copy, 'bot': Bot, 'file-down': FileDown, 'history': History, 'clock': Clock,
+  'image': ImageIcon,
 }
 
 function Icon({ name, size = 16, className, style }: {
@@ -734,21 +745,37 @@ function FlowButtonPicker({ flows, onPick }: {
   )
 }
 
-function StepCard({ step, index, total, onUpdate, onDelete, onMoveUp, onMoveDown, flowButtons }: {
+function StepCard({ step, index, total, onUpdate, onDelete, onMoveUp, onMoveDown, flowButtons, botId }: {
   step: CampaignStep; index: number; total: number
   flowButtons: FlowWithButtons[]
+  botId: string | null
   onUpdate: (s: CampaignStep) => void
   onDelete: (id: string) => void
   onMoveUp: (id: string) => void
   onMoveDown: (id: string) => void
 }) {
   const messageRef = useRef<HTMLTextAreaElement>(null)
+  const [libOpen, setLibOpen] = useState<null | 'image' | 'video'>(null)
 
   function setDelay(patch: Partial<StepDelay>) { onUpdate({ ...step, delay: { ...step.delay, ...patch } }) }
   function setMessage(v: string) { onUpdate({ ...step, message: v }) }
   function setOffer(patch: Partial<StepOffer>) { onUpdate({ ...step, offer: { ...(step.offer ?? { product: '', price: 0, cta: '' }), ...patch } }) }
   function removeOffer() { onUpdate({ ...step, offer: null }) }
   function addOffer() { onUpdate({ ...step, offer: { product: 'Novo produto', price: 100, cta: 'Comprar agora' } }) }
+
+  const media = step.media ?? []
+  function addMediaFromLibrary(item: MediaItem) {
+    if (media.length >= 10) return
+    onUpdate({ ...step, media: [...media, { kind: item.media_type, fileId: item.file_id }] })
+  }
+  function addMediaUrl() {
+    if (media.length >= 10) return
+    const url = window.prompt('Cole a URL da imagem ou vídeo:')?.trim()
+    if (!url) return
+    const kind = /\.(mp4|mov|webm|m4v)(\?|$)/i.test(url) ? 'video' : 'image'
+    onUpdate({ ...step, media: [...media, { kind, url }] })
+  }
+  function removeMedia(i: number) { onUpdate({ ...step, media: media.filter((_, idx) => idx !== i) }) }
 
   const buttons = step.buttons ?? []
   function addButton() {
@@ -895,6 +922,48 @@ function StepCard({ step, index, total, onUpdate, onDelete, onMoveUp, onMoveDown
           </button>
         )}
 
+        {/* Mídia — imagens/vídeos da Biblioteca (ou URL), até 10 = álbum */}
+        <div className="border border-border rounded-lg p-3">
+          <div className="flex items-center gap-1.5 text-[10.5px] uppercase tracking-wider font-semibold text-text-subtle mb-2">
+            <Icon name="image" size={11} /> Mídia (opcional)
+          </div>
+          {media.length > 0 && (
+            <div className="space-y-1.5 mb-2">
+              {media.map((m, i) => (
+                <div key={i} className="flex items-center gap-2 h-8 px-2 rounded-md bg-surface border border-border">
+                  <Icon name={m.kind === 'video' ? 'play' : 'image'} size={12} />
+                  <span className="text-[11.5px] text-text flex-1 min-w-0 truncate">
+                    {m.kind === 'video' ? 'Vídeo' : 'Imagem'} · {m.fileId ? 'da biblioteca' : m.url}
+                  </span>
+                  <button onClick={() => removeMedia(i)}
+                    className="w-6 h-6 inline-flex items-center justify-center rounded text-text-muted hover:bg-danger-soft hover:text-danger transition-colors focus:outline-none">
+                    <Icon name="trash-2" size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          {media.length < 10 ? (
+            <div className="flex flex-wrap gap-1.5">
+              <button onClick={() => setLibOpen('image')}
+                className="text-[11px] inline-flex items-center gap-1 h-7 px-2 rounded-md border border-border text-text hover:bg-surface-2 transition-colors focus:outline-none">
+                <Icon name="image" size={11} /> Imagem da biblioteca
+              </button>
+              <button onClick={() => setLibOpen('video')}
+                className="text-[11px] inline-flex items-center gap-1 h-7 px-2 rounded-md border border-border text-text hover:bg-surface-2 transition-colors focus:outline-none">
+                <Icon name="play" size={11} /> Vídeo da biblioteca
+              </button>
+              <button onClick={addMediaUrl}
+                className="text-[11px] inline-flex items-center gap-1 h-7 px-2 rounded-md border border-border text-text-muted hover:bg-surface-2 transition-colors focus:outline-none">
+                <Icon name="plus" size={11} /> Por URL
+              </button>
+            </div>
+          ) : (
+            <p className="text-[11px] text-text-muted">Limite de 10 mídias por etapa atingido.</p>
+          )}
+          <p className="text-[11px] text-text-muted mt-1.5">Envie até 10 imagens/vídeos com a mensagem (2 ou mais viram um álbum).</p>
+        </div>
+
         {/* Botões personalizados (inline com link) */}
         <div className="border border-border rounded-lg p-3">
           <div className="flex items-center justify-between mb-2">
@@ -956,6 +1025,14 @@ function StepCard({ step, index, total, onUpdate, onDelete, onMoveUp, onMoveDown
             <FlowButtonPicker flows={flowButtons} onPick={(ref) => onUpdate({ ...step, flowRef: ref })} />
           )}
         </div>
+
+        <MediaLibraryModal
+          open={libOpen !== null}
+          onClose={() => setLibOpen(null)}
+          botId={botId}
+          mediaType={libOpen ?? 'image'}
+          onSelect={addMediaFromLibrary}
+        />
       </div>
     </div>
   )
@@ -1088,6 +1165,17 @@ function PreviewSequence({ campaign }: { campaign: Campaign }) {
                 <span className="text-[10px] uppercase tracking-wider text-text-subtle font-medium">
                   · aguarda {step.delay.amount} {step.delay.unit} ·
                 </span>
+              </div>
+            )}
+            {(step.media ?? []).length > 0 && (
+              <div className="flex justify-start">
+                <div className="ml-2 flex flex-wrap gap-1 max-w-[260px]">
+                  {(step.media ?? []).slice(0, 6).map((m, i) => (
+                    <div key={i} className="w-12 h-12 rounded-md bg-surface border border-border flex items-center justify-center text-text-muted">
+                      <Icon name={m.kind === 'video' ? 'play' : 'image'} size={14} />
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
             <PreviewBubble text={step.message.replace(/\{nome\}/g, 'João').replace(/\{produto\}/g, 'Mentoria Premium').replace(/\{valor\}/g, 'R$ 197')} />
@@ -1507,6 +1595,7 @@ function CampaignEditor({ campaign, bots, saving, onBack, onSave, onActivate, on
                       onMoveUp={() => moveStep(step.id, -1)}
                       onMoveDown={() => moveStep(step.id, 1)}
                       flowButtons={flowButtons}
+                      botId={botId}
                     />
                     {i < steps.length - 1 && (
                       <div className="flex justify-center text-text-subtle">
