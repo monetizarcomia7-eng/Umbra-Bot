@@ -60,16 +60,21 @@ async function tgApi(token: string, method: string, body: Record<string, unknown
   }
 }
 
+type InlineKeyboard = Array<Array<{ text: string; callback_data?: string; url?: string; copy_text?: { text: string } }>>
+
 export async function sendTelegramPhoto(
   token: string,
   chatId: number,
   photo: string,
   caption?: string,
   protect = false,
+  keyboard?: InlineKeyboard,
 ): Promise<boolean> {
-  return tgApi(token, 'sendPhoto', {
+  const body: Record<string, unknown> = {
     chat_id: chatId, photo, caption: caption ?? '', parse_mode: 'HTML', protect_content: protect,
-  })
+  }
+  if (keyboard && keyboard.length) body.reply_markup = { inline_keyboard: keyboard }
+  return tgApi(token, 'sendPhoto', body)
 }
 
 export async function sendTelegramVideo(
@@ -78,10 +83,13 @@ export async function sendTelegramVideo(
   video: string,
   caption?: string,
   protect = false,
+  keyboard?: InlineKeyboard,
 ): Promise<boolean> {
-  return tgApi(token, 'sendVideo', {
+  const body: Record<string, unknown> = {
     chat_id: chatId, video, caption: caption ?? '', parse_mode: 'HTML', protect_content: protect,
-  })
+  }
+  if (keyboard && keyboard.length) body.reply_markup = { inline_keyboard: keyboard }
+  return tgApi(token, 'sendVideo', body)
 }
 
 // Envia várias mídias como álbum (2-10). 1 item → cai em sendPhoto/Video.

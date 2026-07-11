@@ -558,19 +558,31 @@ export async function GET(request: Request) {
 
       const protect = Boolean((bot as { anti_clone?: boolean }).anti_clone)
 
-      // Mídia da etapa (imagens/vídeos): 1 = foto/vídeo, 2+ = álbum. Enviada antes do texto.
+      // Mídia da etapa (imagens/vídeos): 1 = foto/vídeo, 2+ = álbum.
       const mediaRefs = (step.media ?? [])
         .map((m) => ({ kind: m.kind, ref: m.fileId || m.url || '' }))
         .filter((m) => m.ref)
-      if (mediaRefs.length > 0) {
-        await sendTelegramMediaGroup(token, Number(contact.telegram_id), mediaRefs, undefined, protect)
-      }
+      const chatIdNum = Number(contact.telegram_id)
 
-      // Texto + botões. Se só há mídia (sem texto e sem botões), não manda mensagem vazia.
-      if (keyboard.length > 0) {
-        await sendTelegramWithKeyboard(token, Number(contact.telegram_id), text, keyboard, protect)
-      } else if (text.trim() || mediaRefs.length === 0) {
-        await sendTelegramMessage(token, contact.telegram_id as string, text, 'HTML', protect)
+      if (mediaRefs.length === 1) {
+        // 1 mídia → texto vira legenda e os botões ficam no MESMO bloco (tudo junto).
+        const m = mediaRefs[0]
+        const kb = keyboard.length > 0 ? keyboard : undefined
+        if (m.kind === 'video') {
+          await sendTelegramVideo(token, chatIdNum, m.ref, text, protect, kb)
+        } else {
+          await sendTelegramPhoto(token, chatIdNum, m.ref, text, protect, kb)
+        }
+      } else {
+        // 2+ mídias → álbum acima, depois o texto+botões. (Álbum não aceita botões.)
+        if (mediaRefs.length >= 2) {
+          await sendTelegramMediaGroup(token, chatIdNum, mediaRefs, undefined, protect)
+        }
+        if (keyboard.length > 0) {
+          await sendTelegramWithKeyboard(token, chatIdNum, text, keyboard, protect)
+        } else if (text.trim() || mediaRefs.length === 0) {
+          await sendTelegramMessage(token, contact.telegram_id as string, text, 'HTML', protect)
+        }
       }
 
       await supabase

@@ -290,8 +290,10 @@ export async function POST(request: NextRequest) {
         .eq('bot_id', bot.id).eq('telegram_id', cbTgId).maybeSingle()
       if (!cbContact) return new NextResponse(null, { status: 200 })
 
-      const ver  = await getLatestFlowVersion(flowRef.flowId, supabase)
-      const flow = await loadFlow(flowRef.flowId, supabase, ver)
+      // Carrega o fluxo publicado ATUAL (version=null → tabela flows), não um
+      // snapshot antigo — assim as ramificações que o operador conectou no editor
+      // valem mesmo que ele tenha esquecido de republicar.
+      const flow = await loadFlow(flowRef.flowId, supabase, null)
       if (flow) {
         const edgeMap  = buildEdgeMap(flow.edges)
         const outEdges = edgeMap.get(flowRef.nodeId) ?? []
@@ -301,7 +303,7 @@ export async function POST(request: NextRequest) {
           outEdges[0]
         if (targetEdge) {
           await supabase.from('contacts')
-            .update({ flow_id: flowRef.flowId, flow_node_id: null, flow_version: ver })
+            .update({ flow_id: flowRef.flowId, flow_node_id: null, flow_version: null })
             .eq('id', cbContact.id)
           const contactState: ContactState = {
             id:            cbContact.id,
@@ -321,7 +323,7 @@ export async function POST(request: NextRequest) {
             plainToken,
             chatId:      cbChatId,
             flowId:      flowRef.flowId,
-            flowVersion: ver,
+            flowVersion: flow.version,
             userId:      bot.user_id as string,
             supabase,
             protectContent: Boolean(bot.anti_clone),
