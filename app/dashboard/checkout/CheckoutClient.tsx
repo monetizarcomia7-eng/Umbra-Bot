@@ -117,6 +117,8 @@ interface CheckoutClientProps {
   configuredPixels:  RawPixel[]
   initialCoupons:    RawCoupon[]
   appUrl:            string
+  embedded?:         boolean
+  productContext?:   { id: string; name: string; description: string; offerId: string | null; price: number }
 }
 
 /* ============================================================
@@ -2225,7 +2227,7 @@ function CheckoutEditor({ checkout, gatewayChoices, pixelChoices, appUrl, userId
    CheckoutsList
    ============================================================ */
 
-function CheckoutsList({ checkouts, creating, gatewayChoices, appUrl, onOpen, onCreate, onDuplicate, onDelete, onArchive, onReactivate, onOpenTemplates }: {
+function CheckoutsList({ checkouts, creating, gatewayChoices, appUrl, onOpen, onCreate, onDuplicate, onDelete, onArchive, onReactivate, onOpenTemplates, embedded = false }: {
   checkouts:       Checkout[]
   creating:        boolean
   gatewayChoices:  GatewayChoice[]
@@ -2237,6 +2239,7 @@ function CheckoutsList({ checkouts, creating, gatewayChoices, appUrl, onOpen, on
   onArchive:       (id: string) => void
   onReactivate:    (id: string) => void
   onOpenTemplates: () => void
+  embedded?:        boolean
 }) {
   const [search, setSearch]   = useState('')
   const [statusF, setStatusF] = useState('Todos')
@@ -2255,7 +2258,7 @@ function CheckoutsList({ checkouts, creating, gatewayChoices, appUrl, onOpen, on
 
   return (
     <>
-      <PageHeader
+      {!embedded && <PageHeader
         title="Checkout"
         subtitle={`Páginas de pagamento personalizadas — ${checkouts.length} checkout${checkouts.length !== 1 ? 's' : ''} · ${published} publicado${published !== 1 ? 's' : ''}.`}
         actions={
@@ -2277,7 +2280,9 @@ function CheckoutsList({ checkouts, creating, gatewayChoices, appUrl, onOpen, on
             </button>
           </div>
         }
-      />
+      />}
+
+      {embedded && <div className="mb-4 flex items-center justify-between gap-3"><div><h2 className="text-lg font-semibold text-[var(--text)]">Checkouts do produto</h2><p className="text-sm text-[var(--text-muted)]">Crie e personalize as páginas de pagamento sem sair do produto.</p></div><button onClick={onCreate} disabled={creating} className="inline-flex h-9 items-center gap-2 rounded-lg bg-[var(--primary)] px-4 text-[13px] font-medium text-white disabled:opacity-60">{creating?<Loader2 size={14} className="animate-spin"/>:<Plus size={15}/>}Criar checkout</button></div>}
 
       <div className="flex flex-wrap items-center gap-2 mb-4">
         <div className="relative flex-1 min-w-[200px] max-w-sm">
@@ -2355,7 +2360,7 @@ function CheckoutsList({ checkouts, creating, gatewayChoices, appUrl, onOpen, on
    ============================================================ */
 
 export default function CheckoutClient({
-  initialCheckouts, userId, connectedGateways, configuredPixels, initialCoupons, appUrl,
+  initialCheckouts, userId, connectedGateways, configuredPixels, initialCoupons, appUrl, embedded = false, productContext,
 }: CheckoutClientProps) {
   const sb     = createClient()
   const { track } = useAnalytics()
@@ -2427,9 +2432,11 @@ export default function CheckoutClient({
         user_id:       userId,
         name:          template?.name          ?? 'Novo checkout',
         slug,
-        product_name:  template?.productName   ?? 'Nome do produto',
-        product_desc:  template?.productDesc   ?? 'Descrição curta do produto.',
-        price:         template?.price         ?? 100,
+        product_id:    productContext?.id       ?? null,
+        offer_id:      productContext?.offerId  ?? null,
+        product_name:  productContext?.name     ?? template?.productName ?? 'Nome do produto',
+        product_desc:  productContext?.description ?? template?.productDesc ?? 'Descrição curta do produto.',
+        price:         productContext?.price    ?? template?.price ?? 100,
         installments:  template?.installments  ?? 6,
         gateway:       connectedGateways[0]?.provider ?? 'pushinpay',
         pixel:         configuredPixels.find((p) => p.pixel_id)?.provider ?? 'none',
@@ -2595,6 +2602,8 @@ export default function CheckoutClient({
       .insert({
         id:            newId,
         user_id:       userId,
+        product_id:    productContext?.id ?? null,
+        offer_id:      productContext?.offerId ?? null,
         name:          original.name + ' (cópia)',
         slug:          newSlug,
         product_name:  original.productName,
@@ -2675,6 +2684,7 @@ export default function CheckoutClient({
           onArchive={archiveCheckout}
           onReactivate={reactivateCheckout}
           onOpenTemplates={() => setShowTemplates(true)}
+          embedded={embedded}
         />
       )}
 

@@ -7,7 +7,7 @@ import { useDashboard } from '@/providers/DashboardProvider'
 import {
   LayoutDashboard, BarChart3, Wallet, Activity, Users, UserPlus,
   AlertTriangle, Bot, GitBranch, Shuffle, Megaphone, Send, Wrench,
-  CreditCard, LineChart, ShoppingCart, Package, Link2, Webhook, User, Bell,
+  CreditCard, LineChart, Package, Link2, Webhook, User, Bell,
   BookOpen, GraduationCap, LogOut, ChevronLeft, ChevronRight, ChevronDown, X,
   Camera, PenTool, ExternalLink,
 } from 'lucide-react'
@@ -62,7 +62,6 @@ const navGroups: NavGroupDef[] = [
     items: [
       { id: 'gateways',  label: 'Gateways',     href: '/dashboard/gateways',  icon: CreditCard },
       { id: 'tracking',  label: 'Trackeamento', href: '/dashboard/tracking',  icon: LineChart },
-      { id: 'checkout',  label: 'Checkout',     href: '/dashboard/checkout',  icon: ShoppingCart },
       { id: 'biolink',   label: 'Bio Link',     href: '/dashboard/biolink',   icon: Link2 },
       { id: 'instagram', label: 'Instagram',    href: '/dashboard/instagram', icon: Camera },
       { id: 'webhooks',  label: 'Webhooks',     href: '/dashboard/webhooks',  icon: Webhook },
