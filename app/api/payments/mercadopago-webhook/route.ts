@@ -8,6 +8,7 @@ import { fireCapiPurchase } from '@/lib/capi'
 import { dispatchWebhookEvent } from '@/lib/webhooks'
 import { notifyOwnerTelegram } from '@/lib/notifications'
 import { resumeFlowAfterPayment } from '@/lib/flow-engine'
+import { dispatchProductPurchaseApproved } from '@/lib/product-webhooks'
 
 // Verifies Mercado Pago webhook signature.
 // MP sends: x-signature: ts=<ts>,v1=<hmac>
@@ -70,7 +71,7 @@ export async function POST(request: NextRequest) {
   // Find our transaction by gateway_payment_id
   const { data: tx } = await supabase
     .from('transactions')
-    .select('id, user_id, bot_id, flow_id, checkout_id, customer_telegram_id, customer_name, customer_email, amount, net, product_name, status, affiliate_id')
+    .select('id, user_id, bot_id, flow_id, checkout_id, product_id, customer_telegram_id, customer_name, customer_email, customer_phone, customer_cpf, amount, net, product_name, status, affiliate_id')
     .eq('gateway_payment_id', String(paymentId))
     .eq('gateway', 'mercadopago')
     .single()
@@ -198,6 +199,9 @@ export async function POST(request: NextRequest) {
       customer_email: (tx as { customer_email?: string | null }).customer_email ?? null,
       gateway:        'mercadopago',
     })
+
+    // Contrato de integração por produto (SaaS / área externa).
+    await dispatchProductPurchaseApproved(tx.id)
 
     // 7. Mensagem de confirmação para o comprador via Telegram
     if (tx.customer_telegram_id && tx.bot_id) {

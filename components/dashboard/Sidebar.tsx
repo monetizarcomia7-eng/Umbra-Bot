@@ -7,7 +7,7 @@ import { useDashboard } from '@/providers/DashboardProvider'
 import {
   LayoutDashboard, BarChart3, Wallet, Activity, Users, UserPlus,
   AlertTriangle, Bot, GitBranch, Shuffle, Megaphone, Send, Wrench,
-  CreditCard, LineChart, ShoppingCart, Link2, Webhook, User, Bell,
+  CreditCard, LineChart, ShoppingCart, Package, Link2, Webhook, User, Bell,
   BookOpen, GraduationCap, LogOut, ChevronLeft, ChevronRight, ChevronDown, X,
   Camera, PenTool, ExternalLink,
 } from 'lucide-react'
@@ -40,6 +40,7 @@ const BASE_TOP_NAV: NavItemDef[] = [
   { id: 'customers',  label: 'Clientes',            href: '/dashboard/customers',  icon: Users },
   { id: 'affiliates', label: 'Afiliados',           href: '/dashboard/affiliates', icon: UserPlus },
   { id: 'alerts',     label: 'Alertas Importantes', href: '/dashboard/alerts',     icon: AlertTriangle },
+  { id: 'products',   label: 'Produtos',            href: '/dashboard/products',   icon: Package },
 ]
 
 const navGroups: NavGroupDef[] = [

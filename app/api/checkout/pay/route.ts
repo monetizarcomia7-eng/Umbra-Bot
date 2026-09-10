@@ -130,7 +130,7 @@ export async function POST(request: NextRequest) {
   /* ── 1. Busca checkout + dono ──────────────────────────── */
   const { data: checkout } = await admin
     .from('checkouts')
-    .select('id, user_id, product_name, price, installments, gateway, methods, order_bump')
+    .select('id, user_id, product_id, product_name, price, installments, gateway, methods, order_bump')
     .eq('id', checkout_id)
     .eq('status', 'published')
     .maybeSingle()
@@ -245,6 +245,7 @@ export async function POST(request: NextRequest) {
     .insert({
       user_id:            checkout.user_id,
       checkout_id:        checkout.id,
+      product_id:         checkout.product_id ?? null,
       gateway:            checkout.gateway,
       gateway_payment_id: String(mpData.id),
       amount:             totalPrice,
@@ -259,6 +260,7 @@ export async function POST(request: NextRequest) {
       product_name:       checkout.product_name,
       customer_name,
       customer_email,
+      customer_cpf,
       customer_phone:     customerPhone,
       customer_device:    customerDevice,
       utm_source:         utm_source ?? null,

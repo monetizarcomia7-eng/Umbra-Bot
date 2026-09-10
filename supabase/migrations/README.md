@@ -11,7 +11,7 @@ Schema extraído diretamente do banco Supabase (projeto: `aoycxcepjvpmeptdafxn`)
 >
 > **Migração consolidada disponível:** `_pending_instagram_consolidated.sql` — script idempotente standalone (`IF NOT EXISTS` / `OR REPLACE` em tudo) cobrindo as 3 tabelas principais do Instagram + bucket + RPCs + webhook events. Pode ser rodado num banco zerado OU sobre um banco que já tem as migs 106/107 (sem efeito colateral).
 >
-> **Próximas migrações pendentes:** nenhuma.
+> **Próxima migração pendente:** 116 (`20260910000116_products_commerce.sql`) — módulo de produtos, coproduções, afiliações, assinaturas e integração SaaS por produto.
 
 ---
 
