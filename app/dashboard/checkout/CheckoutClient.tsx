@@ -118,7 +118,7 @@ interface CheckoutClientProps {
   initialCoupons:    RawCoupon[]
   appUrl:            string
   embedded?:         boolean
-  productContext?:   { id: string; name: string; description: string; offerId: string | null; price: number }
+  productContext?:   { id: string; name: string; description: string; offerId: string | null; price: number; defaultCheckoutId: string | null }
 }
 
 /* ============================================================
@@ -1411,7 +1411,7 @@ function MiniStatC({ label, value, tone }: { label: string; value: string; tone?
 
 interface CheckoutFunnel { visited: number; cart: number; paid: number }
 
-function CheckoutCard({ checkout, gatewayChoices, appUrl, onOpen, onDuplicate, onDelete, onArchive, onReactivate }: {
+function CheckoutCard({ checkout, gatewayChoices, appUrl, onOpen, onDuplicate, onDelete, onArchive, onReactivate, isSelected = false, onSelect }: {
   checkout:       Checkout
   gatewayChoices: GatewayChoice[]
   appUrl:         string
@@ -1420,6 +1420,8 @@ function CheckoutCard({ checkout, gatewayChoices, appUrl, onOpen, onDuplicate, o
   onDelete:       () => void
   onArchive:      () => void
   onReactivate:   () => void
+  isSelected?:    boolean
+  onSelect?:      () => void
 }) {
   const [menuOpen,       setMenuOpen]       = useState(false)
   const [analyticsOpen,  setAnalyticsOpen]  = useState(false)
@@ -1466,7 +1468,7 @@ function CheckoutCard({ checkout, gatewayChoices, appUrl, onOpen, onDuplicate, o
   }
 
   return (
-    <div className="group bg-[var(--surface)] border border-[var(--border)] rounded-xl overflow-hidden hover:border-[var(--text-muted)]/40 transition-colors relative">
+    <div className={`group bg-[var(--surface)] border rounded-xl overflow-hidden transition-colors relative ${isSelected?'border-[var(--primary)] ring-2 ring-[var(--primary)]/15':'border-[var(--border)] hover:border-[var(--text-muted)]/40'}`}>
       {/* Context menu button */}
       <div className="absolute top-2 right-2 z-10">
         <button
@@ -1525,6 +1527,7 @@ function CheckoutCard({ checkout, gatewayChoices, appUrl, onOpen, onDuplicate, o
           </Badge>
           <span className="text-[10.5px] text-[var(--text-muted)]">{fmtDate(checkout.updatedAt)}</span>
         </div>
+        {onSelect&&<button onClick={(e)=>{e.stopPropagation();onSelect()}} disabled={isSelected} className={`mb-3 inline-flex w-full items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${isSelected?'bg-[var(--primary)]/10 text-[var(--primary)]':'border border-[var(--primary)] text-[var(--primary)] hover:bg-[var(--primary)]/10'}`}><Check size={14}/>{isSelected?'Checkout principal':'Usar este checkout'}</button>}
         <h3 className="text-[14.5px] font-semibold text-[var(--text)] leading-snug">{checkout.name}</h3>
         <code className="text-[10.5px] font-mono text-[var(--text-muted)]">umbrabot.com.br/c/{checkout.slug}</code>
         <div className="mt-3 flex items-center gap-2 text-[11px] text-[var(--text-muted)] flex-wrap">
@@ -2227,7 +2230,7 @@ function CheckoutEditor({ checkout, gatewayChoices, pixelChoices, appUrl, userId
    CheckoutsList
    ============================================================ */
 
-function CheckoutsList({ checkouts, creating, gatewayChoices, appUrl, onOpen, onCreate, onDuplicate, onDelete, onArchive, onReactivate, onOpenTemplates, embedded = false }: {
+function CheckoutsList({ checkouts, creating, gatewayChoices, appUrl, onOpen, onCreate, onDuplicate, onDelete, onArchive, onReactivate, onOpenTemplates, embedded = false, selectedCheckoutId, onSelectCheckout }: {
   checkouts:       Checkout[]
   creating:        boolean
   gatewayChoices:  GatewayChoice[]
@@ -2240,6 +2243,8 @@ function CheckoutsList({ checkouts, creating, gatewayChoices, appUrl, onOpen, on
   onReactivate:    (id: string) => void
   onOpenTemplates: () => void
   embedded?:        boolean
+  selectedCheckoutId?: string | null
+  onSelectCheckout?:   (id: string) => void
 }) {
   const [search, setSearch]   = useState('')
   const [statusF, setStatusF] = useState('Todos')
@@ -2336,6 +2341,8 @@ function CheckoutsList({ checkouts, creating, gatewayChoices, appUrl, onOpen, on
               onDelete={() => onDelete(c.id)}
               onArchive={() => onArchive(c.id)}
               onReactivate={() => onReactivate(c.id)}
+              isSelected={selectedCheckoutId === c.id}
+              onSelect={embedded && onSelectCheckout ? () => onSelectCheckout(c.id) : undefined}
             />
           ))}
           <button
@@ -2372,6 +2379,7 @@ export default function CheckoutClient({
   const [showTemplates, setShowTemplates] = useState(false)
   const [creating,      setCreating]      = useState(false)
   const [toast,         setToast]         = useState<{ msg: string; type: 'success' | 'error' } | null>(null)
+  const [selectedCheckoutId, setSelectedCheckoutId] = useState<string | null>(productContext?.defaultCheckoutId ?? null)
 
   /* ── Gateway/pixel choices from DB ─────────────────────── */
   const gatewayChoices: GatewayChoice[] = useMemo(() => {
@@ -2560,6 +2568,19 @@ export default function CheckoutClient({
     else    showToast('Erro ao reativar.', 'error')
   }
 
+  async function selectCheckout(id: string) {
+    if (!productContext) return
+    const previous = selectedCheckoutId
+    setSelectedCheckoutId(id)
+    const { error } = await sb.from('products').update({ default_checkout_id: id }).eq('id', productContext.id).eq('user_id', userId)
+    if (error) {
+      setSelectedCheckoutId(previous)
+      showToast('Erro ao selecionar o checkout.', 'error')
+      return
+    }
+    showToast('Checkout principal selecionado.', 'success')
+  }
+
   async function deleteCheckout(id: string) {
     const c = checkouts.find((co) => co.id === id)
     setCheckouts((prev) => prev.filter((co) => co.id !== id))
@@ -2685,6 +2706,8 @@ export default function CheckoutClient({
           onReactivate={reactivateCheckout}
           onOpenTemplates={() => setShowTemplates(true)}
           embedded={embedded}
+          selectedCheckoutId={selectedCheckoutId}
+          onSelectCheckout={selectCheckout}
         />
       )}
 

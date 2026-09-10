@@ -6,6 +6,7 @@ import { rateLimit }          from '@/lib/rate-limit'
 import { fireCapiPurchase }   from '@/lib/capi'
 import { verifyRecaptchaToken } from '@/lib/recaptcha'
 import * as Sentry            from '@sentry/nextjs'
+import { dispatchProductTransactionEvent } from '@/lib/product-webhooks'
 
 /* ─── Validation ─────────────────────────────────────────── */
 
@@ -275,6 +276,8 @@ export async function POST(request: NextRequest) {
     Sentry.captureException(txError, { extra: { checkout_id, context: 'checkout_pay_tx_insert' } })
     return NextResponse.json({ error: 'Erro ao registrar transação.' }, { status: 500 })
   }
+
+  if (transaction?.id) await dispatchProductTransactionEvent(transaction.id, 'pix_generated')
 
   /* ── 5. Registra evento 'cart_added' no funil (fire-and-forget) ─ */
   admin.from('checkout_events').insert({

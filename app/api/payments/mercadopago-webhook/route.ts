@@ -8,7 +8,7 @@ import { fireCapiPurchase } from '@/lib/capi'
 import { dispatchWebhookEvent } from '@/lib/webhooks'
 import { notifyOwnerTelegram } from '@/lib/notifications'
 import { resumeFlowAfterPayment } from '@/lib/flow-engine'
-import { dispatchProductPurchaseApproved } from '@/lib/product-webhooks'
+import { dispatchProductPurchaseApproved, dispatchProductTransactionEvent } from '@/lib/product-webhooks'
 
 // Verifies Mercado Pago webhook signature.
 // MP sends: x-signature: ts=<ts>,v1=<hmac>
@@ -63,6 +63,8 @@ export async function POST(request: NextRequest) {
     pending:   'pending',
     rejected:  'cancelled',
     cancelled: 'cancelled',
+    refunded:   'refunded',
+    charged_back: 'chargeback',
   }
   const newStatus = statusMap[mpStatus] ?? 'pending'
 
@@ -104,6 +106,10 @@ export async function POST(request: NextRequest) {
       gateway:        'mercadopago',
     })
   }
+
+  if (newStatus === 'cancelled') await dispatchProductTransactionEvent(tx.id, 'purchase_rejected')
+  if (newStatus === 'refunded') await dispatchProductTransactionEvent(tx.id, 'refund')
+  if (newStatus === 'chargeback') await dispatchProductTransactionEvent(tx.id, 'chargeback')
 
   // ── Aprovada ────────────────────────────────────────────────────────────────
   if (newStatus === 'approved') {
