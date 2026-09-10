@@ -191,13 +191,8 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // Fallback para variável de ambiente global (ambiente de desenvolvimento/demo)
   if (!accessToken) {
-    accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN ?? null
-  }
-
-  if (!accessToken) {
-    return NextResponse.json({ error: 'Gateway de pagamento não configurado.' }, { status: 503 })
+    return NextResponse.json({ error: 'O gateway deste checkout não está conectado à conta do vendedor.' }, { status: 503 })
   }
 
   /* ── 3. Cria pagamento PIX no Mercado Pago ─────────────── */

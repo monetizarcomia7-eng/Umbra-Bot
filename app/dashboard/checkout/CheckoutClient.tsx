@@ -143,13 +143,6 @@ const PIXEL_LABEL: Record<string, string> = {
   google: 'Google Tag (GA4)',
 }
 
-const STATIC_GATEWAY_CHOICES: GatewayChoice[] = [
-  { id: 'mercadopago', label: 'Mercado Pago', color: GATEWAY_COLOR.mercadopago },
-  { id: 'pushinpay',   label: 'Pushinpay',    color: GATEWAY_COLOR.pushinpay   },
-  { id: 'pagarme',     label: 'Pagar.me',      color: GATEWAY_COLOR.pagarme     },
-  { id: 'stripe',      label: 'Stripe',        color: GATEWAY_COLOR.stripe      },
-]
-
 const colorPresets = ['#7c3aed','#22c55e','#0ea5e9','#f97316','#ec4899','#0f172a']
 const fontPresets  = ['Inter','Manrope','DM Sans','Plus Jakarta Sans']
 
@@ -1538,6 +1531,10 @@ function CheckoutCard({ checkout, gatewayChoices, appUrl, onOpen, onDuplicate, o
           <span className="text-[var(--text-muted)]">·</span>
           <span>{fmtBRLdec(checkout.price)}</span>
         </div>
+        <div className={`mt-2 inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[10.5px] font-semibold ${gw ? 'bg-green-500/10 text-green-600 dark:text-green-400' : 'bg-red-500/10 text-red-600 dark:text-red-400'}`}>
+          <span className={`h-1.5 w-1.5 rounded-full ${gw ? 'bg-green-500' : 'bg-red-500'}`} />
+          {gw ? 'Gateway conectado' : 'Gateway não conectado'}
+        </div>
         {checkout.visits > 0 && (
           <div className="grid grid-cols-3 gap-2 mt-3.5 pt-3.5 border-t border-[var(--border)]">
             <MiniStatC label="Visitas"    value={fmtNum(checkout.visits)} />
@@ -1751,6 +1748,9 @@ function CheckoutEditor({ checkout, gatewayChoices, pixelChoices, appUrl, userId
 
   async function handlePublish() {
     if (!draft.name.trim()) { showToast('O nome do checkout não pode estar vazio.', 'error'); return }
+    if (!gatewayChoices.some((gateway) => gateway.id === draft.gateway)) {
+      showToast('Conecte e selecione um gateway antes de publicar.', 'error'); return
+    }
     if (!draft.methods.pix && !draft.methods.card && !draft.methods.boleto) {
       showToast('Selecione pelo menos um método de pagamento.', 'error'); return
     }
@@ -2049,6 +2049,13 @@ function CheckoutEditor({ checkout, gatewayChoices, pixelChoices, appUrl, userId
                       </div>
                     )}
                   </FieldC>
+
+                  {gatewayChoices.some((gateway) => gateway.id === draft.gateway) && (
+                    <div className="flex items-center justify-between gap-3 rounded-lg border border-green-500/20 bg-green-500/5 p-3 text-[12px] text-green-600 dark:text-green-400">
+                      <span className="inline-flex items-center gap-2"><BadgeCheck size={15} />Gateway conectado e pronto para receber pagamentos.</span>
+                      <a href="/dashboard/gateways" className="font-semibold underline">Ver integração</a>
+                    </div>
+                  )}
 
                   <FieldC label="Métodos de pagamento">
                     <div className="grid grid-cols-3 gap-1.5">
@@ -2388,7 +2395,7 @@ export default function CheckoutClient({
       label: GATEWAY_LABEL[g.provider] ?? g.provider,
       color: GATEWAY_COLOR[g.provider] ?? 'var(--primary)',
     }))
-    return connected.length > 0 ? connected : STATIC_GATEWAY_CHOICES
+    return connected
   }, [connectedGateways])
 
   const pixelChoices: PixelChoice[] = useMemo(() => {
@@ -2429,6 +2436,10 @@ export default function CheckoutClient({
   /* ── CRUD ──────────────────────────────────────────────── */
 
   async function createCheckout(template?: CheckoutTemplate) {
+    if (connectedGateways.length === 0) {
+      showToast('Conecte um gateway antes de criar o checkout.', 'error')
+      return
+    }
     setCreating(true)
     setShowTemplates(false)
     try {
