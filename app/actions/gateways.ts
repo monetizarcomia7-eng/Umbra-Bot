@@ -225,8 +225,33 @@ export async function testGatewayConnectionAction(
     return { ok: false, error: 'Credenciais não encontradas. Reconecte o gateway.' }
   }
 
-  const apiKey = decryptToken(rawToken)
+  let apiKey: string
+  try {
+    apiKey = decryptToken(rawToken)
+  } catch {
+    await supabase
+      .from('gateways')
+      .update({ status: 'error', connected: false, updated_at: new Date().toISOString() })
+      .eq('id', gatewayId)
+      .eq('user_id', user.id)
+    return { ok: false, error: 'Não foi possível ler a credencial salva. Reconecte o gateway.' }
+  }
+
   if (!apiKey) return { ok: false, error: 'Erro ao descriptografar credenciais.' }
 
-  return callGatewayApi(gateway.provider ?? '', apiKey)
+  const result = await callGatewayApi(gateway.provider ?? '', apiKey)
+  if (!result.ok) {
+    await supabase
+      .from('gateways')
+      .update({ status: 'error', connected: false, updated_at: new Date().toISOString() })
+      .eq('id', gatewayId)
+      .eq('user_id', user.id)
+  } else {
+    await supabase
+      .from('gateways')
+      .update({ status: 'active', connected: true, updated_at: new Date().toISOString() })
+      .eq('id', gatewayId)
+      .eq('user_id', user.id)
+  }
+  return result
 }

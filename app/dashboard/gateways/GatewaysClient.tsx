@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect, useMemo, useRef } from 'react'
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Plug, TrendingUp, ArrowLeftRight, Percent, Landmark, RefreshCw,
@@ -365,6 +365,8 @@ const MP_OAUTH_ERRORS: Record<string, string> = {
   invalid_state:         'Sessão inválida. Tente novamente.',
   token_exchange_failed: 'Falha ao obter token. Tente novamente.',
   token_timeout:         'Tempo de resposta esgotado. Tente novamente.',
+  token_validation_failed: 'O Mercado Pago recusou a credencial. Autorize novamente e confirme que está usando uma conta de vendedor.',
+  token_validation_timeout: 'Não foi possível validar a credencial no Mercado Pago. Tente conectar novamente.',
   db_save_failed:        'Erro ao salvar configuração. Tente novamente.',
   missing_bank_account:  'Selecione uma conta bancária.',
   invalid_bank_account:  'Conta bancária inválida.',
@@ -628,7 +630,12 @@ function RenewModal({ open, onClose, g, bankAccounts }: {
 
 // ─── TestModal ────────────────────────────────────────────────────────────────
 
-function TestModal({ open, onClose, g }: { open: boolean; onClose: () => void; g: GatewayItem }) {
+function TestModal({ open, onClose, g, onResult }: {
+  open: boolean
+  onClose: () => void
+  g: GatewayItem
+  onResult: (provider: string, connected: boolean) => void
+}) {
   const [status, setStatus] = useState<'idle' | 'loading' | 'ok' | 'error'>('idle')
   const [info,   setInfo]   = useState('')
   const [errMsg, setErrMsg] = useState('')
@@ -637,10 +644,11 @@ function TestModal({ open, onClose, g }: { open: boolean; onClose: () => void; g
     if (!open || !g.id) return
     setStatus('loading'); setInfo(''); setErrMsg('')
     testGatewayConnectionAction(g.id).then(r => {
+      onResult(g.provider, r.ok)
       if (r.ok) { setStatus('ok'); setInfo(r.accountInfo ?? 'Conectado') }
       else       { setStatus('error'); setErrMsg(r.error ?? 'Erro ao verificar.') }
     })
-  }, [open, g.id])
+  }, [open, g.id, g.provider, onResult])
 
   const gwFee = g.fee.pix ?? g.fee.card ?? 2.99
 
@@ -658,7 +666,10 @@ function TestModal({ open, onClose, g }: { open: boolean; onClose: () => void; g
             <div className="text-[13px] font-semibold text-text">{g.name}</div>
             <div className="text-[11px] text-text-muted">{g.account ?? 'Sem conta configurada'}</div>
           </div>
-          <Badge tone="success"><span className="w-1.5 h-1.5 rounded-full bg-[color:var(--success)]" />Conectado</Badge>
+          <Badge tone={status === 'error' ? 'danger' : 'success'}>
+            <span className={`w-1.5 h-1.5 rounded-full ${status === 'error' ? 'bg-[color:var(--danger)]' : 'bg-[color:var(--success)]'}`} />
+            {status === 'error' ? 'Desconectado' : 'Conectado'}
+          </Badge>
         </div>
 
         {status === 'loading' && (
@@ -1001,6 +1012,12 @@ export function GatewaysClient({
     setGateways(prev => prev.map(g => g.provider === provider ? { ...g, ...patch } : g))
   }
 
+  const handleTestResult = useCallback((provider: string, connected: boolean) => {
+    setGateways(prev => prev.map(g => g.provider === provider
+      ? { ...g, connected, lastSync: Date.now() }
+      : g))
+  }, [])
+
   // ── Handlers ─────────────────────────────────────────────────────────────────
 
   async function handleConnected(provider: string, bankAccountId: string, apiKey: string): Promise<boolean> {
@@ -1184,6 +1201,7 @@ export function GatewaysClient({
           open
           onClose={() => setTesting(null)}
           g={testing}
+          onResult={handleTestResult}
         />
       )}
       {disconnecting && (

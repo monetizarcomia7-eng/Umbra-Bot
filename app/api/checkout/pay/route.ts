@@ -176,7 +176,7 @@ export async function POST(request: NextRequest) {
   /* ── 2. Busca gateway do dono ──────────────────────────── */
   const { data: gateway } = await admin
     .from('gateways')
-    .select('credentials')
+    .select('id, credentials')
     .eq('user_id', checkout.user_id)
     .eq('provider', checkout.gateway)
     .eq('connected', true)
@@ -187,7 +187,14 @@ export async function POST(request: NextRequest) {
   if (gateway?.credentials) {
     const rawToken = (gateway.credentials as Record<string, unknown>).token
     if (rawToken && typeof rawToken === 'string') {
-      accessToken = decryptToken(rawToken)
+      try {
+        accessToken = decryptToken(rawToken)
+      } catch {
+        await admin
+          .from('gateways')
+          .update({ connected: false, status: 'error', updated_at: new Date().toISOString() })
+          .eq('id', gateway.id)
+      }
     }
   }
 
@@ -218,13 +225,23 @@ export async function POST(request: NextRequest) {
 
   if (!mpRes.ok) {
     const mpErr = await mpRes.json().catch(() => ({}))
+    if (mpRes.status === 401 && gateway?.id) {
+      await admin
+        .from('gateways')
+        .update({ connected: false, status: 'error', updated_at: new Date().toISOString() })
+        .eq('id', gateway.id)
+    }
     Sentry.captureException(
       new Error(`checkout_pay MP error: ${mpErr.message ?? mpRes.status}`),
       { extra: { checkout_id, status: mpRes.status, body: mpErr } },
     )
     return NextResponse.json(
-      { error: mpErr.message ?? 'Erro no gateway de pagamento. Tente novamente.' },
-      { status: 502 },
+      {
+        error: mpRes.status === 401
+          ? 'A conexão do vendedor com o Mercado Pago expirou ou foi recusada. O vendedor precisa reconectar o gateway.'
+          : (mpErr.message ?? 'Erro no gateway de pagamento. Tente novamente.'),
+      },
+      { status: mpRes.status === 401 ? 503 : 502 },
     )
   }
 

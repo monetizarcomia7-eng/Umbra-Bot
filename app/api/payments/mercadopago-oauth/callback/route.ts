@@ -77,11 +77,14 @@ export async function GET(request: Request) {
       headers: { Authorization: `Bearer ${accessToken}` },
       signal: AbortSignal.timeout(6_000),
     })
-    if (meRes.ok) {
-      const me = (await meRes.json()) as { email?: string; nickname?: string }
-      accountInfo = me.email ?? me.nickname ?? accountInfo
+    if (!meRes.ok) {
+      return NextResponse.redirect(`${dashboardUrl}?mp_error=token_validation_failed`)
     }
-  } catch { /* não crítico */ }
+    const me = (await meRes.json()) as { email?: string; nickname?: string }
+    accountInfo = me.email ?? me.nickname ?? accountInfo
+  } catch {
+    return NextResponse.redirect(`${dashboardUrl}?mp_error=token_validation_timeout`)
+  }
 
   // Resolve o label da conta bancária
   let accountLabel = ''
