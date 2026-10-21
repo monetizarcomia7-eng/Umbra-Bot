@@ -5,13 +5,16 @@ import {
   getLongLivedToken,
   getFacebookPages,
   getInstagramBusinessAccount,
+  MetaAuthError,
 } from '@/lib/instagram/auth'
 import { encryptToken } from '@/lib/crypto'
 
 const APP_URL = process.env.APP_URL ?? 'https://www.umbrabot.com.br'
 
+// O resultado do OAuth é exibido na aba Contas (AccountsClient lê ?success / ?error / ?code).
+// Redireciona direto pra /accounts: /dashboard/instagram faz redirect() para /posts e perde a query string.
 function redirectWith(query: string) {
-  return NextResponse.redirect(new URL(`/dashboard/instagram?${query}`, APP_URL))
+  return NextResponse.redirect(new URL(`/dashboard/instagram/accounts?${query}`, APP_URL))
 }
 
 // GET /api/auth/instagram/callback?code=...&state=...
@@ -47,31 +50,59 @@ export async function GET(request: NextRequest) {
 
     // 4. para cada página com conta IG vinculada, faz upsert
     let connected = 0
+    const failures: Array<{ stage: 'meta' | 'db'; code: string }> = []
+
     for (const page of pages) {
+      let igAccount: Awaited<ReturnType<typeof getInstagramBusinessAccount>>
       try {
-        const igAccount = await getInstagramBusinessAccount(page.id, page.access_token)
-        await supabase.from('instagram_accounts').upsert(
-          {
-            user_id:          user.id,
-            ig_user_id:       igAccount.id,
-            username:         igAccount.username ?? null,
-            profile_picture:  igAccount.profile_picture_url ?? null,
-            access_token:     encryptToken(longToken),
-            token_expires_at: expiresAt.toISOString(),
-            page_id:          page.id,
-            page_token:       encryptToken(page.access_token),
-            is_active:        true,
-          },
-          { onConflict: 'user_id,ig_user_id' },
-        )
-        connected++
-      } catch {
-        // página sem conta IG Business — segue
+        igAccount = await getInstagramBusinessAccount(page.id, page.access_token)
+      } catch (e) {
+        // Erro real da API do Meta (permissão, token…) é registrado; "página sem IG Business" só pula.
+        if (e instanceof MetaAuthError) {
+          console.error('[ig callback] Meta API error', {
+            pageId: page.id, code: e.code, subcode: e.subcode, message: e.message,
+          })
+          failures.push({ stage: 'meta', code: String(e.code) })
+        }
         continue
       }
+
+      // O supabase-js NÃO lança exceção em erro de banco: devolve { error }.
+      // Sem checar, a conta "conectava" (count=1) mas nunca era gravada.
+      const { error: upsertError } = await supabase.from('instagram_accounts').upsert(
+        {
+          user_id:          user.id,
+          ig_user_id:       igAccount.id,
+          username:         igAccount.username ?? null,
+          profile_picture:  igAccount.profile_picture_url ?? null,
+          access_token:     encryptToken(longToken),
+          token_expires_at: expiresAt.toISOString(),
+          page_id:          page.id,
+          page_token:       encryptToken(page.access_token),
+          is_active:        true,
+        },
+        { onConflict: 'user_id,ig_user_id' },
+      )
+
+      if (upsertError) {
+        console.error('[ig callback] upsert instagram_accounts failed', {
+          code: upsertError.code, message: upsertError.message,
+          details: upsertError.details, hint: upsertError.hint,
+        })
+        failures.push({ stage: 'db', code: upsertError.code || 'unknown' })
+        continue
+      }
+
+      connected++
     }
 
-    if (connected === 0) return redirectWith('error=no_ig_business')
+    if (connected === 0) {
+      const dbFail = failures.find(f => f.stage === 'db')
+      if (dbFail) return redirectWith(`error=save_failed&code=${encodeURIComponent(dbFail.code)}`)
+      const metaFail = failures.find(f => f.stage === 'meta')
+      if (metaFail) return redirectWith(`error=meta_error&code=${encodeURIComponent(metaFail.code)}`)
+      return redirectWith('error=no_ig_business')
+    }
 
     // Sucesso — limpa cookie state
     const response = redirectWith(`success=connected&count=${connected}`)
@@ -88,8 +119,9 @@ export async function GET(request: NextRequest) {
     })
 
     return response
-  } catch (err) {
-    console.error('[ig callback] OAuth failed:', err)
-    return redirectWith('error=oauth_failed')
+  } catch (e) {
+    console.error('[ig callback] OAuth failed:', e)
+    const metaCode = e instanceof MetaAuthError ? `&code=${encodeURIComponent(String(e.code))}` : ''
+    return redirectWith(`error=oauth_failed${metaCode}`)
   }
 }

@@ -15,9 +15,12 @@ interface Props {
   initialStats:    IgStats
   userId:          string
   hasMetaConfig:   boolean
+  loadError?:      string | null
 }
 
 const ERROR_LABELS: Record<string, string> = {
+  save_failed:    'A conta foi autorizada, mas não foi possível salvá-la no banco.',
+  meta_error:     'O Meta recusou a leitura da conta Instagram (permissão ou token).',
   cancelled:      'Conexão cancelada.',
   invalid_state:  'Sessão expirada. Tente conectar novamente.',
   no_code:        'Resposta inválida do Meta.',
@@ -28,7 +31,7 @@ const ERROR_LABELS: Record<string, string> = {
 }
 
 export default function AccountsClient({
-  initialAccounts, initialStats, userId, hasMetaConfig,
+  initialAccounts, initialStats, userId, hasMetaConfig, loadError,
 }: Props) {
   const [accounts, setAccounts] = useState(initialAccounts)
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null)
@@ -45,13 +48,15 @@ export default function AccountsClient({
     const success = searchParams?.get('success')
     const error   = searchParams?.get('error')
     const count   = searchParams?.get('count')
+    const code    = searchParams?.get('code')
 
     if (success === 'connected' && count) {
       showToast(`${count} conta(s) conectada(s) com sucesso!`, 'success')
       router.replace('/dashboard/instagram/accounts', { scroll: false })
     }
     if (error) {
-      showToast(ERROR_LABELS[error] ?? `Erro: ${error}`, 'error')
+      const base = ERROR_LABELS[error] ?? `Erro: ${error}`
+      showToast(code ? `${base} (código ${code})` : base, 'error')
       router.replace('/dashboard/instagram/accounts', { scroll: false })
     }
   }, [searchParams, showToast, router])
@@ -101,6 +106,27 @@ export default function AccountsClient({
                 <p>
                   As variáveis <code>META_APP_ID</code>, <code>META_APP_SECRET</code> e <code>META_REDIRECT_URI </code>
                   precisam estar definidas no servidor para conectar o Instagram.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {loadError && (
+          <div className="rounded-xl p-4 text-sm" style={{
+            background: 'color-mix(in oklab, var(--danger) 10%, transparent)',
+            border:     '1px solid var(--danger)',
+            color:      'var(--text)',
+          }}>
+            <div className="flex items-start gap-2">
+              <AlertTriangle size={16} style={{ color: 'var(--danger)' }} className="mt-0.5 shrink-0" />
+              <div>
+                <p className="font-semibold mb-1" style={{ color: 'var(--danger)' }}>
+                  Não foi possível carregar as contas (código {loadError})
+                </p>
+                <p>
+                  Se o código for <code>42P01</code>, a tabela <code>instagram_accounts</code> não existe no banco:
+                  aplique a migração do Instagram no Supabase.
                 </p>
               </div>
             </div>

@@ -34,7 +34,23 @@ export interface IgStats {
   failed_30d:      number
 }
 
-export default function InstagramPage() {
-  // Aba padrão = Posts (visão geral). Settings é a única que não envolve dado por padrão.
+export default async function InstagramPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>
+}) {
+  const sp = await searchParams
+
+  // Retorno do OAuth (?success / ?error / ?code) precisa chegar na aba Contas.
+  // Antes o redirect() descartava a query string e o usuário nunca via sucesso nem erro.
+  if (sp.success || sp.error) {
+    const qs = new URLSearchParams()
+    for (const [k, v] of Object.entries(sp)) {
+      if (typeof v === 'string') qs.set(k, v)
+    }
+    redirect(`/dashboard/instagram/accounts?${qs.toString()}`)
+  }
+
+  // Aba padrão = Posts (visão geral).
   redirect('/dashboard/instagram/posts')
 }

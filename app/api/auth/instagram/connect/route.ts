@@ -14,7 +14,7 @@ export async function GET(_request: NextRequest) {
 
   if (!process.env.META_APP_ID || !process.env.META_APP_SECRET || !process.env.META_REDIRECT_URI) {
     return NextResponse.redirect(
-      new URL('/dashboard/instagram?error=config_missing', process.env.APP_URL!),
+      new URL('/dashboard/instagram/accounts?error=config_missing', process.env.APP_URL!),
     )
   }
 

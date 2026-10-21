@@ -17,8 +17,16 @@ export default async function AccountsPage() {
     supabase.rpc('instagram_stats', { p_user_id: user.id }),
   ])
 
+  // Antes um erro aqui (ex.: tabela inexistente) virava lista vazia sem nenhum aviso.
+  if (accountsRes.error) {
+    console.error('[ig accounts page] select instagram_accounts failed', {
+      code: accountsRes.error.code, message: accountsRes.error.message,
+    })
+  }
+
   return (
     <AccountsClient
+      loadError={accountsRes.error ? (accountsRes.error.code || 'unknown') : null}
       initialAccounts={(accountsRes.data ?? []) as RawIgAccount[]}
       initialStats={(statsRes.data ?? {
         accounts_count: 0, scheduled_count: 0, published_30d: 0, failed_30d: 0,
