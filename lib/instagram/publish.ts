@@ -1,15 +1,15 @@
 /**
- * Instagram Publishing — Graph API v19.0
+ * Instagram Publishing — Graph API (versão em ./graph.ts)
  *
  * Publica IMAGE / REELS / CAROUSEL para a Instagram Business API.
  * Usa o lib/crypto do Umbra Bot para descriptografar tokens AES-256-GCM.
  */
 
 import { decryptToken } from '@/lib/crypto'
+import { META_GRAPH_URL } from './graph'
 
-const META_GRAPH_URL    = 'https://graph.facebook.com/v19.0'
 const POLL_INTERVAL_MS  = 5_000
-const POLL_MAX_ATTEMPTS = 120  // 10 min máximo para processamento de vídeo
+const POLL_MAX_ATTEMPTS = 48   // 4 min máximo (cabe no maxDuration=300 do cron); estourou → retry do cron
 
 // ─── Erros customizados ──────────────────────────────────────────────────
 
@@ -90,7 +90,7 @@ async function waitForVideoProcessing(
     }
     // IN_PROGRESS → continua polling
   }
-  throw new Error('Timeout de 10 min no processamento do vídeo pela Meta.')
+  throw new Error('Timeout de 4 min no processamento do vídeo pela Meta.')
 }
 
 // ─── Tipos públicos ──────────────────────────────────────────────────────

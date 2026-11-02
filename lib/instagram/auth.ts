@@ -1,5 +1,5 @@
 /**
- * Instagram OAuth — adapter para Meta Graph API v19.0
+ * Instagram OAuth — adapter para Meta Graph API (versão em ./graph.ts)
  *
  * Fluxo:
  *   1. buildAuthUrl(state) — gera URL de autorização
@@ -10,9 +10,7 @@
  *   6. getInstagramBusinessAccount(pageId, pageToken) → conta IG Business vinculada
  */
 
-const META_API_VERSION = 'v19.0'
-const META_GRAPH_URL   = `https://graph.facebook.com/${META_API_VERSION}`
-const META_OAUTH_URL   = `https://www.facebook.com/${META_API_VERSION}/dialog/oauth`
+import { META_GRAPH_URL, META_OAUTH_URL } from './graph'
 
 export const INSTAGRAM_SCOPES = [
   'instagram_basic',
