@@ -1,8 +1,8 @@
 'use client'
 
 import { useState } from 'react'
-import { Trash2, AlertCircle, CheckCircle2, Clock } from 'lucide-react'
-import { disconnectAccountAction } from '@/app/actions/instagram'
+import { Trash2, AlertCircle, CheckCircle2, Clock, Webhook } from 'lucide-react'
+import { disconnectAccountAction, enableAccountWebhooksAction } from '@/app/actions/instagram'
 import Badge from '../shared/Badge'
 import type { RawIgAccount } from '@/app/dashboard/instagram/page'
 
@@ -14,6 +14,7 @@ interface Props {
 export default function AccountCard({ account, onToast }: Props) {
   const [confirming, setConfirming] = useState(false)
   const [removing,   setRemoving]   = useState(false)
+  const [enabling,   setEnabling]   = useState(false)
 
   const expiresAtMs = account.token_expires_at ? new Date(account.token_expires_at).getTime() : null
   // eslint-disable-next-line react-hooks/purity
@@ -36,6 +37,17 @@ export default function AccountCard({ account, onToast }: Props) {
     } catch (e) {
       onToast(e instanceof Error ? e.message : 'Erro ao desconectar.', 'error')
       setRemoving(false)
+    }
+  }
+
+  async function handleEnableWebhooks() {
+    setEnabling(true)
+    const r = await enableAccountWebhooksAction(account.id)
+    setEnabling(false)
+    if (r.ok) {
+      onToast(r.fields.length > 0 ? `Webhooks ativos: ${r.fields.join(', ')}.` : 'Assinatura enviada, mas a Meta não listou campos ativos.', r.fields.length > 0 ? 'success' : 'error')
+    } else {
+      onToast(r.error, 'error')
     }
   }
 
@@ -107,6 +119,16 @@ export default function AccountCard({ account, onToast }: Props) {
           </button>
         </div>
       ) : (
+        <div className="flex flex-col gap-2">
+        <button
+          onClick={handleEnableWebhooks}
+          disabled={enabling || !account.is_active}
+          className="flex items-center gap-1.5 w-full px-2.5 py-1.5 rounded-lg text-xs transition-colors hover:bg-surface-2"
+          style={{ border: '1px solid var(--border)', color: 'var(--text)' }}
+        >
+          <Webhook size={11} />
+          {enabling ? 'Ativando…' : 'Ativar webhooks'}
+        </button>
         <button
           onClick={() => setConfirming(true)}
           className="flex items-center gap-1.5 w-full px-2.5 py-1.5 rounded-lg text-xs transition-colors hover:bg-surface-2"
@@ -115,6 +137,7 @@ export default function AccountCard({ account, onToast }: Props) {
           <Trash2 size={11} />
           Desconectar
         </button>
+        </div>
       )}
     </div>
   )

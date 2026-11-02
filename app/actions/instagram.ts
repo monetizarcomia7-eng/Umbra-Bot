@@ -4,7 +4,8 @@ import { z } from 'zod'
 import { createClient } from '@/lib/supabase/server'
 import { rateLimit } from '@/lib/rate-limit'
 import { revalidatePath } from 'next/cache'
-import { encryptToken } from '@/lib/crypto'
+import { encryptToken, decryptToken } from '@/lib/crypto'
+import { subscribeAccountWebhooks } from '@/lib/instagram/subscribe'
 import { META_IG_GRAPH_URL, isInstagramLoginToken } from '@/lib/instagram/graph'
 import { getFacebookPages, getInstagramBusinessAccount, MetaAuthError } from '@/lib/instagram/auth'
 
@@ -264,6 +265,37 @@ export async function connectInstagramTokenAction(
   )
   if (error) return { ok: false, error: `Não foi possível salvar a conta (${error.code || 'erro'}).` }
 
+  // Melhor esforço: assina a conta nos webhooks (comentários e DMs). Pode ser refeito pelo botão "Ativar webhooks".
+  await subscribeAccountWebhooks(igUserId, token, pageId, pageToken)
+
   revalidatePath('/dashboard/instagram')
   return { ok: true, username }
+}
+
+// ─── enableAccountWebhooksAction ────────────────────────────────────────────
+export async function enableAccountWebhooksAction(
+  accountId: string,
+): Promise<{ ok: true; fields: string[] } | { ok: false; error: string }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { ok: false, error: 'Não autorizado.' }
+  if (!z.string().uuid().safeParse(accountId).success) return { ok: false, error: 'ID inválido.' }
+
+  const rl = await rateLimit(`ig-subscribe:${user.id}`, 10, 60_000)
+  if (!rl.ok) return { ok: false, error: 'Muitas tentativas. Aguarde.' }
+
+  const { data: acc } = await supabase
+    .from('instagram_accounts')
+    .select('ig_user_id, access_token, page_id, page_token')
+    .eq('id', accountId)
+    .eq('user_id', user.id)
+    .maybeSingle()
+  if (!acc) return { ok: false, error: 'Conta não encontrada.' }
+
+  return subscribeAccountWebhooks(
+    acc.ig_user_id,
+    decryptToken(acc.access_token),
+    acc.page_id,
+    acc.page_token ? decryptToken(acc.page_token) : null,
+  )
 }
