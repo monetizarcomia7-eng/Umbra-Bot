@@ -347,6 +347,7 @@ supabase
 - `lib/instagram/auth.ts` — OAuth helpers (`exchangeCodeForToken`, `getLongLivedToken`, `getFacebookPages`, `getInstagramBusinessAccount`)
 - `lib/instagram/publish.ts` — `publishImage` / `publishReel` / `publishCarousel` / `publishPost` (router); `waitForVideoProcessing` (polling 5s × 48 = 4 min); `MetaAPIError` + `META_ERROR_MESSAGES` (10 códigos)
 - `lib/instagram/graph.ts` — versão da Graph API (única fonte; v19.0 expirou em 21/05/2026)
+- **Conexão por token** (`connectInstagramTokenAction` em `app/actions/instagram.ts`, botão "Conectar com token"): para contas testadoras sem Página do Facebook. Token `IG…` (Instagram Login) usa `graph.instagram.com` e renova via `ig_refresh_token`; token `EAA…` (Facebook Login) usa `graph.facebook.com` e exige Página com IG vinculado. O host é escolhido por `graphUrlFor(token)` em `graph.ts`. Token salvo criptografado; validade assumida de 60 dias.
 - `lib/instagram/tokens.ts` — `refreshLongLivedToken` (renova +60d via `fb_exchange_token`)
 - `app/api/auth/instagram/connect/route.ts` + `callback/route.ts` — fluxo OAuth completo
 - `app/api/cron/publish-instagram/route.ts` — worker que publica posts agendados (1x/min); `maxDuration=300`, recupera posts presos em `publishing` (>15 min) e não inicia novo post após 45s de execução

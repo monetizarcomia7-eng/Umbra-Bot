@@ -7,6 +7,7 @@ import { AlertTriangle, CheckCircle2, Camera } from 'lucide-react'
 import AccountCard from './AccountCard'
 import AccountStats from './AccountStats'
 import ConnectButton from './ConnectButton'
+import ConnectTokenButton from './ConnectTokenButton'
 import Toast from '../shared/Toast'
 import type { RawIgAccount, IgStats } from '@/app/dashboard/instagram/page'
 
@@ -24,8 +25,8 @@ const ERROR_LABELS: Record<string, string> = {
   cancelled:      'Conexão cancelada.',
   invalid_state:  'Sessão expirada. Tente conectar novamente.',
   no_code:        'Resposta inválida do Meta.',
-  no_pages:       'Nenhuma página do Facebook encontrada. Vincule uma página primeiro.',
-  no_ig_business: 'Nenhuma conta Instagram Business vinculada à página.',
+  no_pages:       'Nenhuma página do Facebook encontrada. Se sua conta é testadora, use "Conectar com token".',
+  no_ig_business: 'Nenhuma conta Instagram Business vinculada à página. Se sua conta é testadora, use "Conectar com token".',
   oauth_failed:   'Falha na autenticação. Tente novamente.',
   config_missing: 'Integração Meta não configurada. Avise o administrador.',
 }
@@ -104,8 +105,9 @@ export default function AccountsClient({
                   Integração Meta não configurada
                 </p>
                 <p>
-                  As variáveis <code>META_APP_ID</code>, <code>META_APP_SECRET</code> e <code>META_REDIRECT_URI </code>
-                  precisam estar definidas no servidor para conectar o Instagram.
+                  Para o botão &quot;Conectar Instagram&quot; (login do Facebook), defina <code>META_APP_ID</code>,{' '}
+                  <code>META_APP_SECRET</code> e <code>META_REDIRECT_URI</code> no servidor. Já o
+                  &quot;Conectar com token&quot; funciona sem isso, mas a renovação automática de tokens do Facebook não.
                 </p>
               </div>
             </div>
@@ -141,7 +143,10 @@ export default function AccountsClient({
               <Camera size={16} style={{ color: 'var(--primary)' }} />
               Contas conectadas ({activeAccounts.length})
             </h2>
-            <ConnectButton disabled={!hasMetaConfig} />
+            <div className="flex items-center gap-2 flex-wrap">
+              <ConnectTokenButton onDone={showToast} />
+              <ConnectButton disabled={!hasMetaConfig} />
+            </div>
           </div>
 
           {accounts.length === 0 ? (
@@ -160,7 +165,8 @@ export default function AccountsClient({
                   Suporta múltiplas contas
                 </span>
               </div>
-              <div className="mt-4">
+              <div className="mt-4 flex items-center justify-center gap-2 flex-wrap">
+                <ConnectTokenButton onDone={showToast} />
                 <ConnectButton disabled={!hasMetaConfig} />
               </div>
             </div>

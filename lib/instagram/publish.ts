@@ -6,7 +6,7 @@
  */
 
 import { decryptToken } from '@/lib/crypto'
-import { META_GRAPH_URL } from './graph'
+import { graphUrlFor } from './graph'
 
 const POLL_INTERVAL_MS  = 5_000
 const POLL_MAX_ATTEMPTS = 48   // 4 min máximo (cabe no maxDuration=300 do cron); estourou → retry do cron
@@ -41,7 +41,7 @@ async function createMediaContainer(
   token: string,
   params: CreateParams,
 ): Promise<string> {
-  const res = await fetch(`${META_GRAPH_URL}/${igUserId}/media`, {
+  const res = await fetch(`${graphUrlFor(token)}/${igUserId}/media`, {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ...params, access_token: token }),
@@ -58,7 +58,7 @@ async function publishContainer(
   containerId: string,
   token: string,
 ): Promise<string> {
-  const res = await fetch(`${META_GRAPH_URL}/${igUserId}/media_publish`, {
+  const res = await fetch(`${graphUrlFor(token)}/${igUserId}/media_publish`, {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ creation_id: containerId, access_token: token }),
@@ -77,7 +77,7 @@ async function waitForVideoProcessing(
   for (let i = 0; i < POLL_MAX_ATTEMPTS; i++) {
     await new Promise(r => setTimeout(r, POLL_INTERVAL_MS))
 
-    const url = new URL(`${META_GRAPH_URL}/${containerId}`)
+    const url = new URL(`${graphUrlFor(token)}/${containerId}`)
     url.searchParams.set('fields', 'status_code,status')
     url.searchParams.set('access_token', token)
 

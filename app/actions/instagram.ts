@@ -4,6 +4,9 @@ import { z } from 'zod'
 import { createClient } from '@/lib/supabase/server'
 import { rateLimit } from '@/lib/rate-limit'
 import { revalidatePath } from 'next/cache'
+import { encryptToken } from '@/lib/crypto'
+import { META_IG_GRAPH_URL, isInstagramLoginToken } from '@/lib/instagram/graph'
+import { getFacebookPages, getInstagramBusinessAccount, MetaAuthError } from '@/lib/instagram/auth'
 
 // ─── Schemas ────────────────────────────────────────────────────────────────
 
@@ -180,4 +183,87 @@ export async function getPostLogsAction(postId: string): Promise<Array<{
     id: string; attempt_at: string; success: boolean;
     error_code: string | null; duration_ms: number | null
   }>
+}
+
+// ─── connectInstagramTokenAction ────────────────────────────────────────────
+// Conecta uma conta usando um token já gerado (ex.: conta testadora do app Meta, sem Página do Facebook).
+// O token só trafega do formulário para o servidor; é validado na Meta e salvo criptografado.
+export async function connectInstagramTokenAction(
+  rawToken: string,
+): Promise<{ ok: true; username: string | null } | { ok: false; error: string }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { ok: false, error: 'Não autorizado.' }
+
+  const rl = await rateLimit(`ig-connect-token:${user.id}`, 10, 60 * 60_000)
+  if (!rl.ok) return { ok: false, error: 'Muitas tentativas. Aguarde um pouco.' }
+
+  const token = rawToken.trim()
+  if (token.length < 20 || token.length > 1000 || /\s/.test(token)) {
+    return { ok: false, error: 'Token inválido. Cole o token completo, sem espaços.' }
+  }
+
+  let igUserId: string | null = null
+  let username: string | null = null
+  let picture:  string | null = null
+  let pageId:   string | null = null
+  let pageToken: string | null = null
+
+  try {
+    if (isInstagramLoginToken(token)) {
+      const url = new URL(`${META_IG_GRAPH_URL}/me`)
+      url.searchParams.set('fields', 'user_id,username,profile_picture_url')
+      url.searchParams.set('access_token', token)
+      const res  = await fetch(url.toString(), { cache: 'no-store' })
+      const data = await res.json() as {
+        user_id?: string | number; id?: string; username?: string; profile_picture_url?: string
+        error?: { message: string; code: number }
+      }
+      if (data.error) return { ok: false, error: `A Meta recusou o token (código ${data.error.code}). Gere um novo token.` }
+      igUserId = String(data.user_id ?? data.id ?? '') || null
+      username = data.username ?? null
+      picture  = data.profile_picture_url ?? null
+    } else {
+      // Token do Facebook Login: precisa de uma Página com Instagram vinculado
+      const pages = await getFacebookPages(token)
+      for (const page of pages) {
+        try {
+          const ig = await getInstagramBusinessAccount(page.id, page.access_token)
+          igUserId = ig.id; username = ig.username ?? null; picture = ig.profile_picture_url ?? null
+          pageId = page.id; pageToken = page.access_token
+          break
+        } catch { /* página sem IG — tenta a próxima */ }
+      }
+      if (!igUserId) {
+        return {
+          ok: false,
+          error: 'Este token não tem Página do Facebook com Instagram vinculado. Use o token gerado em "Instagram → Gerar token" no painel do app Meta (começa com IG).',
+        }
+      }
+    }
+  } catch (e) {
+    const code = e instanceof MetaAuthError ? ` (código ${e.code})` : ''
+    return { ok: false, error: `Não foi possível validar o token na Meta${code}.` }
+  }
+
+  if (!igUserId) return { ok: false, error: 'A Meta não retornou a conta deste token.' }
+
+  const { error } = await supabase.from('instagram_accounts').upsert(
+    {
+      user_id:          user.id,
+      ig_user_id:       igUserId,
+      username,
+      profile_picture:  picture,
+      access_token:     encryptToken(token),
+      token_expires_at: new Date(Date.now() + 60 * 86_400_000).toISOString(),
+      page_id:          pageId,
+      page_token:       pageToken ? encryptToken(pageToken) : null,
+      is_active:        true,
+    },
+    { onConflict: 'user_id,ig_user_id' },
+  )
+  if (error) return { ok: false, error: `Não foi possível salvar a conta (${error.code || 'erro'}).` }
+
+  revalidatePath('/dashboard/instagram')
+  return { ok: true, username }
 }
