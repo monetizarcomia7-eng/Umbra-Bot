@@ -3642,6 +3642,8 @@ Adicionar novo template: incluir em `FLOW_TEMPLATES` com `category` válida (def
 
 ## 21b. MÓDULO INSTAGRAM SCHEDULER
 
+> **Automações de comentário → DM (aba "Automações")**: ver `lib/instagram/automations.ts`, `app/actions/instagram-automations.ts`, `components/instagram/automations/AutomationsClient.tsx`, migração `20261102000121_instagram_automations.sql` (aplicar no Supabase). Webhook assina `comments` + `messaging_postbacks`; env opcional `INSTAGRAM_APP_SECRET`. Detalhes em `INTEGRATIONS.md`.
+
 Agendador de posts/reels/carrosséis no Instagram Business via Meta Graph API v19.0.
 
 ### Arquivos — estrutura em 4 abas

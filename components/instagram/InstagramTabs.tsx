@@ -2,11 +2,12 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { CalendarPlus, ListTodo, Users, Settings } from 'lucide-react'
+import { CalendarPlus, ListTodo, Users, Settings, MessageCircle } from 'lucide-react'
 
 const TABS = [
   { href: '/dashboard/instagram/posts',     label: 'Posts',           Icon: ListTodo },
   { href: '/dashboard/instagram/schedule',  label: 'Agendar',         Icon: CalendarPlus },
+  { href: '/dashboard/instagram/automations', label: 'Automações',    Icon: MessageCircle },
   { href: '/dashboard/instagram/accounts',  label: 'Contas',          Icon: Users },
   { href: '/dashboard/instagram/settings',  label: 'Configurações',   Icon: Settings },
 ] as const
