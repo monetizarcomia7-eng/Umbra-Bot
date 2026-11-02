@@ -1,7 +1,8 @@
-import { NextResponse, type NextRequest } from 'next/server'
+import { NextResponse, after, type NextRequest } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createHmac, timingSafeEqual } from 'crypto'
 import * as Sentry from '@sentry/nextjs'
+import { handleAutomationEvents, type WebhookEntryLike } from '@/lib/instagram/automations'
 
 /**
  * Instagram Webhook — recebe eventos da Meta em tempo real
@@ -42,8 +43,9 @@ export async function GET(request: NextRequest) {
 
 // POST — recebe eventos
 export async function POST(request: NextRequest) {
-  const appSecret = process.env.META_APP_SECRET
-  if (!appSecret) {
+  // Apps com "Instagram Login" têm um segredo próprio do Instagram; aceita qualquer um dos dois.
+  const secrets = [process.env.META_APP_SECRET, process.env.INSTAGRAM_APP_SECRET].filter((v): v is string => !!v)
+  if (secrets.length === 0) {
     return new NextResponse('Server not configured', { status: 500 })
   }
 
@@ -51,7 +53,7 @@ export async function POST(request: NextRequest) {
   const body      = await request.text()
 
   // Validação HMAC obrigatória — protege contra POSTs forjados
-  if (!signature || !validateSignature(body, signature, appSecret)) {
+  if (!signature || !secrets.some(sec => validateSignature(body, signature, sec))) {
     return new NextResponse('Invalid signature', { status: 401 })
   }
 
@@ -105,6 +107,15 @@ export async function POST(request: NextRequest) {
       console.error('[ig-webhook] insert error:', error.message)
     }
   }
+
+  // Automações de comentário → DM: roda depois de responder 200 (a Meta exige resposta rápida)
+  after(async () => {
+    try {
+      await handleAutomationEvents(parsed.entry as unknown as WebhookEntryLike[])
+    } catch (e) {
+      Sentry.captureException(e, { extra: { context: 'instagram_automation_dispatch' } })
+    }
+  })
 
   // Meta exige 200 OK — qualquer outro código faz retry agressivo
   return new NextResponse('OK', { status: 200 })
