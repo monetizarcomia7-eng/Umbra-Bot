@@ -13,6 +13,17 @@ const NON_RETRYABLE_CODES = new Set<number>([
 
 const BATCH_LIMIT = 20
 
+// A publicação de Reels espera o Instagram processar o vídeo (polling dentro da própria
+// requisição). Sem maxDuration a Vercel corta a função e o post fica preso em 'publishing'.
+export const maxDuration = 300
+
+// Só começa um novo post se a execução ainda tem folga: o polling de vídeo pode levar
+// até ~240s (ver lib/instagram/publish.ts), e 45s + 240s fica abaixo dos 300s de maxDuration.
+const START_NEW_POST_BEFORE_MS = 45_000
+
+// Post em 'publishing' há mais que isso é considerado preso (função cortada/erro de infra).
+const STUCK_AFTER_MS = 15 * 60_000
+
 interface PostRow {
   id:           string
   user_id:      string
@@ -39,6 +50,28 @@ export async function GET(request: NextRequest) {
 
   const supabase = createAdminClient()
   const t0 = Date.now()
+
+  // Recupera posts presos em 'publishing' (o CAS abaixo os tira da fila 'scheduled', então
+  // sem isto eles nunca mais seriam tentados nem poderiam ser apagados pelo usuário).
+  const { data: stuck } = await supabase
+    .from('instagram_posts')
+    .select('id, retry_count, max_retries')
+    .eq('status', 'publishing')
+    .lt('updated_at', new Date(Date.now() - STUCK_AFTER_MS).toISOString())
+    .limit(50)
+
+  for (const s of stuck ?? []) {
+    const exhausted = s.retry_count + 1 >= s.max_retries
+    await supabase
+      .from('instagram_posts')
+      .update({
+        status:      exhausted ? 'failed' : 'scheduled',
+        retry_count: s.retry_count + 1,
+        error_msg:   'A publicação foi interrompida antes de terminar.',
+      })
+      .eq('id', s.id)
+      .eq('status', 'publishing')
+  }
 
   const { data: posts, error: fetchErr } = await supabase
     .from('instagram_posts')
@@ -67,6 +100,9 @@ export async function GET(request: NextRequest) {
   let failed    = 0
 
   for (const post of posts as unknown as PostRow[]) {
+    // Sem folga de tempo: deixa o restante para a próxima execução (roda a cada 1 min).
+    if (Date.now() - t0 > START_NEW_POST_BEFORE_MS) break
+
     const account = post.instagram_accounts
     if (!account || !account.is_active) {
       await supabase

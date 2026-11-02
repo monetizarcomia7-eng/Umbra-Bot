@@ -4,8 +4,7 @@
  */
 
 import { encryptToken, decryptToken } from '@/lib/crypto'
-
-const META_GRAPH_URL = 'https://graph.facebook.com/v19.0'
+import { META_GRAPH_URL } from './graph'
 
 export async function refreshLongLivedToken(encryptedToken: string): Promise<{
   encryptedToken: string

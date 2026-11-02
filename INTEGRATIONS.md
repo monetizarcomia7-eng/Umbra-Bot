@@ -340,15 +340,16 @@ supabase
 
 ### Meta Graph API (Instagram Scheduler)
 
-**Para que serve:** Agendador de posts (IMAGE/REELS/CAROUSEL) no Instagram Business via Meta Graph API v19.0.
+**Para que serve:** Agendador de posts (IMAGE/REELS/CAROUSEL) no Instagram Business via Meta Graph API (versão centralizada em `lib/instagram/graph.ts`, hoje v25.0).
 
 **Onde é chamado:**
 
 - `lib/instagram/auth.ts` — OAuth helpers (`exchangeCodeForToken`, `getLongLivedToken`, `getFacebookPages`, `getInstagramBusinessAccount`)
-- `lib/instagram/publish.ts` — `publishImage` / `publishReel` / `publishCarousel` / `publishPost` (router); `waitForVideoProcessing` (polling 5s × 120 = 10 min); `MetaAPIError` + `META_ERROR_MESSAGES` (10 códigos)
+- `lib/instagram/publish.ts` — `publishImage` / `publishReel` / `publishCarousel` / `publishPost` (router); `waitForVideoProcessing` (polling 5s × 48 = 4 min); `MetaAPIError` + `META_ERROR_MESSAGES` (10 códigos)
+- `lib/instagram/graph.ts` — versão da Graph API (única fonte; v19.0 expirou em 21/05/2026)
 - `lib/instagram/tokens.ts` — `refreshLongLivedToken` (renova +60d via `fb_exchange_token`)
 - `app/api/auth/instagram/connect/route.ts` + `callback/route.ts` — fluxo OAuth completo
-- `app/api/cron/publish-instagram/route.ts` — worker que publica posts agendados (1x/min)
+- `app/api/cron/publish-instagram/route.ts` — worker que publica posts agendados (1x/min); `maxDuration=300`, recupera posts presos em `publishing` (>15 min) e não inicia novo post após 45s de execução
 - `app/api/cron/refresh-instagram-tokens/route.ts` — renova tokens com expiração <30d (1x/12h)
 - `app/api/cron/cleanup-instagram-logs/route.ts` — TTL 30d nos logs (1x/dia)
 - `app/api/webhooks/instagram/route.ts` — recebe eventos (comments/mentions) via Meta (handshake `hub.verify_token` + HMAC `X-Hub-Signature-256`)
